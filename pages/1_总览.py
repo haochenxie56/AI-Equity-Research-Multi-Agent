@@ -12,7 +12,7 @@ import plotly.graph_objects as go
 from ui_utils import (
     apply_theme, render_sidebar, load_info, load_ohlcv, load_ohlcv_multi,
     load_financials, load_cashflow, load_earnings,
-    fmt_large, fmt_pct, fmt_val, download_report_button, page_header,
+    fmt_large, fmt_pct, fmt_val, download_report_button, page_header, style_df,
 )
 
 st.set_page_config(page_title="总览", page_icon="🔭", layout="wide")
@@ -23,7 +23,7 @@ st.title("🔭 总览 — 完整研究流程")
 page_header()
 
 if not ticker:
-    st.info("请在侧边栏输入 Ticker Symbol")
+    st.info("请在左侧输入股票代码（如 NVDA、AAPL、MSFT）开始分析")
     st.stop()
 
 # ── Company header ────────────────────────────────────────────────────────────
@@ -383,18 +383,23 @@ with _radar_col:
         mode="lines+markers",
         marker=dict(size=8, color="#4da6ff"),
     ))
+    _r_dark = st.session_state.get("dark_mode", True)
+    _r_tpl  = "plotly_dark" if _r_dark else "plotly_white"
+    _r_txt  = "#8b949e"     if _r_dark else "#1f2328"
+    _r_pbg  = "rgba(0,0,0,0)" if _r_dark else "#ffffff"
     _fig_r.update_layout(
         polar=dict(
             radialaxis=dict(visible=True, range=[0, 5], tickvals=[1, 2, 3, 4, 5],
-                            tickfont=dict(size=9)),
-            angularaxis=dict(tickfont=dict(size=12)),
+                            tickfont=dict(size=9, color=_r_txt)),
+            angularaxis=dict(tickfont=dict(size=12, color=_r_txt)),
             bgcolor="rgba(0,0,0,0)",
         ),
         showlegend=False,
         height=360,
         margin=dict(l=60, r=60, t=20, b=20),
-        paper_bgcolor="rgba(0,0,0,0)",
-        template="plotly_dark",
+        paper_bgcolor=_r_pbg,
+        template=_r_tpl,
+        font=dict(color=_r_txt),
     )
     st.plotly_chart(_fig_r, use_container_width=True)
 
@@ -403,7 +408,7 @@ with _score_col:
     _score_df = pd.DataFrame(
         [{"维度": d, "分值": f"{v:.1f}/5", "说明": t} for d, v, t in zip(_dims, _vals, _tips)]
     ).set_index("维度")
-    st.dataframe(_score_df, use_container_width=True, height=230)
+    st.dataframe(style_df(_score_df), use_container_width=True, height=230)
     _overall = round(sum(_vals) / len(_vals), 1)
     st.metric("综合评分", f"{_overall:.1f} / 5.0",
               delta="优质" if _overall >= 3.5 else ("中性" if _overall >= 2.5 else "注意风险"),

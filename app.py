@@ -67,7 +67,9 @@ if ticker:
                 st.page_link("pages/6_量价分析.py",     label="📉 量价分析",    icon="6️⃣")
 
         except Exception as e:
-            st.info(f"输入 Ticker 后侧边栏会显示缓存状态，点击左侧导航进入各分析页面。")
+            st.warning("数据加载失败，请检查股票代码是否正确。")
+else:
+    st.info("👈 请在左侧输入股票代码（如 NVDA、AAPL、MSFT）开始分析")
 
 st.divider()
 

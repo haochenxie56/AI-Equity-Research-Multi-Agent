@@ -22,7 +22,7 @@ ticker = render_sidebar()
 st.title("📉 量价分析")
 page_header()
 if not ticker:
-    st.info("请在侧边栏输入 Ticker")
+    st.info("请在左侧输入股票代码（如 NVDA、AAPL、MSFT）开始分析")
     st.stop()
 
 # ── Settings bar ──────────────────────────────────────────────────────────────

@@ -9,7 +9,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from ui_utils import apply_theme, render_sidebar, load_info, load_ohlcv, apply_layout, fmt_large, download_report_button, page_header
+from ui_utils import apply_theme, render_sidebar, load_info, load_ohlcv, apply_layout, fmt_large, download_report_button, page_header, style_df
 
 st.set_page_config(page_title="选股扫描", page_icon="🔍", layout="wide")
 apply_theme()
@@ -184,7 +184,7 @@ st.divider()
 # Results table
 st.subheader(f"候选标的（Top {top_n}）")
 st.dataframe(
-    df_results.set_index("Ticker"),
+    style_df(df_results.set_index("Ticker")),
     use_container_width=True,
     height=min(400, 50 + len(top_results) * 38),
 )

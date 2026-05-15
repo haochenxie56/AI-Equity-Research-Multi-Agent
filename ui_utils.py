@@ -292,6 +292,89 @@ _LIGHT_EXTRA_CSS = """<style>
     padding: 6px 12px !important; background: #ffffff !important;
 }
 .stMarkdown tr:nth-child(even) td { background: #f6f8fa !important; }
+
+/* ── Light mode: selectbox / multiselect dropdown portal ── */
+/* The popup is rendered at document root, outside the app container */
+[data-baseweb="popover"],
+[data-baseweb="popover"] > div {
+    background-color: #ffffff !important;
+}
+[data-baseweb="menu"] {
+    background-color: #ffffff !important;
+    border: 1px solid #d0d7de !important;
+    box-shadow: 0 8px 24px rgba(140,149,159,0.2) !important;
+}
+[data-baseweb="option"],
+li[role="option"] {
+    background-color: #ffffff !important;
+    color: #1f2328 !important;
+}
+[data-baseweb="option"]:hover,
+li[role="option"]:hover {
+    background-color: #f6f8fa !important;
+    color: #1f2328 !important;
+}
+[aria-selected="true"][data-baseweb="option"],
+[aria-selected="true"][role="option"] {
+    background-color: #ddf4ff !important;
+    color: #0969da !important;
+}
+
+/* ── Light mode: multiselect chips / tags ── */
+[data-baseweb="tag"] {
+    background-color: #ddf4ff !important;
+    border-color: rgba(84,174,255,0.25) !important;
+}
+[data-baseweb="tag"] span { color: #0969da !important; }
+[data-baseweb="tag"] button svg { fill: #0969da !important; }
+
+/* ── Light mode: number input stepper buttons ── */
+[data-testid="stNumberInput"] button {
+    background-color: #f6f8fa !important;
+    border-color: #d0d7de !important;
+    color: #1f2328 !important;
+}
+
+/* ── Light mode: slider thumb ── */
+[data-testid="stSlider"] [role="slider"] {
+    background-color: #388bfd !important;
+    border-color: #388bfd !important;
+}
+
+/* ── Light mode: code / pre blocks ── */
+code, pre {
+    background-color: #f6f8fa !important;
+    color: #1f2328 !important;
+}
+.stMarkdown code {
+    border: 1px solid #d0d7de !important;
+}
+
+/* ── Light mode: info / warning / error alert boxes ── */
+[data-testid="stAlert"] {
+    background-color: #f6f8fa !important;
+    border-color: #d0d7de !important;
+    color: #1f2328 !important;
+}
+
+/* ── Light mode: expander summary row ── */
+details summary {
+    background-color: #f6f8fa !important;
+    color: #1f2328 !important;
+}
+details[open] > div {
+    background-color: #ffffff !important;
+}
+
+/* ── Light mode: tab panel background ── */
+.stTabs [data-baseweb="tab-panel"] {
+    background-color: transparent !important;
+}
+
+/* ── Light mode: caption / small text ── */
+[data-testid="stCaptionContainer"] p {
+    color: #57606a !important;
+}
 </style>"""
 
 
@@ -406,7 +489,7 @@ def load_ohlcv_multi(tickers: tuple, period: str = "1y") -> dict[str, pd.DataFra
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 
 def init_session():
-    defaults = {"ticker": "NVDA", "scan_results": None, "last_report": {}, "dark_mode": True}
+    defaults = {"ticker": "", "scan_results": None, "last_report": {}, "dark_mode": True}
     for k, v in defaults.items():
         if k not in st.session_state:
             st.session_state[k] = v

@@ -40,7 +40,7 @@ ticker = render_sidebar()
 st.title("🏢 个股研究")
 page_header()
 if not ticker:
-    st.info("请在侧边栏输入 Ticker")
+    st.info("请在左侧输入股票代码（如 NVDA、AAPL、MSFT）开始分析")
     st.stop()
 
 # ── Load data ─────────────────────────────────────────────────────────────────
@@ -207,7 +207,8 @@ with right_col:
         fig_p.update_yaxes(title_text=metric_choice)
         st.plotly_chart(fig_p, use_container_width=True)
 
-        st.dataframe(peer_df.style.highlight_max(axis=0, color="#1a4a1a").format("{:.1f}"),
+        _hl_color = "#1a4a1a" if st.session_state.get("dark_mode", True) else "#d4edda"
+        st.dataframe(peer_df.style.highlight_max(axis=0, color=_hl_color).format("{:.1f}"),
                      use_container_width=True)
 
 st.divider()
