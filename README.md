@@ -161,11 +161,26 @@ cp .env.example .env
 
 ### 4. 启动应用
 
+**方式 A — 终端启动（推荐开发时使用）**
+
 ```bash
 streamlit run app.py
 ```
 
 浏览器访问 → `http://localhost:8501`
+
+**方式 B — Windows 一键静默启动（双击桌面快捷方式）**
+
+> 适用于 WSL2 环境，无黑色命令行窗口，自动检测端口避免重复启动。
+
+1. 在 Windows 桌面创建快捷方式，目标设置为：
+   ```
+   wscript.exe "\\wsl.localhost\Ubuntu\home\<你的用户名>\projects\investment-agents\launch.vbs"
+   ```
+2. **双击 `launch.vbs` 的快捷方式**（不要直接双击 `launch.bat`）
+3. 脚本会自动：检测端口 → 启动 WSL Streamlit → 等待 4 秒 → 打开浏览器
+
+> ⚠️ 快捷方式必须指向 `launch.vbs`，直接运行 `launch.bat` 会弹出黑色命令行窗口。
 
 ---
 

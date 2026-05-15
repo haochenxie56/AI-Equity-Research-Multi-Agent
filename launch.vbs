@@ -1,32 +1,39 @@
 Option Explicit
 ' Investment Research App — silent Windows launcher
-' Double-click this file (or a shortcut pointing to it) to start the app.
+' ─────────────────────────────────────────────────────────────────────────────
+' HOW TO USE:
+'   Desktop shortcut → right-click → Properties → Target: wscript.exe "C:\path\to\launch.vbs"
+'   Or just double-click this .vbs file directly.
+'   Do NOT point the shortcut at launch.bat (that shows a black cmd window).
+' ─────────────────────────────────────────────────────────────────────────────
 
-Dim WShell, http, alreadyUp
+Dim WShell, fso, http, batPath, alreadyUp
 
 Set WShell = CreateObject("WScript.Shell")
+Set fso    = CreateObject("Scripting.FileSystemObject")
 
-' ── Check if Streamlit is already running ────────────────────────────────────
+' ── Check if Streamlit is already up (avoid double-launch / port conflict) ────
 alreadyUp = False
 On Error Resume Next
 Set http = CreateObject("MSXML2.XMLHTTP.6.0")
-http.Open "GET", "http://localhost:8501", False
+http.Open "GET", "http://localhost:8501/_stcore/health", False
 http.Send
 If Err.Number = 0 Then
     alreadyUp = (http.Status = 200)
 End If
 On Error GoTo 0
+Set http = Nothing
 
-' ── Start Streamlit in WSL if not already running ────────────────────────────
-If Not alreadyUp Then
-    ' Hidden window (0), don't wait for it to finish (False)
-    WShell.Run "wsl bash -c ""pgrep -f 'streamlit run app.py' > /dev/null 2>&1 || (cd /home/hchxie/projects/investment-agents && nohup python3 -m streamlit run app.py >> /tmp/streamlit_app.log 2>&1 &)""", 0, False
-    ' Wait for server to come up (5 seconds)
-    WScript.Sleep 5000
+If alreadyUp Then
+    ' Already running — open the browser immediately, nothing else to do
+    WShell.Run "http://localhost:8501", 1, False
+Else
+    ' Not running — call launch.bat silently:
+    '   windowStyle = 0  → hidden (no black cmd window)
+    '   waitOnReturn = False → VBS exits right away; bat runs in background
+    batPath = fso.GetParentFolderName(WScript.ScriptFullName) & "\launch.bat"
+    WShell.Run "cmd.exe /c """ & batPath & """", 0, False
 End If
 
-' ── Open browser ─────────────────────────────────────────────────────────────
-WShell.Run "http://localhost:8501", 1, False
-
 Set WShell = Nothing
-Set http   = Nothing
+Set fso    = Nothing
