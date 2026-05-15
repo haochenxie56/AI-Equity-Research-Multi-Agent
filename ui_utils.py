@@ -425,7 +425,7 @@ def load_ohlcv(ticker: str, period: str = "1y") -> pd.DataFrame:
     try:
         return _load_ohlcv_impl(ticker, period)
     except Exception:
-        st.warning("⚠️ 数据获取受限，请稍后重试或更换股票代码")
+        st.warning("⚠️ Data fetch failed. Please try again or check the ticker symbol.")
         return pd.DataFrame()
 
 
@@ -439,7 +439,7 @@ def load_info(ticker: str) -> dict:
     try:
         return _load_info_impl(ticker)
     except Exception:
-        st.warning("⚠️ 数据获取受限，请稍后重试或更换股票代码")
+        st.warning("⚠️ Data fetch failed. Please try again or check the ticker symbol.")
         return {}
 
 
@@ -505,7 +505,7 @@ def load_ohlcv_multi(tickers: tuple, period: str = "1y") -> dict[str, pd.DataFra
 def init_session():
     defaults = {
         "ticker": "", "scan_results": None, "last_report": {},
-        "dark_mode": True, "language": "zh",
+        "dark_mode": True, "language": "en",
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -566,15 +566,15 @@ def render_sidebar() -> str:
         st.divider()
 
         # ── Language toggle ──
-        _lang = st.session_state.get("language", "zh")
+        _lang = st.session_state.get("language", "en")
         _ll, _lr = st.columns(2)
-        if _ll.button("🇨🇳 中文", type="primary" if _lang == "zh" else "secondary",
-                      use_container_width=True, key="_lang_zh"):
-            st.session_state.language = "zh"
-            st.rerun()
-        if _lr.button("🇺🇸 EN", type="primary" if _lang == "en" else "secondary",
+        if _ll.button("🇺🇸 EN", type="primary" if _lang == "en" else "secondary",
                       use_container_width=True, key="_lang_en"):
             st.session_state.language = "en"
+            st.rerun()
+        if _lr.button("🇨🇳 中文", type="primary" if _lang == "zh" else "secondary",
+                      use_container_width=True, key="_lang_zh"):
+            st.session_state.language = "zh"
             st.rerun()
 
         # ── Dark / light mode toggle ──
@@ -594,13 +594,13 @@ def render_sidebar() -> str:
             f'letter-spacing:0.08em;margin-bottom:4px">{t("nav_section")}</p>',
             unsafe_allow_html=True,
         )
-        st.page_link("app.py",                   label=t("nav_home"))
-        st.page_link("pages/1_总览.py",           label=t("nav_p1"))
-        st.page_link("pages/2_行业研究.py",       label=t("nav_p2"))
-        st.page_link("pages/3_选股扫描.py",       label=t("nav_p3"))
-        st.page_link("pages/4_个股研究.py",       label=t("nav_p4"))
-        st.page_link("pages/5_财务分析.py",       label=t("nav_p5"))
-        st.page_link("pages/6_量价分析.py",       label=t("nav_p6"))
+        st.page_link("app.py",                      label=t("nav_home"))
+        st.page_link("pages/1_Overview.py",         label=t("nav_p1"))
+        st.page_link("pages/2_Sector.py",           label=t("nav_p2"))
+        st.page_link("pages/3_Scanner.py",          label=t("nav_p3"))
+        st.page_link("pages/4_Equity.py",           label=t("nav_p4"))
+        st.page_link("pages/5_Financial.py",        label=t("nav_p5"))
+        st.page_link("pages/6_PriceVolume.py",      label=t("nav_p6"))
 
     return st.session_state.ticker
 
@@ -735,7 +735,7 @@ def apply_layout(fig, title: str = "", height: int = 400):
 
 # ── Report save & download ────────────────────────────────────────────────────
 
-def download_report_button(content: str, filename: str, label: str = "⬇ 下载报告"):
+def download_report_button(content: str, filename: str, label: str = "⬇ Download Report"):
     st.download_button(
         label=label,
         data=content.encode("utf-8"),

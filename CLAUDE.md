@@ -1,128 +1,134 @@
 # Investment Research Agent System
 
-## 项目目标
+## Project Goal
 
-构建一个多 agent 协作的美股投资研究系统，覆盖 NYSE 和 NASDAQ 上市公司。系统通过六个专业化子 agent 分工协作，完成从行业研究、标的筛选、个股深度分析、财务建模到量价技术分析的完整研究流程。
+Build a multi-agent collaborative US equity research system covering NYSE and
+NASDAQ listed companies. Six specialized sub-agents divide responsibilities to
+deliver a complete research workflow spanning sector analysis, candidate
+screening, individual stock deep-dive, financial modeling, and price/volume
+technical analysis.
 
-> **风险提示**：本系统输出的所有内容仅供投资研究与学习参考，不构成任何投资建议。市场存在风险，投资须谨慎。
+> **Disclaimer**: All output from this system is for investment research and
+> educational purposes only. It does not constitute investment advice. Markets
+> involve risk; invest with caution.
 
 ---
 
-## Agent 协作架构
+## Agent Collaboration Architecture
 
 ```
-用户指令
-    │
-    ▼
+User Instruction
+      │
+      ▼
 ┌─────────────────┐
-│   Orchestrator  │  总调度：理解意图、拆解任务、汇总输出
+│   Orchestrator  │  Master dispatcher: understand intent, decompose tasks, synthesize output
 └────────┬────────┘
-         │ 按需调用
-    ┌────┴─────────────────────────────────────┐
-    │         │           │          │         │
-    ▼         ▼           ▼          ▼         ▼
+         │ delegates as needed
+    ┌────┴──────────────────────────────────────┐
+    │         │           │          │          │
+    ▼         ▼           ▼          ▼          ▼
  Sector   Scanner    Equity     Financial  Price/Volume
-Research  (筛选)    Research   Analyst    Analyst
- (行业)            (个股深度)  (财务/估值) (技术/量价)
+Research  (screen)  Research   Analyst    Analyst
+(sector)           (deep-dive) (fin/val)  (technical)
 ```
 
 ---
 
-## 各 Agent 职责一览
+## Agent Responsibilities
 
-| Agent 文件 | 名称 | 核心职责 |
-|-----------|------|---------|
-| `orchestrator.md` | Orchestrator | 任务拆解、子 agent 调度、结果整合 |
-| `sector-research.md` | Sector Research | 宏观、政策、产业链、行业景气度 |
-| `stock-scanner.md` | Stock Scanner | 全市场筛选，输出候选标的列表 |
-| `equity-research.md` | Equity Research | 商业模式、护城河、管理层、竞争格局 |
-| `financial-analyst.md` | Financial Analyst | 三张表、DCF/相对估值、同业对比 |
-| `price-volume-analyst.md` | Price & Volume | 技术形态、资金流、市场情绪 |
+| Agent File | Name | Core Responsibility |
+|-----------|------|---------------------|
+| `orchestrator.md` | Orchestrator | Task decomposition, sub-agent dispatch, result integration |
+| `sector-research.md` | Sector Research | Macro, policy, supply chain, sector cycle assessment |
+| `stock-scanner.md` | Stock Scanner | Full-market screening; outputs candidate ticker list |
+| `equity-research.md` | Equity Research | Business model, moat, management, competitive landscape |
+| `financial-analyst.md` | Financial Analyst | 3-statement model, DCF / relative valuation, peer comparison |
+| `price-volume-analyst.md` | Price & Volume | Chart patterns, capital flows, market sentiment |
 
 ---
 
-## 共享约定
+## Shared Conventions
 
-### Python 环境
+### Python Environment
 
 - Python 3.11+
-- 虚拟环境：`.venv/`（`python -m venv .venv && source .venv/bin/activate`）
-- 依赖：`pip install -r requirements.txt`
+- Virtual environment: `.venv/` (`python -m venv .venv && source .venv/bin/activate`)
+- Dependencies: `pip install -r requirements.txt`
 
-### 数据源
+### Data Sources
 
-| 用途 | 主数据源 | 备选数据源 |
-|------|---------|-----------|
-| 行情 / 财务数据 | yfinance | polygon.io REST API |
-| 市场元数据 | yfinance | polygon.io |
-| 财经新闻 / 事件 | yfinance news | 手动补充 |
+| Purpose | Primary Source | Fallback Source |
+|---------|---------------|----------------|
+| Price / financial data | yfinance | polygon.io REST API |
+| Market metadata | yfinance | polygon.io |
+| Financial news / events | yfinance news | manual supplement |
 
-- polygon.io API Key 通过环境变量 `POLYGON_API_KEY` 注入（`.env` 文件，不纳入版本控制）
-- 本地缓存由 `lib/cache_manager.py` 统一管理，避免重复拉取
+- polygon.io API key is injected via environment variable `POLYGON_API_KEY` (`.env` file, not version-controlled)
+- Local caching is managed by `lib/cache_manager.py` to avoid redundant fetches
 
-### 市场范围
+### Market Scope
 
-- **仅限美股**：NYSE + NASDAQ
-- Ticker 格式：标准美股 ticker symbol（如 `AAPL`、`MSFT`、`NVDA`）
-- 货币单位：USD
-- 交易时区：US/Eastern
+- **US equities only**: NYSE + NASDAQ
+- Ticker format: standard US equity ticker symbol (e.g. `AAPL`, `MSFT`, `NVDA`)
+- Currency: USD
+- Trading timezone: US/Eastern
 
-### 文件命名规范
+### File Naming Conventions
 
-| 类型 | 格式 | 示例 |
-|------|------|------|
-| 行业报告 | `YYYYMMDD_sector_<name>.md` | `20260512_sector_semiconductors.md` |
-| 个股报告 | `YYYYMMDD_<TICKER>_<type>.md` | `20260512_NVDA_equity.md` |
-| 扫描结果 | `YYYYMMDD_scan_<strategy>.md` | `20260512_scan_momentum.md` |
-| 缓存数据 | `<TICKER>_<type>_<YYYYMMDD>.parquet` | `AAPL_ohlcv_20260512.parquet` |
+| Type | Format | Example |
+|------|--------|---------|
+| Sector report | `YYYYMMDD_sector_<name>.md` | `20260512_sector_semiconductors.md` |
+| Equity report | `YYYYMMDD_<TICKER>_<type>.md` | `20260512_NVDA_equity.md` |
+| Scan result | `YYYYMMDD_scan_<strategy>.md` | `20260512_scan_momentum.md` |
+| Cached data | `<TICKER>_<type>_<YYYYMMDD>.parquet` | `AAPL_ohlcv_20260512.parquet` |
 
-### 报告格式
+### Report Format
 
-所有报告均为 Markdown，包含以下固定节：
+All reports are Markdown and include the following fixed sections:
 
 ```markdown
-# [报告标题]
+# [Report Title]
 
-**日期**：YYYY-MM-DD
-**标的 / 行业**：TICKER or Sector Name
-**分析师 Agent**：<agent-name>
+**Date**: YYYY-MM-DD
+**Ticker / Sector**: TICKER or Sector Name
+**Analyst Agent**: <agent-name>
 
-## 执行摘要
-（3-5 句话的核心结论）
+## Executive Summary
+(3–5 sentence core conclusions)
 
-## 正文分析
-（各 agent 专属内容）
+## Analysis Body
+(Agent-specific content)
 
-## 主要风险
-（至少 3 条）
+## Key Risks
+(At least 3 items)
 
-## 风险提示
-本报告仅供研究参考，不构成投资建议。
+## Disclaimer
+This report is for research purposes only and does not constitute investment advice.
 ```
 
 ---
 
-## 目录结构
+## Directory Structure
 
 ```
 investment-agents/
-├── CLAUDE.md                  # 本文件
+├── CLAUDE.md                  # this file
 ├── requirements.txt
-├── .env.example               # 环境变量模板
+├── .env.example               # environment variable template
 ├── .claude/
-│   └── agents/                # 子 agent 定义
-├── lib/                       # 共享 Python 工具
-│   ├── cache_manager.py       # 本地缓存管理
-│   ├── data_fetcher.py        # 数据拉取统一接口
-│   ├── valuation.py           # 估值模型
-│   ├── technical.py           # 技术指标
-│   └── report_writer.py       # 报告生成
+│   └── agents/                # sub-agent definitions
+├── lib/                       # shared Python utilities
+│   ├── cache_manager.py       # local cache management
+│   ├── data_fetcher.py        # unified data fetch interface
+│   ├── valuation.py           # valuation models
+│   ├── technical.py           # technical indicators
+│   └── report_writer.py       # report generation
 ├── data/
-│   └── us/                    # 美股缓存数据
+│   └── us/                    # US equity cached data
 ├── research/
-│   ├── sector/                # 行业研究报告
-│   ├── stock/                 # 个股深度报告
-│   └── scans/                 # 扫描结果
+│   ├── sector/                # sector research reports
+│   ├── stock/                 # individual stock reports
+│   └── scans/                 # scan results
 └── scripts/
     ├── daily_scan.py
     ├── fetch_financials.py

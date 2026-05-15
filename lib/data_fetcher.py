@@ -234,14 +234,14 @@ def format_earnings_summary(ticker: str) -> str:
     if c["next_earnings_date"]:
         d     = c["next_earnings_date"].strftime("%Y-%m-%d")
         days  = c["days_to_earnings"]
-        label = "今日" if days == 0 else (f"{days}天后" if days > 0 else f"{abs(days)}天前")
-        parts.append(f"下次财报：{d}（{label}）")
+        label = "Today" if days == 0 else (f"in {days}d" if days > 0 else f"{abs(days)}d ago")
+        parts.append(f"Next Earnings: {d} ({label})")
         if c["eps_estimate"] is not None:
-            parts.append(f"EPS 预期：${c['eps_estimate']:.2f}")
+            parts.append(f"EPS Est: ${c['eps_estimate']:.2f}")
     if c["surprise_pct_last"] is not None:
         sign = "+" if c["surprise_pct_last"] >= 0 else ""
-        parts.append(f"上次惊喜：{sign}{c['surprise_pct_last']}%")
-    return " | ".join(parts) if parts else "财报日期暂无数据"
+        parts.append(f"Last Surprise: {sign}{c['surprise_pct_last']}%")
+    return " | ".join(parts) if parts else "Earnings date unavailable"
 
 
 # ---------------------------------------------------------------------------
@@ -305,11 +305,11 @@ def format_prepost_summary(ticker: str) -> str:
     parts = []
     if d["pre_market_price"]:
         sign = "+" if (d["pre_market_change"] or 0) >= 0 else ""
-        parts.append(f"盘前 ${d['pre_market_price']:.2f}（{sign}{d['pre_market_change']}%）")
+        parts.append(f"Pre-mkt ${d['pre_market_price']:.2f} ({sign}{d['pre_market_change']}%)")
     if d["post_market_price"]:
         sign = "+" if (d["post_market_change"] or 0) >= 0 else ""
-        parts.append(f"盘后 ${d['post_market_price']:.2f}（{sign}{d['post_market_change']}%）")
-    return " | ".join(parts) if parts else "盘前/盘后数据暂不可用（非交易时段或数据源限制）"
+        parts.append(f"After-hrs ${d['post_market_price']:.2f} ({sign}{d['post_market_change']}%)")
+    return " | ".join(parts) if parts else "Pre/post-market data unavailable (non-trading hours or data source limit)"
 
 
 # ---------------------------------------------------------------------------

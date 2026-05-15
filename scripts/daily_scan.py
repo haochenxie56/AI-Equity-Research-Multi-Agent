@@ -102,14 +102,14 @@ def screen_momentum(tickers: list[str], top_n: int = 20) -> list[dict]:
 def build_report(strategy: str, results: list[dict]) -> str:
     header = f"""# Stock Scan: {strategy.title()}
 
-**日期**：{_today()}
-**筛选宇宙**：S&P 500（NYSE + NASDAQ）
-**策略**：{strategy}
-**命中数量**：{len(results)}
+**Date**: {_today()}
+**Universe**: S&P 500 (NYSE + NASDAQ)
+**Strategy**: {strategy}
+**Hits**: {len(results)}
 
 ---
 
-## 候选标的列表
+## Candidate List
 
 | Rank | Ticker | Price (USD) | RSI(14) | Vol Ratio | 3M Return | % from 52W High |
 |------|--------|-------------|---------|-----------|-----------|-----------------|

@@ -49,9 +49,9 @@ def make_header(
     lines = [
         f"# {title}",
         "",
-        f"**日期**：{_today()}",
-        f"**标的 / 行业**：{ticker_or_sector}",
-        f"**分析师 Agent**：{agent_name}",
+        f"**Date**: {_today()}",
+        f"**Ticker / Sector**: {ticker_or_sector}",
+        f"**Analyst Agent**: {agent_name}",
     ]
     if extra_fields:
         for k, v in extra_fields.items():
@@ -61,7 +61,7 @@ def make_header(
 
 
 def make_risk_footer() -> str:
-    return "\n\n---\n\n> **风险提示**：本报告仅供研究参考，不构成投资建议。市场存在风险，投资须谨慎。\n"
+    return "\n\n---\n\n> **Disclaimer**: This report is for research purposes only and does not constitute investment advice. Markets involve risk; invest with caution.\n"
 
 
 # ---------------------------------------------------------------------------
