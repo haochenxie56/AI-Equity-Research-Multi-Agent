@@ -11,12 +11,17 @@ back-off (2 s → 4 s → 8 s) before the exception is re-raised.
 import os
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 
 import pandas as pd
 import yfinance as yf
+from dotenv import load_dotenv
 
 from cache_manager import get_or_fetch
+
+# Load .env from project root (two levels up from lib/)
+load_dotenv(Path(__file__).parent.parent / ".env")
 
 POLYGON_API_KEY  = os.getenv("POLYGON_API_KEY",  "")
 FINNHUB_API_KEY  = os.getenv("FINNHUB_API_KEY",  "")

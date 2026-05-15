@@ -130,7 +130,7 @@ User Request
 
 ---
 
-## 🚀 本地运行 / Quick Start (WSL / Linux)
+## 🚀 本地运行 / Quick Start
 
 ### 1. 克隆项目
 
@@ -161,26 +161,30 @@ cp .env.example .env
 
 ### 4. 启动应用
 
-**方式 A — 终端启动（推荐开发时使用）**
+#### 🪟 Windows（需要 WSL2 + Ubuntu）
+
+> 本项目在 Windows 上通过 WSL2（Windows Subsystem for Linux）运行。请先确认已安装 WSL2 并在其中完成步骤 1–3。
+
+**一键静默启动（推荐）：双击 `launch.vbs`**
+
+脚本会自动：检测端口是否已占用 → 启动 WSL 中的 Streamlit → 等待服务就绪 → 打开浏览器。无黑色命令行窗口。
+
+若需在桌面创建快捷方式，目标路径设为：
+```
+wscript.exe "\\wsl.localhost\Ubuntu\home\<你的用户名>\projects\investment-agents\launch.vbs"
+```
+
+> ⚠️ 请双击 `launch.vbs` 而非 `launch.bat`，后者会弹出命令行窗口。
+
+#### 🍎 macOS / 🐧 Linux
+
+直接在终端运行：
 
 ```bash
 streamlit run app.py
 ```
 
 浏览器访问 → `http://localhost:8501`
-
-**方式 B — Windows 一键静默启动（双击桌面快捷方式）**
-
-> 适用于 WSL2 环境，无黑色命令行窗口，自动检测端口避免重复启动。
-
-1. 在 Windows 桌面创建快捷方式，目标设置为：
-   ```
-   wscript.exe "\\wsl.localhost\Ubuntu\home\<你的用户名>\projects\investment-agents\launch.vbs"
-   ```
-2. **双击 `launch.vbs` 的快捷方式**（不要直接双击 `launch.bat`）
-3. 脚本会自动：检测端口 → 启动 WSL Streamlit → 等待 4 秒 → 打开浏览器
-
-> ⚠️ 快捷方式必须指向 `launch.vbs`，直接运行 `launch.bat` 会弹出黑色命令行窗口。
 
 ---
 
@@ -194,11 +198,16 @@ POLYGON_API_KEY=your_polygon_api_key_here
 
 # Anthropic API Key（Agent 功能必需）
 ANTHROPIC_API_KEY=your_anthropic_api_key_here
+
+# Finnhub API Key（新闻情绪分析，免费套餐够用）
+# 注册：https://finnhub.io/register
+FINNHUB_API_KEY=your_finnhub_api_key_here
 ```
 
 **获取 API Key / Getting API Keys：**
 - Polygon.io（免费套餐够用）→ [polygon.io/dashboard](https://polygon.io/dashboard)
 - Anthropic API → [console.anthropic.com](https://console.anthropic.com/)
+- Finnhub（免费）→ [finnhub.io/register](https://finnhub.io/register)
 
 > yfinance 为主数据源，**无需任何 API Key** 即可运行基础功能。
 > yfinance is the primary data source and requires **no API key** for core features.
