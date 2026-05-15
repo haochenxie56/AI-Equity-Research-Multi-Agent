@@ -15,7 +15,7 @@ from ui_utils import (
     fmt_val, fmt_pct, apply_layout, download_report_button, page_header, t,
 )
 
-st.set_page_config(page_title="量价分析", page_icon="📉", layout="wide")
+st.set_page_config(page_title="Price & Volume", page_icon="📉", layout="wide")
 apply_theme()
 ticker = render_sidebar()
 

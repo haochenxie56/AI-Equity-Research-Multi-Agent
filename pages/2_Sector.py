@@ -14,7 +14,7 @@ from ui_utils import (
     apply_layout, fmt_large, page_header, render_table, t,
 )
 
-st.set_page_config(page_title="行业研究", page_icon="🏭", layout="wide")
+st.set_page_config(page_title="Sector Research", page_icon="🏭", layout="wide")
 apply_theme()
 render_sidebar()
 
@@ -94,11 +94,11 @@ st.plotly_chart(fig1, use_container_width=True)
 st.divider()
 
 # ── Chart 2: Normalized return comparison ─────────────────────────────────────
-st.subheader("📊 Normalized Return (Base = 100)")
+st.subheader(t("p2_norm_return"))
 
 available = {tk: d for tk, d in data.items() if not d.empty and len(d) > 5}
 if len(available) < 2:
-    st.warning("有效标的不足，请检查 Ticker 是否正确")
+    st.warning(t("p2_insufficient"))
 else:
     COLORS = (
         ["#4fc3f7","#ff3d3d","#00c853","#ffb300","#cc5de8",

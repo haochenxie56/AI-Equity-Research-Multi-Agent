@@ -125,127 +125,28 @@ if run_all or any(k in st.session_state for k in [f"overview_done_{ticker}"]):
             gm_v  = (info.get("grossMargins") or 0) * 100
             om_v  = (info.get("operatingMargins") or 0) * 100
             roe_v = (info.get("returnOnEquity") or 0) * 100
-            moat_scores = {
-                t("moat_intangibles"): min(5, max(1, int(gm_v / 12))),
-                t("moat_switching"):   min(5, max(1, int(om_v / 8) + 1)),
-                t("moat_network"):     min(5, max(1, 2)),
-                t("moat_cost_adv"):    min(5, max(1, int(om_v / 10))),
-                t("moat_eff_scale"):   min(5, max(1, int(roe_v / 15))),
+            # Store raw t-key→score mapping (language-independent)
+            moat_raw = {
+                "moat_intangibles": min(5, max(1, int(gm_v / 12))),
+                "moat_switching":   min(5, max(1, int(om_v / 8) + 1)),
+                "moat_network":     min(5, max(1, 2)),
+                "moat_cost_adv":    min(5, max(1, int(om_v / 10))),
+                "moat_eff_scale":   min(5, max(1, int(roe_v / 15))),
             }
-            total_moat = sum(moat_scores.values())
-            moat_label = (t("moat_wide") if total_moat >= 18 else
-                          (t("moat_narrow") if total_moat >= 12 else t("moat_none")))
+            total_moat = sum(moat_raw.values())
             results["equity"] = {
-                "moat_scores": moat_scores,
-                "total_moat": total_moat,
-                "moat_label": moat_label,
+                "moat_raw":      moat_raw,   # t-keys → score, language-independent
+                "total_moat":    total_moat,
                 "analyst_rating": str(info.get("recommendationKey", "N/A")).upper(),
-                "target_mean": info.get("targetMeanPrice"),
-                "num_analysts": info.get("numberOfAnalystOpinions", 0),
+                "target_mean":   info.get("targetMeanPrice"),
+                "num_analysts":  info.get("numberOfAnalystOpinions", 0),
             }
         except Exception as e:
             results["equity_error"] = str(e)
         progress.progress(87, text=f"✓ {t('p1_mod_equity')}")
 
-    # Step 5: Write summary report
-    status_box.info("⚙️ ...")
-    try:
-        today = datetime.now().strftime("%Y-%m-%d")
-        date_pfx = datetime.now().strftime("%Y%m%d")
-        fin_r = results.get("financial", {})
-        tech_r = results.get("technical", {})
-        earn_r = results.get("earnings", {})
-
-        _lang_r = st.session_state.get("language", "en")
-        _L = lambda zh, en: en if _lang_r == "en" else zh
-
-        report_lines = [
-            f"# Research Overview: {ticker} — {name}",
-            f"",
-            f"**{_L('Date', '日期')}**: {today}  |  **{_L('Price', '价格')}**: ${price:.2f}  |  **{_L('Change', '涨跌')}**: {chg:+.2f}%",
-            f"",
-            f"---",
-            f"",
-            f"## {_L('Executive Summary', '执行摘要')}",
-            f"",
-        ]
-
-        if fin_r:
-            gm = f"{fin_r.get('gm',0)*100:.1f}%" if fin_r.get('gm') else 'N/A'
-            report_lines += [
-                f"- {_L('Revenue (TTM)', '营收（TTM）')}: {fmt_large(fin_r.get('rev'))}",
-                f"- {_L('Gross Margin', '毛利率')}: {gm}",
-                f"- {_L('Net Income (TTM)', '净利润（TTM）')}: {fmt_large(fin_r.get('ni'))}",
-                f"- {_L('Free Cash Flow (TTM)', '自由现金流（TTM）')}: {fmt_large(fin_r.get('fcf'))}",
-                f"",
-            ]
-
-        if tech_r:
-            trend = (
-                _L("Bullish alignment (Price > SMA20 > SMA50 > SMA200)", "多头排列（价格 > SMA20 > SMA50 > SMA200）")
-                if (tech_r.get("price", 0) > tech_r.get("SMA_20", 0) > tech_r.get("SMA_50", 0))
-                else _L("MA structure needs attention", "均线结构需关注")
-            )
-            report_lines += [
-                f"- {_L('Price', '当前价')}: ${tech_r.get('price')} | RSI(14): {tech_r.get('RSI_14')} | ADX: {tech_r.get('ADX')}",
-                f"- {_L('Trend', '趋势结构')}: {trend}",
-                f"- {_L('From 52W High', '距52周高点')}: {tech_r.get('pct_from_52w_high')}%",
-                f"",
-            ]
-
-        if earn_r and earn_r.get("next_earnings_date"):
-            d = earn_r["next_earnings_date"].strftime("%Y-%m-%d")
-            days = earn_r.get("days_to_earnings", 0)
-            _day_lbl = f"{days}{_L('d out' if days >= 0 else 'd ago', '天后' if days >= 0 else '天前')}"
-            report_lines.append(
-                f"- {_L('Next Earnings', '下次财报')}: {d} ({'⚠️ ' if abs(days) <= 14 else ''}{_day_lbl})"
-            )
-            if earn_r.get("eps_estimate"):
-                report_lines.append(f"  - {_L('EPS Est', 'EPS 预期')}: ${earn_r['eps_estimate']:.2f}")
-            if earn_r.get("surprise_pct_last") is not None:
-                s = earn_r['surprise_pct_last']
-                report_lines.append(f"  - {_L('Last Surprise', '上次EPS惊喜')}: {'+' if s >= 0 else ''}{s}%")
-            report_lines.append("")
-
-        eq_r = results.get("equity", {})
-        if eq_r:
-            report_lines += [
-                f"- {_L('Moat Rating', '护城河评级')}: {eq_r.get('moat_label')} ({eq_r.get('total_moat')}/25)",
-                f"- {_L('Analyst Rating', '分析师评级')}: {eq_r.get('analyst_rating', 'N/A')}",
-            ]
-            if eq_r.get("target_mean"):
-                upside_r = (eq_r["target_mean"] / price - 1) * 100 if price else 0
-                _n_ana = eq_r.get('num_analysts', 0)
-                report_lines.append(
-                    f"- {_L('Mean Target', '目标价均值')}: ${eq_r['target_mean']:.2f} ({upside_r:+.1f}%, {_n_ana} {_L('analysts', '位分析师')})"
-                )
-            report_lines.append("")
-
-        report_lines += [
-            f"## {_L('Valuation Snapshot', '估值快照')}",
-            f"",
-            f"| {_L('Metric', '指标')} | {_L('Value', '数值')} |",
-            f"|------|------|",
-            f"| Trailing P/E | {fmt_val(info.get('trailingPE'), decimals=1, suffix='x')} |",
-            f"| Forward P/E  | {fmt_val(info.get('forwardPE'),  decimals=1, suffix='x')} |",
-            f"| P/S (TTM)    | {fmt_val(info.get('priceToSalesTrailing12Months'), decimals=1, suffix='x')} |",
-            f"| EV/EBITDA    | {fmt_val(info.get('enterpriseToEbitda'), decimals=1, suffix='x')} |",
-            f"| {_L('Mkt Cap', '市值')} | {fmt_large(info.get('marketCap'))} |",
-            f"",
-            f"---",
-            f"",
-            f"> **{_L('Disclaimer', '风险提示')}**: {_L('For research purposes only. Not investment advice.', '本报告仅供研究参考，不构成投资建议。')}",
-        ]
-        report_content = "\n".join(report_lines)
-
-        report_path = Path(__file__).parent.parent / "research" / "stock" / f"{date_pfx}_{ticker}_summary.md"
-        report_path.parent.mkdir(parents=True, exist_ok=True)
-        report_path.write_text(report_content, encoding="utf-8")
-        results["report"] = report_content
-        st.session_state[f"overview_done_{ticker}"] = results
-    except Exception as e:
-        st.warning(t("p1_rpt_gen_err") + f": {e}")
-
+    # Save all raw results (report is generated fresh at display time)
+    st.session_state[f"overview_done_{ticker}"] = results
     progress.progress(100, text="✅ Done")
     status_box.empty()
 
@@ -309,7 +210,9 @@ equity_r = stored.get("equity", {})
 if equity_r:
     st.subheader(t("p1_equity_sum"))
     eq1, eq2, eq3 = st.columns(3)
-    eq1.metric(t("moat_rating"),   f"{equity_r.get('moat_label')} ({equity_r.get('total_moat')}/25)")
+    _total_m = equity_r.get("total_moat", 0)
+    _moat_lbl = (t("moat_wide") if _total_m >= 18 else (t("moat_narrow") if _total_m >= 12 else t("moat_none")))
+    eq1.metric(t("moat_rating"),   f"{_moat_lbl} ({_total_m}/25)")
     eq2.metric(t("analyst_rtg"),   equity_r.get("analyst_rating", "N/A"))
     if equity_r.get("target_mean"):
         target_p = equity_r["target_mean"]
@@ -433,10 +336,116 @@ with _score_col:
               delta_color="normal" if _overall >= 3.5 else ("off" if _overall >= 2.5 else "inverse"))
 st.divider()
 
-# Report
-if stored.get("report"):
+# Report — generated fresh each render so language always matches current setting
+if stored:
     st.subheader(t("p1_report"))
-    st.markdown(stored["report"])
-    st.divider()
-    date_pfx = datetime.now().strftime("%Y%m%d")
-    download_report_button(stored["report"], f"{date_pfx}_{ticker}_summary.md", t("download_report"))
+    try:
+        today    = datetime.now().strftime("%Y-%m-%d")
+        date_pfx = datetime.now().strftime("%Y%m%d")
+        fin_r  = stored.get("financial", {})
+        tech_r = stored.get("technical", {})
+        earn_r = stored.get("earnings", {})
+        eq_r   = stored.get("equity", {})
+
+        _lang_r = st.session_state.get("language", "en")
+        _L = lambda zh, en: en if _lang_r == "en" else zh
+
+        report_lines = [
+            f"# Research Overview: {ticker} — {name}",
+            f"",
+            f"**{_L('Date', '日期')}**: {today}  |  **{_L('Price', '价格')}**: ${price:.2f}  |  **{_L('Change', '涨跌')}**: {chg:+.2f}%",
+            f"",
+            f"---",
+            f"",
+            f"## {_L('Executive Summary', '执行摘要')}",
+            f"",
+        ]
+
+        if fin_r:
+            gm = f"{fin_r.get('gm', 0) * 100:.1f}%" if fin_r.get('gm') else 'N/A'
+            report_lines += [
+                f"- {_L('Revenue (TTM)', '营收（TTM）')}: {fmt_large(fin_r.get('rev'))}",
+                f"- {_L('Gross Margin', '毛利率')}: {gm}",
+                f"- {_L('Net Income (TTM)', '净利润（TTM）')}: {fmt_large(fin_r.get('ni'))}",
+                f"- {_L('Free Cash Flow (TTM)', '自由现金流（TTM）')}: {fmt_large(fin_r.get('fcf'))}",
+                f"",
+            ]
+
+        if tech_r:
+            trend = (
+                _L("Bullish alignment (Price > SMA20 > SMA50 > SMA200)", "多头排列（价格 > SMA20 > SMA50 > SMA200）")
+                if (tech_r.get("price", 0) > tech_r.get("SMA_20", 0) > tech_r.get("SMA_50", 0))
+                else _L("MA structure needs attention", "均线结构需关注")
+            )
+            report_lines += [
+                f"- {_L('Price', '当前价')}: ${tech_r.get('price')} | RSI(14): {tech_r.get('RSI_14')} | ADX: {tech_r.get('ADX')}",
+                f"- {_L('Trend', '趋势结构')}: {trend}",
+                f"- {_L('From 52W High', '距52周高点')}: {tech_r.get('pct_from_52w_high')}%",
+                f"",
+            ]
+
+        if earn_r and earn_r.get("next_earnings_date"):
+            d    = earn_r["next_earnings_date"].strftime("%Y-%m-%d")
+            days = earn_r.get("days_to_earnings", 0)
+            _day_lbl = f"{days}{_L('d out' if days >= 0 else 'd ago', '天后' if days >= 0 else '天前')}"
+            report_lines.append(
+                f"- {_L('Next Earnings', '下次财报')}: {d} ({'⚠️ ' if abs(days) <= 14 else ''}{_day_lbl})"
+            )
+            if earn_r.get("eps_estimate"):
+                report_lines.append(f"  - {_L('EPS Est', 'EPS 预期')}: ${earn_r['eps_estimate']:.2f}")
+            if earn_r.get("surprise_pct_last") is not None:
+                s = earn_r['surprise_pct_last']
+                report_lines.append(f"  - {_L('Last Surprise', '上次EPS惊喜')}: {'+' if s >= 0 else ''}{s}%")
+            report_lines.append("")
+
+        if eq_r:
+            _em = eq_r.get("total_moat", 0)
+            _el = (t("moat_wide") if _em >= 18 else (t("moat_narrow") if _em >= 12 else t("moat_none")))
+            report_lines += [
+                f"- {_L('Moat Rating', '护城河评级')}: {_el} ({_em}/25)",
+                f"- {_L('Analyst Rating', '分析师评级')}: {eq_r.get('analyst_rating', 'N/A')}",
+            ]
+            if eq_r.get("target_mean"):
+                upside_r = (eq_r["target_mean"] / price - 1) * 100 if price else 0
+                _n_ana = eq_r.get('num_analysts', 0)
+                report_lines.append(
+                    f"- {_L('Mean Target', '目标价均值')}: ${eq_r['target_mean']:.2f} ({upside_r:+.1f}%, {_n_ana} {_L('analysts', '位分析师')})"
+                )
+            if eq_r.get("moat_raw"):
+                report_lines += [
+                    f"",
+                    f"### {_L('Moat Scores', '护城河各项')}",
+                    f"",
+                    f"| {_L('Dimension', '维度')} | {_L('Score', '评分')} |",
+                    f"|---|---|",
+                ]
+                for _mk, _mv in eq_r["moat_raw"].items():
+                    report_lines.append(f"| {t(_mk)} | {'★'*_mv}{'☆'*(5-_mv)} ({_mv}/5) |")
+            report_lines.append("")
+
+        report_lines += [
+            f"## {_L('Valuation Snapshot', '估值快照')}",
+            f"",
+            f"| {_L('Metric', '指标')} | {_L('Value', '数值')} |",
+            f"|------|------|",
+            f"| Trailing P/E | {fmt_val(info.get('trailingPE'), decimals=1, suffix='x')} |",
+            f"| Forward P/E  | {fmt_val(info.get('forwardPE'),  decimals=1, suffix='x')} |",
+            f"| P/S (TTM)    | {fmt_val(info.get('priceToSalesTrailing12Months'), decimals=1, suffix='x')} |",
+            f"| EV/EBITDA    | {fmt_val(info.get('enterpriseToEbitda'), decimals=1, suffix='x')} |",
+            f"| {_L('Mkt Cap', '市值')} | {fmt_large(info.get('marketCap'))} |",
+            f"",
+            f"---",
+            f"",
+            f"> **{_L('Disclaimer', '风险提示')}**: {_L('For research purposes only. Not investment advice.', '本报告仅供研究参考，不构成投资建议。')}",
+        ]
+        report_content = "\n".join(report_lines)
+
+        report_path = Path(__file__).parent.parent / "research" / "stock" / f"{date_pfx}_{ticker}_summary.md"
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(report_content, encoding="utf-8")
+
+        st.markdown(report_content)
+        st.divider()
+        download_report_button(report_content, f"{date_pfx}_{ticker}_summary.md", t("download_report"))
+    except Exception as e:
+        st.warning(t("p1_rpt_gen_err") + f": {e}")

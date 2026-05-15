@@ -17,7 +17,7 @@ from ui_utils import (
     apply_layout, download_report_button, page_header, render_table, t,
 )
 
-st.set_page_config(page_title="财务分析", page_icon="📊", layout="wide")
+st.set_page_config(page_title="Financials", page_icon="📊", layout="wide")
 apply_theme()
 ticker = render_sidebar()
 
@@ -37,7 +37,7 @@ with st.spinner(f"Loading {ticker} financials..."):
         cf  = load_cashflow(ticker)
         has_data = True
     except Exception as e:
-        st.error(f"财务数据加载失败：{e}")
+        st.error(f"{t('loading_failed')}: {e}")
         has_data = False
 
 name  = info.get("longName", ticker)

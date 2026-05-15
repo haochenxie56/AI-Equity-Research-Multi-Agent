@@ -1056,6 +1056,8 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "p2_dl_csv":          "⬇ 下载表格 CSV",
         "p2_price_usd":       "价格 (USD)",
         "p2_volume":          "成交量",
+        "p2_norm_return":     "📊 归一化收益率（基准 = 100）",
+        "p2_insufficient":    "有效标的不足，请检查 Ticker 是否正确",
         # ── Page 3 ───────────────────────────────────────────────────────────────
         "p3_title":           "🔍 选股扫描",
         "p3_subtitle":        "在自定义股票池中按策略筛选候选标的",
@@ -1284,6 +1286,8 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "p2_dl_csv":          "⬇ Download CSV",
         "p2_price_usd":       "Price (USD)",
         "p2_volume":          "Volume",
+        "p2_norm_return":     "📊 Normalized Return (Base = 100)",
+        "p2_insufficient":    "Not enough valid tickers. Please check the symbols.",
         # ── Page 3 ───────────────────────────────────────────────────────────────
         "p3_title":           "🔍 Stock Scanner",
         "p3_subtitle":        "Screen a custom stock pool by strategy",

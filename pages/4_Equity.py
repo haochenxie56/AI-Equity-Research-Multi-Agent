@@ -33,7 +33,7 @@ def _get_default_peers(ticker: str, info: dict) -> str:
             return ", ".join([p for p in peers.split(", ") if p != ticker])
     return "AAPL, MSFT, GOOGL, AMZN, META"
 
-st.set_page_config(page_title="个股研究", page_icon="🏢", layout="wide")
+st.set_page_config(page_title="Equity Research", page_icon="🏢", layout="wide")
 apply_theme()
 ticker = render_sidebar()
 
@@ -69,15 +69,17 @@ st.divider()
 
 # ── Earnings banner ───────────────────────────────────────────────────────────
 if cal.get("next_earnings_date"):
-    d_str = cal["next_earnings_date"].strftime("%Y-%m-%d")
-    days  = cal.get("days_to_earnings", 0)
-    eps_e = f" | EPS est. ${cal['eps_estimate']:.2f}" if cal.get("eps_estimate") else ""
-    surp  = f" | Last surprise {'+' if (cal.get('surprise_pct_last') or 0) >= 0 else ''}{cal.get('surprise_pct_last','N/A')}%" if cal.get("surprise_pct_last") is not None else ""
-    banner = f"📅 Next earnings: **{d_str}** ({days}d {'out' if days >= 0 else 'ago'}){eps_e}{surp}"
+    d_str     = cal["next_earnings_date"].strftime("%Y-%m-%d")
+    days      = cal.get("days_to_earnings", 0)
+    _day_lbl  = f"{days}{t('earn_day_out') if days >= 0 else t('earn_day_ago')}"
+    _eps_part = f" | {t('earn_eps_est')}: ${cal['eps_estimate']:.2f}" if cal.get("eps_estimate") else ""
+    _sign     = '+' if (cal.get('surprise_pct_last') or 0) >= 0 else ''
+    _surp_part = f" | {t('earn_last_surp')}: {_sign}{cal.get('surprise_pct_last','N/A')}%" if cal.get("surprise_pct_last") is not None else ""
+    banner    = f"📅 {t('earn_next_lbl')}: **{d_str}** — {_day_lbl}{_eps_part}{_surp_part}"
     if 0 <= days <= 14:
-        st.warning(f"⚠️ Earnings window — {banner}")
+        st.warning(f"⚠️ {t('earn_window_lbl')} — {banner}")
     elif days < 0 and abs(days) <= 7:
-        st.info(f"🗓️ Earnings just released — {banner}")
+        st.info(f"🗓️ {t('earn_just_rel')} — {banner}")
     else:
         st.info(banner)
 
@@ -205,7 +207,7 @@ with right_col:
             textposition="outside",
         ))
         suffix = "%" if "%" in metric_choice else "x"
-        apply_layout(fig_p, title=f"Peer Comparison — {metric_choice}", height=300)
+        apply_layout(fig_p, title=f"{t('p4_peers')} — {metric_choice}", height=300)
         fig_p.update_yaxes(title_text=metric_choice)
         st.plotly_chart(fig_p, use_container_width=True)
 
@@ -229,7 +231,7 @@ st.divider()
 with st.expander(t("p4_biz"), expanded=False):
     raw = info.get("longBusinessSummary", "")
     if raw:
-        _lang = st.session_state.get("language", "zh")
+        _lang = st.session_state.get("language", "en")
         st.markdown(raw if _lang == "en" else translate_to_chinese(raw))
     else:
         st.markdown("N/A")
