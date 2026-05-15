@@ -405,6 +405,7 @@ def get_news(ticker: str, days: int = 7) -> list[dict]:
                 continue
 
         results.sort(key=lambda x: x["datetime"], reverse=True)
+        print(f"[news] source: finnhub, count: {len(results)}", flush=True)
         return results
 
     except Exception:

@@ -276,11 +276,30 @@ else:
 
     # ── Sentiment trend chart ─────────────────────────────────────────────────
     from collections import defaultdict
-    _daily: dict = defaultdict(list)
-    for _a in _news:
-        _daily[_a["datetime"][:10]].append(_a["sentiment"])
+    from datetime import datetime as _dt_cls
 
-    _dates    = sorted(_daily.keys())
+    # Determine date span to decide axis format and grouping granularity
+    _raw_times     = [a["datetime"] for a in _news]
+    _span_min      = _dt_cls.strptime(min(_raw_times), "%Y-%m-%d %H:%M")
+    _span_max      = _dt_cls.strptime(max(_raw_times), "%Y-%m-%d %H:%M")
+    _date_range_d  = (_span_max - _span_min).total_seconds() / 86400
+
+    if _date_range_d < 2:
+        # Group by hour
+        _daily: dict = defaultdict(list)
+        for _a in _news:
+            _daily[_a["datetime"][:13] + ":00"].append(_a["sentiment"])
+        _tick_fmt    = "%m-%d %H:%M"
+        _chart_title = "近期情绪趋势（按小时）"
+    else:
+        # Group by day
+        _daily = defaultdict(list)
+        for _a in _news:
+            _daily[_a["datetime"][:10]].append(_a["sentiment"])
+        _tick_fmt    = "%m-%d"
+        _chart_title = "近7天日均情绪趋势"
+
+    _dates     = sorted(_daily.keys())
     _daily_avg = [sum(_daily[d]) / len(_daily[d]) for d in _dates]
 
     if len(_dates) >= 2:
@@ -316,8 +335,9 @@ else:
             annotation_text="中性基准", annotation_position="right",
             annotation_font_color=_hline_c,
         )
-        apply_layout(_fig_s, title="近7天日均情绪趋势", height=240)
+        apply_layout(_fig_s, title=_chart_title, height=240)
         _fig_s.update_yaxes(range=[-1.1, 1.1], title_text="情绪分数")
+        _fig_s.update_xaxes(tickformat=_tick_fmt)
         st.plotly_chart(_fig_s, use_container_width=True)
 
     # ── News list ─────────────────────────────────────────────────────────────
@@ -344,13 +364,14 @@ else:
         for _a in _filtered[:20]:
             _s = _a["sentiment"]
             _dot = _pos_col if _s > 0.2 else (_neg_col if _s < -0.2 else _neu_col)
-            _score_txt = f"{_s:+.2f}"
+            _score_txt   = f"{_s:+.2f}"
+            _headline_zh = translate_to_chinese(_a["headline"]) if _a.get("headline") else ""
             _link = (
                 f'<a href="{_a["url"]}" target="_blank" '
                 f'style="color:{_t0_col};text-decoration:none;font-weight:500;">'
-                f'{_a["headline"]}</a>'
+                f'{_headline_zh}</a>'
                 if _a.get("url") else
-                f'<span style="color:{_t0_col};font-weight:500;">{_a["headline"]}</span>'
+                f'<span style="color:{_t0_col};font-weight:500;">{_headline_zh}</span>'
             )
             st.markdown(
                 f'<div style="display:flex;align-items:flex-start;'
