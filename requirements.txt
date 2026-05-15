@@ -1,42 +1,40 @@
-# ── Core data & numerics ─────────────────────────────────────────────────────
+# ── Core data & numerics ──────────────────────────────────────────────────────
 pandas>=2.2
 numpy>=1.26
 scipy>=1.13
 
-# ── US equity data (primary) ─────────────────────────────────────────────────
+# ── US equity data (primary) ──────────────────────────────────────────────────
 yfinance>=0.2.40
 
-# ── polygon.io (fallback) ────────────────────────────────────────────────────
-requests>=2.31           # polygon.io REST calls
-polygon-api-client>=1.14 # optional higher-level client
+# ── polygon.io (fallback) ─────────────────────────────────────────────────────
+requests>=2.31            # polygon.io REST calls
+polygon-api-client>=1.14  # optional higher-level client
 
-# ── Technical analysis ───────────────────────────────────────────────────────
-pandas-ta>=0.3.14b       # pure-Python TA (no C build required)
-# TA-Lib                 # optional C extension; install separately if needed
+# ── Technical analysis ────────────────────────────────────────────────────────
+# pandas-ta is pure Python — no C build required, works on Streamlit Cloud.
+# TA-Lib (C extension) is intentionally excluded:
 #   macOS:  brew install ta-lib && pip install TA-Lib
 #   Ubuntu: apt install libta-lib-dev && pip install TA-Lib
+pandas-ta>=0.3.14b0
 
-# ── Visualization ────────────────────────────────────────────────────────────
-matplotlib>=3.9
-mplfinance>=0.12.10      # candlestick / OHLC charts
-plotly>=5.22             # interactive charts
+# ── Visualization (Plotly only — mplfinance/matplotlib not used in app) ───────
+plotly>=5.22
 
-# ── Data storage ─────────────────────────────────────────────────────────────
-pyarrow>=16.0            # Parquet read/write (required by cache_manager)
-openpyxl>=3.1            # Excel export
+# ── Data storage ──────────────────────────────────────────────────────────────
+pyarrow>=16.0   # Parquet read/write; also ships own wheel on Streamlit Cloud
+openpyxl>=3.1   # Excel export (optional, used by report_writer)
 
-# ── Report & template ────────────────────────────────────────────────────────
-jinja2>=3.1              # optional templating for HTML reports
+# ── Report & template ─────────────────────────────────────────────────────────
+jinja2>=3.1     # HTML report templating (optional)
 
-# ── Environment & config ─────────────────────────────────────────────────────
-python-dotenv>=1.0       # load .env for POLYGON_API_KEY
+# ── Environment & config ──────────────────────────────────────────────────────
+python-dotenv>=1.0  # loads .env → POLYGON_API_KEY / ANTHROPIC_API_KEY
 
-# ── Web app ──────────────────────────────────────────────────────────────────
-streamlit>=1.35          # UI framework
-plotly>=5.22             # Interactive charts
+# ── Web app ───────────────────────────────────────────────────────────────────
+streamlit>=1.35
 
-# ── AI integration ───────────────────────────────────────────────────────────
-anthropic>=0.30          # Claude API / agent SDK
+# ── AI / Agent integration ────────────────────────────────────────────────────
+anthropic>=0.30  # Claude API + Agent SDK
 
-# ── Translation ─────────────────────────────────────────────────────────────
-deep-translator>=1.11    # free Google Translate wrapper, no API key needed
+# ── Translation ───────────────────────────────────────────────────────────────
+deep-translator>=1.11  # free Google Translate wrapper, no API key required

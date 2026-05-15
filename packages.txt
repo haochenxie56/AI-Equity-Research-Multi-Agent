@@ -1,0 +1,11 @@
+# System-level packages installed by Streamlit Cloud (apt-get) before pip.
+#
+# TA-Lib (C extension) is intentionally EXCLUDED from this project.
+# Technical analysis is handled by pandas-ta (pure Python) instead:
+#   https://github.com/twopirllc/pandas-ta
+#
+# All Python dependencies are pure-Python or ship their own wheels,
+# so no additional system packages are required.
+#
+# If you later add TA-Lib, uncomment:
+# libta-lib-dev

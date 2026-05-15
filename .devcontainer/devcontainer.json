@@ -1,0 +1,47 @@
+{
+    "name": "AI Equity Research — Multi-Agent System",
+
+    // Python 3.11 official devcontainer base image
+    "image": "mcr.microsoft.com/devcontainers/python:3.11",
+
+    // Install Python dependencies once on container creation
+    "postCreateCommand": "pip install -r requirements.txt",
+
+    // Start Streamlit in background every time the Codespace resumes
+    "postStartCommand": "nohup streamlit run app.py --server.headless true --server.port 8501 > /tmp/streamlit.log 2>&1 &",
+
+    // Forward Streamlit port and open in browser automatically
+    "forwardPorts": [8501],
+    "portsAttributes": {
+        "8501": {
+            "label": "Streamlit App",
+            "onAutoForward": "openBrowser"
+        }
+    },
+
+    // VS Code extensions and settings for a Python / data-science workflow
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-python.python",
+                "ms-python.vscode-pylance",
+                "charliermarsh.ruff",
+                "ms-toolsai.jupyter",
+                "mechatroner.rainbow-csv"
+            ],
+            "settings": {
+                "python.defaultInterpreterPath": "/usr/local/bin/python",
+                "editor.formatOnSave": true,
+                "editor.rulers": [100],
+                "files.trimTrailingWhitespace": true
+            }
+        }
+    },
+
+    // Pass API keys from Codespace secrets into the container environment
+    // Set these in: GitHub → Your Codespace → Manage secrets
+    "remoteEnv": {
+        "ANTHROPIC_API_KEY": "${localEnv:ANTHROPIC_API_KEY}",
+        "POLYGON_API_KEY":   "${localEnv:POLYGON_API_KEY}"
+    }
+}

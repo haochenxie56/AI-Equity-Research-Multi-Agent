@@ -9,6 +9,9 @@
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![NYSE · NASDAQ](https://img.shields.io/badge/Market-NYSE%20%C2%B7%20NASDAQ-0052CC)](https://www.nyse.com/)
 
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/haochenxie56/AI-Equity-Research-Multi-Agent)
+[![Open in Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://YOUR-APP.streamlit.app)
+
 </div>
 
 ---
@@ -94,6 +97,18 @@ User Request
 | **存储 / Storage** | Apache Parquet (pyarrow) · local cache manager |
 | **翻译 / Translation** | deep-translator (Google Translate, no API key) |
 | **运行环境 / Runtime** | Python 3.11+ · WSL2 (Ubuntu) / Linux |
+
+---
+
+## 🚀 一键部署 / One-Click Deploy
+
+| 平台 / Platform | 操作 / Action | 说明 / Notes |
+|---|---|---|
+| **GitHub Codespaces** | [![Open in Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/haochenxie56/AI-Equity-Research-Multi-Agent) | 浏览器内完整开发环境，自动安装依赖并启动 Streamlit |
+| **Streamlit Cloud** | [![Open in Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://YOUR-APP.streamlit.app) | 部署完成后替换链接 / Replace link after deployment |
+
+> **Codespaces 首次启动约需 2-3 分钟**安装依赖，之后端口 8501 自动打开。
+> 在 [GitHub Codespace Secrets](https://github.com/settings/codespaces) 中配置 `ANTHROPIC_API_KEY` 和 `POLYGON_API_KEY`。
 
 ---
 
