@@ -503,7 +503,10 @@ def load_ohlcv_multi(tickers: tuple, period: str = "1y") -> dict[str, pd.DataFra
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 
 def init_session():
-    defaults = {"ticker": "", "scan_results": None, "last_report": {}, "dark_mode": True}
+    defaults = {
+        "ticker": "", "scan_results": None, "last_report": {},
+        "dark_mode": True, "language": "zh",
+    }
     for k, v in defaults.items():
         if k not in st.session_state:
             st.session_state[k] = v
@@ -522,9 +525,9 @@ def render_sidebar() -> str:
         )
 
         ticker = st.text_input(
-            "股票代码",
+            t("sidebar_ticker"),
             value=st.session_state.ticker,
-            placeholder="如：NVDA",
+            placeholder=t("sidebar_ticker_ph"),
             key="sidebar_ticker",
         ).upper().strip()
 
@@ -537,17 +540,17 @@ def render_sidebar() -> str:
             st.divider()
             st.markdown(
                 f'<p style="font-size:0.70rem;color:var(--t1);text-transform:uppercase;'
-                f'letter-spacing:0.08em;margin-bottom:6px">数据缓存 · {ticker}</p>',
+                f'letter-spacing:0.08em;margin-bottom:6px">{t("sidebar_cache")} · {ticker}</p>',
                 unsafe_allow_html=True,
             )
             try:
                 from cache_manager import cache_status
                 status = cache_status(ticker)
                 labels = {
-                    "ohlcv_1y_1d":   "行情",
-                    "financials":    "财务",
-                    "balance_sheet": "资产负债",
-                    "cashflow":      "现金流",
+                    "ohlcv_1y_1d":   t("cache_ohlcv"),
+                    "financials":    t("cache_financials"),
+                    "balance_sheet": t("cache_balance"),
+                    "cashflow":      t("cache_cashflow"),
                 }
                 cols = st.columns(2)
                 for i, (key, label) in enumerate(labels.items()):
@@ -562,15 +565,42 @@ def render_sidebar() -> str:
 
         st.divider()
 
+        # ── Language toggle ──
+        _lang = st.session_state.get("language", "zh")
+        _ll, _lr = st.columns(2)
+        if _ll.button("🇨🇳 中文", type="primary" if _lang == "zh" else "secondary",
+                      use_container_width=True, key="_lang_zh"):
+            st.session_state.language = "zh"
+            st.rerun()
+        if _lr.button("🇺🇸 EN", type="primary" if _lang == "en" else "secondary",
+                      use_container_width=True, key="_lang_en"):
+            st.session_state.language = "en"
+            st.rerun()
+
         # ── Dark / light mode toggle ──
-        # Use a separate widget key so st.toggle doesn't own session_state.dark_mode
         current = st.session_state.get("dark_mode", True)
-        toggled = st.toggle("🌙 深色模式", value=current, key="_dark_mode_widget")
+        toggled = st.toggle(t("dark_mode"), value=current, key="_dark_mode_widget")
         if toggled != current:
             st.session_state.dark_mode = toggled
             st.rerun()
 
-        st.caption("⚠️ 仅供研究参考，不构成投资建议")
+        st.caption(t("disclaimer"))
+
+        st.divider()
+
+        # ── Page navigation ──
+        st.markdown(
+            f'<p style="font-size:0.70rem;color:var(--t1);text-transform:uppercase;'
+            f'letter-spacing:0.08em;margin-bottom:4px">{t("nav_section")}</p>',
+            unsafe_allow_html=True,
+        )
+        st.page_link("app.py",                   label=t("nav_home"))
+        st.page_link("pages/1_总览.py",           label=t("nav_p1"))
+        st.page_link("pages/2_行业研究.py",       label=t("nav_p2"))
+        st.page_link("pages/3_选股扫描.py",       label=t("nav_p3"))
+        st.page_link("pages/4_个股研究.py",       label=t("nav_p4"))
+        st.page_link("pages/5_财务分析.py",       label=t("nav_p5"))
+        st.page_link("pages/6_量价分析.py",       label=t("nav_p6"))
 
     return st.session_state.ticker
 
@@ -924,3 +954,377 @@ def translate_to_chinese(text: str) -> str:
         return GoogleTranslator(source="en", target="zh-CN").translate(text)
     except Exception:
         return text
+
+
+# ── i18n: TRANSLATIONS + t() ─────────────────────────────────────────────────
+
+TRANSLATIONS: dict[str, dict[str, str]] = {
+    "zh": {
+        # ── Sidebar ──────────────────────────────────────────────────────────────
+        "sidebar_ticker":     "股票代码",
+        "sidebar_ticker_ph":  "如：NVDA",
+        "sidebar_cache":      "数据缓存",
+        "cache_ohlcv":        "行情",
+        "cache_financials":   "财务",
+        "cache_balance":      "资产负债",
+        "cache_cashflow":     "现金流",
+        "dark_mode":          "🌙 深色模式",
+        "disclaimer":         "⚠️ 仅供研究参考，不构成投资建议",
+        # Nav links
+        "nav_home":           "🏠 主页",
+        "nav_p1":             "🔭 总览",
+        "nav_p2":             "🏭 行业研究",
+        "nav_p3":             "🔍 选股扫描",
+        "nav_p4":             "🏢 个股研究",
+        "nav_p5":             "📊 财务分析",
+        "nav_p6":             "📉 量价分析",
+        "nav_section":        "导航",
+        # ── App home ─────────────────────────────────────────────────────────────
+        "app_title":          "美股投资研究系统",
+        "app_subtitle":       "NYSE & NASDAQ | Powered by yfinance + polygon.io",
+        "mktcap":             "市值",
+        "quick_nav":          "快速导航",
+        "nav_overview":       "🔭 总览分析",
+        "nav_financial":      "📊 财务分析",
+        "nav_pricevolume":    "📉 量价分析",
+        "modules_title":      "分析模块",
+        "mod_overview_title": "总览",
+        "mod_overview_desc":  "一键运行完整研究流程，汇总各模块结论",
+        "mod_sector_title":   "行业研究",
+        "mod_sector_desc":    "ETF走势 + 自定义标的横向对比",
+        "mod_scanner_title":  "选股扫描",
+        "mod_scanner_desc":   "自定义股票池动量 / 价值筛选",
+        "mod_equity_title":   "个股研究",
+        "mod_equity_desc":    "商业模式、护城河、竞争格局深度分析",
+        "mod_fin_title":      "财务分析",
+        "mod_fin_desc":       "三张表、DCF估值、同业对比",
+        "mod_pv_title":       "量价分析",
+        "mod_pv_desc":        "K线图、技术指标、盘前盘后行情",
+        "input_prompt":       "👈 请在左侧输入股票代码（如 NVDA、AAPL、MSFT）开始分析",
+        "data_source":        "数据来源：yfinance（主）/ polygon.io（备） | 所有内容仅供研究参考，不构成投资建议",
+        "loading_failed":     "数据加载失败，请检查股票代码是否正确。",
+        # ── Common ───────────────────────────────────────────────────────────────
+        "no_ticker":          "请在左侧输入股票代码（如 NVDA、AAPL、MSFT）开始分析",
+        "employees":          "员工",
+        "download_report":    "⬇ 下载报告",
+        "mkt_cap":            "市值",
+        "gross_margin":       "毛利率",
+        "revenue":            "营收",
+        "net_income":         "净利润",
+        "free_cash_flow":     "自由现金流",
+        "above_sma200":       "SMA200上方",
+        "from_52w_high":      "距52W高",
+        "vol_ratio_lbl":      "量比(20D)",
+        "analyst_rtg":        "分析师评级",
+        "moat_rating":        "护城河评级",
+        "target_price":       "目标价均值",
+        # ── News ─────────────────────────────────────────────────────────────────
+        "news_summary":       "摘要",
+        # ── Page 1 ───────────────────────────────────────────────────────────────
+        "p1_title":           "🔭 总览 — 完整研究流程",
+        "p1_select_mods":     "选择要运行的分析模块",
+        "p1_mod_financial":   "📊 财务分析",
+        "p1_mod_technical":   "📉 量价分析",
+        "p1_mod_equity":      "🏢 个股研究",
+        "p1_mod_earnings":    "📅 财报日历",
+        "p1_run_all":         "▶ 一键运行完整研究",
+        "p1_click_run":       "点击「▶ 一键运行完整研究」开始分析",
+        "p1_metrics":         "关键指标一览",
+        "p1_fin_snap":        "财务快照（TTM）",
+        "p1_tech_snap":       "技术面快照",
+        "p1_equity_sum":      "个股研究摘要",
+        "p1_radar":           "📡 综合雷达图",
+        "p1_report":          "综合报告",
+        "p1_overall":         "综合评分",
+        "p1_hover_hint":      "鼠标悬停图表各顶点查看评分依据",
+        "p1_d_sector":        "行业景气",
+        "p1_d_health":        "财务健康",
+        "p1_d_valuation":     "估值吸引力",
+        "p1_d_technical":     "技术面",
+        "p1_d_business":      "商业模式",
+        "p1_score_dim":       "维度",
+        "p1_score_val":       "分值",
+        "p1_score_note":      "说明",
+        # ── Page 2 ───────────────────────────────────────────────────────────────
+        "p2_title":           "🏭 行业研究",
+        "p2_subtitle":        "ETF 价格走势 + 自定义标的横向对比",
+        "p2_etf":             "选择行业 ETF",
+        "p2_period":          "时间周期",
+        "p2_peers":           "自定义对比标的",
+        "p2_peers_input":     "输入要对比的股票（逗号分隔），默认为该行业代表性标的",
+        "p2_perf":            "表现汇总",
+        "p2_dl_csv":          "⬇ 下载表格 CSV",
+        "p2_price_usd":       "价格 (USD)",
+        "p2_volume":          "成交量",
+        # ── Page 3 ───────────────────────────────────────────────────────────────
+        "p3_title":           "🔍 选股扫描",
+        "p3_subtitle":        "在自定义股票池中按策略筛选候选标的",
+        "p3_pool":            "自定义股票池",
+        "p3_pool_input":      "输入 Ticker（逗号或换行分隔）",
+        "p3_pool_help":       "默认为标普500科技股前20。可替换为任意美股 ticker。",
+        "p3_strategy":        "筛选策略",
+        "p3_strat_lbl":       "策略",
+        "p3_period":          "数据周期",
+        "p3_top_n":           "最多展示 Top N",
+        "p3_run":             "▶ 运行扫描",
+        "p3_hits":            "命中标的数",
+        "p3_avg3m":           "平均3M收益",
+        "p3_avg_rsi":         "平均RSI",
+        "p3_dl_csv":          "⬇ 下载结果 CSV",
+        "p3_dl_md":           "⬇ 下载报告 MD",
+        "p3_no_result":       "未找到符合条件的标的，尝试调整策略或股票池",
+        "p3_start_hint":      "配置好参数后点击「▶ 运行扫描」开始",
+        # ── Page 4 ───────────────────────────────────────────────────────────────
+        "p4_title":           "🏢 个股研究",
+        "p4_moat":            "🏰 护城河评估",
+        "p4_moat_hint":       "根据财务指标自动估算，可手动调整",
+        "p4_moat_rating":     "护城河综合评级",
+        "p4_peers":           "📊 同业对比",
+        "p4_peer_input":      "同业标的（逗号分隔）",
+        "p4_peer_metric":     "对比指标",
+        "p4_loading_peers":   "加载同业数据...",
+        "p4_biz":             "📖 公司业务描述",
+        "p4_news":            "📰 近期新闻与市场情绪",
+        "p4_loading_news":    "加载新闻数据...",
+        "p4_news_count":      "新闻数量",
+        "p4_news_avg":        "情绪均值",
+        "p4_news_dist":       "情绪分布",
+        "p4_filter":          "筛选新闻",
+        "p4_all":             "全部",
+        "p4_pos":             "正面",
+        "p4_neu":             "中性",
+        "p4_neg":             "负面",
+        "p4_sent_pos":        "正面 🟢",
+        "p4_sent_neg":        "负面 🔴",
+        "p4_sent_neu":        "中性 ⚪",
+        "p4_no_news_cat":     "该情绪分类下暂无新闻",
+        "p4_last7d":          "过去 7 天",
+        "p4_report":          "📄 研究报告",
+        "p4_view_md":         "查看完整报告 Markdown",
+        # ── Page 5 ───────────────────────────────────────────────────────────────
+        "p5_title":           "📊 财务分析",
+        "p5_tab1":            "📋 三张表",
+        "p5_tab2":            "📐 估值分析",
+        "p5_tab3":            "🔍 财务质量",
+        "p5_is":              "损益表",
+        "p5_bs":              "资产负债表",
+        "p5_cf":              "现金流量表",
+        "p5_is_full":         "损益表 (Income Statement)",
+        "p5_bs_full":         "资产负债表 (Balance Sheet)",
+        "p5_cf_full":         "现金流量表 (Cash Flow Statement)",
+        "p5_trend_metric":    "趋势图指标",
+        "p5_margin_trend":    "利润率趋势",
+        "p5_liq_ratio":       "流动性比率",
+        "p5_cap_struct":      "资本结构（十亿美元）",
+        "p5_dcf":             "DCF 情景分析",
+        "p5_dcf_adj":         "调整 DCF 参数",
+        "p5_fcf_b":           "基准 FCF (B USD)",
+        "p5_calc_dcf":        "计算 DCF",
+        "p5_rel_val":         "相对估值对比",
+        "p5_peer_val":        "同业 Ticker（逗号分隔）",
+        "p5_mult":            "估值倍数",
+        "p5_quality":         "FCF vs 净利润（盈利质量检验）",
+        "p5_checklist":       "财务质量检查清单",
+        "p5_loading":         "加载同业估值...",
+        # ── Page 6 ───────────────────────────────────────────────────────────────
+        "p6_title":           "📉 量价分析",
+        "p6_period":          "时间周期",
+        "p6_indicator":       "副图指标",
+        "p6_pre":             "盘前",
+        "p6_post":            "盘后",
+        "p6_key_levels":      "关键价格水平",
+        "p6_sma20_sup":       "SMA20 支撑",
+        "p6_sma50_sup":       "SMA50 支撑",
+        "p6_stop":            "止损参考(2xATR)",
+        "p6_rr":              "风险回报比",
+        "p6_rr_low":          "偏低",
+        "p6_rr_ok":           "合理",
+    },
+    "en": {
+        # ── Sidebar ──────────────────────────────────────────────────────────────
+        "sidebar_ticker":     "Ticker Symbol",
+        "sidebar_ticker_ph":  "e.g. NVDA",
+        "sidebar_cache":      "Data Cache",
+        "cache_ohlcv":        "OHLCV",
+        "cache_financials":   "Financials",
+        "cache_balance":      "Balance Sheet",
+        "cache_cashflow":     "Cash Flow",
+        "dark_mode":          "🌙 Dark Mode",
+        "disclaimer":         "⚠️ For research only, not investment advice",
+        # Nav links
+        "nav_home":           "🏠 Home",
+        "nav_p1":             "🔭 Overview",
+        "nav_p2":             "🏭 Sector Research",
+        "nav_p3":             "🔍 Stock Scanner",
+        "nav_p4":             "🏢 Equity Research",
+        "nav_p5":             "📊 Financials",
+        "nav_p6":             "📉 Price & Volume",
+        "nav_section":        "Navigation",
+        # ── App home ─────────────────────────────────────────────────────────────
+        "app_title":          "US Equity Research System",
+        "app_subtitle":       "NYSE & NASDAQ | Powered by yfinance + polygon.io",
+        "mktcap":             "Mkt Cap",
+        "quick_nav":          "Quick Navigation",
+        "nav_overview":       "🔭 Overview",
+        "nav_financial":      "📊 Financials",
+        "nav_pricevolume":    "📉 Price & Volume",
+        "modules_title":      "Analysis Modules",
+        "mod_overview_title": "Overview",
+        "mod_overview_desc":  "Run full research pipeline, summarize all module conclusions",
+        "mod_sector_title":   "Sector Research",
+        "mod_sector_desc":    "ETF trends + custom peer comparison",
+        "mod_scanner_title":  "Stock Scanner",
+        "mod_scanner_desc":   "Custom watchlist momentum / value screening",
+        "mod_equity_title":   "Equity Research",
+        "mod_equity_desc":    "Business model, moat, competitive landscape deep-dive",
+        "mod_fin_title":      "Financial Analysis",
+        "mod_fin_desc":       "3-statement model, DCF valuation, peer comparison",
+        "mod_pv_title":       "Price & Volume",
+        "mod_pv_desc":        "Candlestick charts, technical indicators, pre/post market",
+        "input_prompt":       "👈 Enter a ticker on the left (e.g. NVDA, AAPL, MSFT) to start",
+        "data_source":        "Data: yfinance (primary) / polygon.io (fallback) | For research only, not investment advice",
+        "loading_failed":     "Failed to load data. Please verify the ticker symbol.",
+        # ── Common ───────────────────────────────────────────────────────────────
+        "no_ticker":          "Enter a ticker on the left (e.g. NVDA, AAPL, MSFT) to begin",
+        "employees":          "Employees",
+        "download_report":    "⬇ Download Report",
+        "mkt_cap":            "Mkt Cap",
+        "gross_margin":       "Gross Margin",
+        "revenue":            "Revenue",
+        "net_income":         "Net Income",
+        "free_cash_flow":     "Free Cash Flow",
+        "above_sma200":       "Above SMA200",
+        "from_52w_high":      "From 52W High",
+        "vol_ratio_lbl":      "Vol Ratio (20D)",
+        "analyst_rtg":        "Analyst Rating",
+        "moat_rating":        "Moat Rating",
+        "target_price":       "Price Target",
+        # ── News ─────────────────────────────────────────────────────────────────
+        "news_summary":       "Summary",
+        # ── Page 1 ───────────────────────────────────────────────────────────────
+        "p1_title":           "🔭 Overview — Full Research Pipeline",
+        "p1_select_mods":     "Select Analysis Modules",
+        "p1_mod_financial":   "📊 Financials",
+        "p1_mod_technical":   "📉 Price & Volume",
+        "p1_mod_equity":      "🏢 Equity Research",
+        "p1_mod_earnings":    "📅 Earnings Calendar",
+        "p1_run_all":         "▶ Run Full Research",
+        "p1_click_run":       "Click「▶ Run Full Research」to start",
+        "p1_metrics":         "Key Metrics",
+        "p1_fin_snap":        "Financial Snapshot (TTM)",
+        "p1_tech_snap":       "Technical Snapshot",
+        "p1_equity_sum":      "Equity Research Summary",
+        "p1_radar":           "📡 Comprehensive Radar",
+        "p1_report":          "Comprehensive Report",
+        "p1_overall":         "Overall Score",
+        "p1_hover_hint":      "Hover over radar vertices to see scoring rationale",
+        "p1_d_sector":        "Sector Momentum",
+        "p1_d_health":        "Financial Health",
+        "p1_d_valuation":     "Valuation Appeal",
+        "p1_d_technical":     "Technical",
+        "p1_d_business":      "Business Model",
+        "p1_score_dim":       "Dimension",
+        "p1_score_val":       "Score",
+        "p1_score_note":      "Notes",
+        # ── Page 2 ───────────────────────────────────────────────────────────────
+        "p2_title":           "🏭 Sector Research",
+        "p2_subtitle":        "ETF Price Trends + Custom Peer Comparison",
+        "p2_etf":             "Select Sector ETF",
+        "p2_period":          "Time Period",
+        "p2_peers":           "Custom Comparison Tickers",
+        "p2_peers_input":     "Enter tickers to compare (comma-separated); defaults to sector leaders",
+        "p2_perf":            "Performance Summary",
+        "p2_dl_csv":          "⬇ Download CSV",
+        "p2_price_usd":       "Price (USD)",
+        "p2_volume":          "Volume",
+        # ── Page 3 ───────────────────────────────────────────────────────────────
+        "p3_title":           "🔍 Stock Scanner",
+        "p3_subtitle":        "Screen a custom stock pool by strategy",
+        "p3_pool":            "Custom Stock Pool",
+        "p3_pool_input":      "Enter tickers (comma or newline separated)",
+        "p3_pool_help":       "Defaults to top-20 S&P 500 tech stocks. Replace with any US tickers.",
+        "p3_strategy":        "Screening Strategy",
+        "p3_strat_lbl":       "Strategy",
+        "p3_period":          "Data Period",
+        "p3_top_n":           "Show Top N",
+        "p3_run":             "▶ Run Scan",
+        "p3_hits":            "Hits",
+        "p3_avg3m":           "Avg 3M Return",
+        "p3_avg_rsi":         "Avg RSI",
+        "p3_dl_csv":          "⬇ Download CSV",
+        "p3_dl_md":           "⬇ Download Report MD",
+        "p3_no_result":       "No matches found. Try adjusting the strategy or stock pool.",
+        "p3_start_hint":      "Configure settings then click「▶ Run Scan」",
+        # ── Page 4 ───────────────────────────────────────────────────────────────
+        "p4_title":           "🏢 Equity Research",
+        "p4_moat":            "🏰 Moat Assessment",
+        "p4_moat_hint":       "Auto-estimated from financials; adjust sliders manually",
+        "p4_moat_rating":     "Overall Moat Rating",
+        "p4_peers":           "📊 Peer Comparison",
+        "p4_peer_input":      "Peer tickers (comma-separated)",
+        "p4_peer_metric":     "Comparison Metric",
+        "p4_loading_peers":   "Loading peer data...",
+        "p4_biz":             "📖 Business Description",
+        "p4_news":            "📰 Recent News & Sentiment",
+        "p4_loading_news":    "Loading news...",
+        "p4_news_count":      "News Count",
+        "p4_news_avg":        "Avg Sentiment",
+        "p4_news_dist":       "Sentiment Mix",
+        "p4_filter":          "Filter News",
+        "p4_all":             "All",
+        "p4_pos":             "Positive",
+        "p4_neu":             "Neutral",
+        "p4_neg":             "Negative",
+        "p4_sent_pos":        "Positive 🟢",
+        "p4_sent_neg":        "Negative 🔴",
+        "p4_sent_neu":        "Neutral ⚪",
+        "p4_no_news_cat":     "No news in this sentiment category",
+        "p4_last7d":          "Last 7 Days",
+        "p4_report":          "📄 Research Report",
+        "p4_view_md":         "View Full Report Markdown",
+        # ── Page 5 ───────────────────────────────────────────────────────────────
+        "p5_title":           "📊 Financial Analysis",
+        "p5_tab1":            "📋 3-Statement",
+        "p5_tab2":            "📐 Valuation",
+        "p5_tab3":            "🔍 Quality Check",
+        "p5_is":              "Income Stmt",
+        "p5_bs":              "Balance Sheet",
+        "p5_cf":              "Cash Flow",
+        "p5_is_full":         "Income Statement",
+        "p5_bs_full":         "Balance Sheet",
+        "p5_cf_full":         "Cash Flow Statement",
+        "p5_trend_metric":    "Chart Metric",
+        "p5_margin_trend":    "Margin Trend",
+        "p5_liq_ratio":       "Liquidity Ratios",
+        "p5_cap_struct":      "Capital Structure ($B)",
+        "p5_dcf":             "DCF Scenario Analysis",
+        "p5_dcf_adj":         "Adjust DCF Parameters",
+        "p5_fcf_b":           "Base FCF (B USD)",
+        "p5_calc_dcf":        "Calculate DCF",
+        "p5_rel_val":         "Relative Valuation",
+        "p5_peer_val":        "Peer Tickers (comma-separated)",
+        "p5_mult":            "Valuation Multiple",
+        "p5_quality":         "FCF vs Net Income (Earnings Quality)",
+        "p5_checklist":       "Financial Quality Checklist",
+        "p5_loading":         "Loading peer valuations...",
+        # ── Page 6 ───────────────────────────────────────────────────────────────
+        "p6_title":           "📉 Price & Volume",
+        "p6_period":          "Time Period",
+        "p6_indicator":       "Sub-Chart Indicator",
+        "p6_pre":             "Pre-market",
+        "p6_post":            "After-hours",
+        "p6_key_levels":      "Key Price Levels",
+        "p6_sma20_sup":       "SMA20 Support",
+        "p6_sma50_sup":       "SMA50 Support",
+        "p6_stop":            "Stop Loss (2xATR)",
+        "p6_rr":              "Risk/Reward Ratio",
+        "p6_rr_low":          "Unfavorable",
+        "p6_rr_ok":           "Reasonable",
+    },
+}
+
+
+def t(key: str) -> str:
+    """Return the translated UI string for the current language (defaults to zh)."""
+    lang = st.session_state.get("language", "zh")
+    return TRANSLATIONS.get(lang, TRANSLATIONS["zh"]).get(key, key)

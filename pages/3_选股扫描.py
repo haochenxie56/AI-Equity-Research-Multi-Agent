@@ -9,15 +9,18 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from ui_utils import apply_theme, render_sidebar, load_info, load_ohlcv, apply_layout, fmt_large, download_report_button, page_header, render_table
+from ui_utils import (
+    apply_theme, render_sidebar, load_info, load_ohlcv,
+    apply_layout, fmt_large, download_report_button, page_header, render_table, t,
+)
 
 st.set_page_config(page_title="选股扫描", page_icon="🔍", layout="wide")
 apply_theme()
 render_sidebar()
 
-st.title("🔍 选股扫描")
+st.title(t("p3_title"))
 page_header()
-st.caption("在自定义股票池中按策略筛选候选标的")
+st.caption(t("p3_subtitle"))
 st.divider()
 
 # ── Default tech pool (S&P 500 top 20 tech) ───────────────────────────────────
@@ -30,28 +33,28 @@ DEFAULT_POOL = (
 col_pool, col_params = st.columns([3, 2])
 
 with col_pool:
-    st.subheader("自定义股票池")
+    st.subheader(t("p3_pool"))
     pool_input = st.text_area(
-        "输入 Ticker（逗号或换行分隔）",
+        t("p3_pool_input"),
         value=DEFAULT_POOL,
         height=120,
-        help="默认为标普500科技股前20。可替换为任意美股 ticker。",
+        help=t("p3_pool_help"),
     )
-    pool_tickers = [t.strip().upper() for t in pool_input.replace("\n", ",").split(",") if t.strip()]
-    st.caption(f"共 {len(pool_tickers)} 只标的：{', '.join(pool_tickers)}")
+    pool_tickers = [tk.strip().upper() for tk in pool_input.replace("\n", ",").split(",") if tk.strip()]
+    st.caption(f"{len(pool_tickers)} tickers: {', '.join(pool_tickers)}")
 
 with col_params:
-    st.subheader("筛选策略")
-    strategy = st.selectbox("策略", [
+    st.subheader(t("p3_strategy"))
+    strategy = st.selectbox(t("p3_strat_lbl"), [
         "动量 Momentum",
         "价值 Value",
         "高质量成长 Quality Growth",
         "超卖反弹 Oversold Bounce",
     ])
-    period = st.selectbox("数据周期", ["6mo","1y","2y"], index=1)
-    top_n  = st.slider("最多展示 Top N", min_value=5, max_value=len(pool_tickers), value=min(15, len(pool_tickers)))
+    period = st.selectbox(t("p3_period"), ["6mo","1y","2y"], index=1)
+    top_n  = st.slider(t("p3_top_n"), min_value=5, max_value=len(pool_tickers), value=min(15, len(pool_tickers)))
 
-run_btn = st.button("▶ 运行扫描", type="primary", use_container_width=True)
+run_btn = st.button(t("p3_run"), type="primary", use_container_width=True)
 st.divider()
 
 # ── Scanner logic ─────────────────────────────────────────────────────────────
@@ -61,11 +64,11 @@ def run_scan(tickers: tuple, strategy: str, period: str) -> list[dict]:
     from technical import snapshot
 
     results = []
-    prog = st.progress(0, text="扫描中...")
+    prog = st.progress(0, text="Scanning...")
     total = len(tickers)
 
     for i, ticker in enumerate(tickers):
-        prog.progress((i + 1) / total, text=f"扫描 {ticker} ({i+1}/{total})...")
+        prog.progress((i + 1) / total, text=f"Scanning {ticker} ({i+1}/{total})...")
         try:
             df = load_ohlcv(ticker, period)
             if df is None or len(df) < 60:
@@ -155,19 +158,19 @@ if run_btn:
 
 if st.session_state.get("scan_cache_key") == cache_key and st.session_state.get("scan_results"):
     results = st.session_state["scan_results"]
-    st.success(f"✅ 已有扫描结果（{len(results)} 只命中）—— 修改参数后点击「运行扫描」重跑")
+    st.success(f"✅ {len(results)} hits cached — change params and click Scan to re-run")
 elif run_btn:
-    with st.spinner("扫描中，请稍候..."):
+    with st.spinner("Scanning..."):
         results = run_scan(tuple(pool_tickers), strategy, period)
     st.session_state["scan_results"] = results
     st.session_state["scan_cache_key"] = cache_key
-    st.success(f"✅ 扫描完成：{len(pool_tickers)} 只中命中 {len(results)} 只")
+    st.success(f"✅ {len(pool_tickers)} scanned → {len(results)} hits")
 else:
-    st.info("配置好参数后点击「▶ 运行扫描」开始")
+    st.info(t("p3_start_hint"))
     st.stop()
 
 if not results:
-    st.warning("未找到符合条件的标的，尝试调整策略或股票池")
+    st.warning(t("p3_no_result"))
     st.stop()
 
 # ── Results ───────────────────────────────────────────────────────────────────
@@ -176,13 +179,13 @@ df_results  = pd.DataFrame(top_results)
 
 # Summary bar
 c1, c2, c3 = st.columns(3)
-c1.metric("命中标的数", len(results))
-c2.metric("平均3M收益", f"{pd.Series([r.get('3M收益%') for r in results if r.get('3M收益%')]).mean():.1f}%")
-c3.metric("平均RSI",    f"{pd.Series([r.get('RSI(14)') for r in results if r.get('RSI(14)')]).mean():.1f}")
+c1.metric(t("p3_hits"),    len(results))
+c2.metric(t("p3_avg3m"),   f"{pd.Series([r.get('3M收益%') for r in results if r.get('3M收益%')]).mean():.1f}%")
+c3.metric(t("p3_avg_rsi"), f"{pd.Series([r.get('RSI(14)') for r in results if r.get('RSI(14)')]).mean():.1f}")
 st.divider()
 
 # Results table
-st.subheader(f"候选标的（Top {top_n}）")
+st.subheader(f"Top {top_n}")
 render_table(
     df_results.set_index("Ticker"),
     height=min(400, 50 + len(top_results) * 38),
@@ -190,7 +193,7 @@ render_table(
 st.divider()
 
 # ── Bubble chart ──────────────────────────────────────────────────────────────
-st.subheader("泡泡图：3M收益 vs RSI（泡泡大小 = 市值）")
+st.subheader("3M Return vs RSI (bubble size = Mkt Cap)")
 plot_df = df_results.dropna(subset=["3M收益%", "RSI(14)"])
 
 if not plot_df.empty:
@@ -205,8 +208,8 @@ if not plot_df.empty:
                     "3M收益%": True, "RSI(14)": True, "市值(B)": True},
         size_max=60,
     )
-    fig.add_hline(y=70, line_dash="dash", line_color="red",   opacity=0.5, annotation_text="超买(70)")
-    fig.add_hline(y=30, line_dash="dash", line_color="green", opacity=0.5, annotation_text="超卖(30)")
+    fig.add_hline(y=70, line_dash="dash", line_color="red",   opacity=0.5, annotation_text="Overbought(70)")
+    fig.add_hline(y=30, line_dash="dash", line_color="green", opacity=0.5, annotation_text="Oversold(30)")
     fig.add_vline(x=0,  line_dash="dash", line_color="gray",  opacity=0.4)
     fig.update_traces(textposition="top center", textfont_size=11)
     apply_layout(fig, title="3M Return (%) vs RSI(14)", height=480)
@@ -218,7 +221,7 @@ st.divider()
 col_dl1, col_dl2 = st.columns(2)
 with col_dl1:
     csv_data = df_results.to_csv(index=False)
-    st.download_button("⬇ 下载结果 CSV", csv_data,
+    st.download_button(t("p3_dl_csv"), csv_data,
                        f"{datetime.now().strftime('%Y%m%d')}_scan_{strategy[:5]}.csv", "text/csv")
 with col_dl2:
     today = datetime.now().strftime("%Y-%m-%d")
@@ -244,4 +247,4 @@ with col_dl2:
     scan_path.parent.mkdir(parents=True, exist_ok=True)
     scan_path.write_text(report_md, encoding="utf-8")
 
-    download_report_button(report_md, scan_path.name, "⬇ 下载报告 MD")
+    download_report_button(report_md, scan_path.name, t("p3_dl_md"))

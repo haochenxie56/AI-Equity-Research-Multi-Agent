@@ -12,25 +12,25 @@ from plotly.subplots import make_subplots
 
 from ui_utils import (
     apply_theme, render_sidebar, load_info, load_ohlcv, load_prepost, load_earnings,
-    fmt_val, fmt_pct, apply_layout, download_report_button, page_header,
+    fmt_val, fmt_pct, apply_layout, download_report_button, page_header, t,
 )
 
 st.set_page_config(page_title="量价分析", page_icon="📉", layout="wide")
 apply_theme()
 ticker = render_sidebar()
 
-st.title("📉 量价分析")
+st.title(t("p6_title"))
 page_header()
 if not ticker:
-    st.info("请在左侧输入股票代码（如 NVDA、AAPL、MSFT）开始分析")
+    st.info(t("no_ticker"))
     st.stop()
 
 # ── Settings bar ──────────────────────────────────────────────────────────────
 c1, c2, c3, c4, c5 = st.columns([2, 2, 1, 1, 1])
 with c1:
-    period = st.selectbox("时间周期", ["3mo","6mo","1y","2y","5y"], index=2, key="pv_period")
+    period = st.selectbox(t("p6_period"), ["3mo","6mo","1y","2y","5y"], index=2, key="pv_period")
 with c2:
-    indicator = st.selectbox("副图指标", ["RSI","MACD","ADX","布林带"], key="pv_ind")
+    indicator = st.selectbox(t("p6_indicator"), ["RSI","MACD","ADX","布林带"], key="pv_ind")
 with c3:
     show_sma20  = st.checkbox("SMA20",  value=True)
 with c4:
@@ -72,10 +72,10 @@ st.markdown(
 pp_parts = []
 if prepost.get("pre_market_price"):
     c = prepost["pre_market_change"] or 0
-    pp_parts.append(f"盘前 **${prepost['pre_market_price']:.2f}** ({c:+.2f}%)")
+    pp_parts.append(f"{t('p6_pre')} **${prepost['pre_market_price']:.2f}** ({c:+.2f}%)")
 if prepost.get("post_market_price"):
     c = prepost["post_market_change"] or 0
-    pp_parts.append(f"盘后 **${prepost['post_market_price']:.2f}** ({c:+.2f}%)")
+    pp_parts.append(f"{t('p6_post')} **${prepost['post_market_price']:.2f}** ({c:+.2f}%)")
 if pp_parts:
     st.caption(" | ".join(pp_parts))
 
@@ -83,7 +83,7 @@ if pp_parts:
 if cal.get("next_earnings_date"):
     days = cal.get("days_to_earnings", 0)
     if 0 <= days <= 14:
-        st.warning(f"⚠️ 财报窗口期：{cal['next_earnings_date'].strftime('%Y-%m-%d')} — {days}天后，波动率可能放大")
+        st.warning(f"⚠️ Earnings window: {cal['next_earnings_date'].strftime('%Y-%m-%d')} — {days}d out, expect vol. expansion")
 
 st.divider()
 
@@ -94,13 +94,13 @@ low52  = df["Close"].tail(252).min()
 pct_from_high = (price / high52 - 1) * 100
 
 m = st.columns(6)
-m[0].metric("RSI(14)",       f"{last.get('RSI_14', float('nan')):.1f}")
-m[1].metric("ADX",           f"{last.get('ADX', float('nan')):.1f}")
-m[2].metric("ATR(14)",       f"${last.get('ATR_14', float('nan')):.2f}")
-m[3].metric("SMA200上方",    "✅" if price > last.get("SMA_200", 0) else "❌",
+m[0].metric("RSI(14)",           f"{last.get('RSI_14', float('nan')):.1f}")
+m[1].metric("ADX",               f"{last.get('ADX', float('nan')):.1f}")
+m[2].metric("ATR(14)",           f"${last.get('ATR_14', float('nan')):.2f}")
+m[3].metric(t("above_sma200"),   "✅" if price > last.get("SMA_200", 0) else "❌",
             delta=f"${price - last.get('SMA_200', price):.2f}")
-m[4].metric("距52W高点",     f"{pct_from_high:.1f}%")
-m[5].metric("量比(20D)",     f"{last.get('Vol_ratio_20d', float('nan')):.2f}x")
+m[4].metric(t("from_52w_high"),  f"{pct_from_high:.1f}%")
+m[5].metric(t("vol_ratio_lbl"),  f"{last.get('Vol_ratio_20d', float('nan')):.2f}x")
 
 st.divider()
 
@@ -158,7 +158,7 @@ for col_n, show, color, label in ma_config:
             hovertemplate=f"{label}: $%{{y:.2f}}<extra></extra>",
         ), row=1, col=1)
 
-# Bollinger Bands (show alongside price when selected)
+# Bollinger Bands
 if indicator == "布林带" and "BB_upper" in df.columns:
     for band_col, band_name, band_color in [
         ("BB_upper", "BB Upper", "rgba(150,150,255,0.4)"),
@@ -180,7 +180,7 @@ if cal.get("next_earnings_date"):
             ed_ts = ed_ts.tz_localize(ny_tz) if ed_ts.tzinfo is None else ed_ts.tz_convert(ny_tz)
         if df.index[0] <= ed_ts <= df.index[-1]:
             fig.add_vline(x=ed_ts, line_dash="dot", line_color="#ffb300",
-                          annotation_text="财报日", row=1, col=1)
+                          annotation_text="Earnings", row=1, col=1)
     except Exception:
         pass
 
@@ -188,14 +188,14 @@ if cal.get("next_earnings_date"):
 vol_colors = [_up_c if c >= o else _dn_c for c, o in zip(df["Close"], df["Open"])]
 fig.add_trace(go.Bar(
     x=df.index, y=df["Volume"],
-    marker_color=vol_colors, name="成交量", showlegend=False,
+    marker_color=vol_colors, name="Volume", showlegend=False,
 ), row=2, col=1)
 
 # 20D avg volume line
 if "Vol_ratio_20d" in df.columns:
     avg_vol = df["Volume"] / df["Vol_ratio_20d"].replace(0, float("nan"))
     fig.add_trace(go.Scatter(
-        x=df.index, y=avg_vol, name="20日均量",
+        x=df.index, y=avg_vol, name="20D Avg Vol",
         line=dict(color="rgba(255,179,0,0.65)", width=1, dash="dot"),
     ), row=2, col=1)
 
@@ -263,7 +263,7 @@ st.plotly_chart(fig, use_container_width=True)
 st.divider()
 
 # ── Key price levels ──────────────────────────────────────────────────────────
-st.subheader("关键价格水平")
+st.subheader(t("p6_key_levels"))
 atr_val = last.get("ATR_14", 0) or 0
 sma20_v = last.get("SMA_20", 0) or 0
 sma50_v = last.get("SMA_50", 0) or 0
@@ -273,11 +273,11 @@ downside = price - stop_2x
 rr_ratio = upside / downside if downside > 0 else 0
 
 kp1, kp2, kp3, kp4 = st.columns(4)
-kp1.metric("SMA20 支撑",   f"${sma20_v:.2f}")
-kp2.metric("SMA50 支撑",   f"${sma50_v:.2f}")
-kp3.metric("止损参考(2xATR)", f"${stop_2x:.2f}",   delta=f"-{2*atr_val:.2f}")
-kp4.metric("风险回报比",   f"1 : {rr_ratio:.2f}",
-           delta="偏低" if rr_ratio < 1 else "合理",
+kp1.metric(t("p6_sma20_sup"),  f"${sma20_v:.2f}")
+kp2.metric(t("p6_sma50_sup"),  f"${sma50_v:.2f}")
+kp3.metric(t("p6_stop"),       f"${stop_2x:.2f}", delta=f"-{2*atr_val:.2f}")
+kp4.metric(t("p6_rr"),         f"1 : {rr_ratio:.2f}",
+           delta=t("p6_rr_low") if rr_ratio < 1 else t("p6_rr_ok"),
            delta_color="inverse" if rr_ratio < 1 else "normal")
 
 st.divider()
@@ -292,9 +292,9 @@ trend    = ("多头排列" if price > sma20_v > sma50_v else
 
 pp_line = ""
 if prepost.get("pre_market_price"):
-    pp_line = f"**盘前**：${prepost['pre_market_price']:.2f}（{prepost.get('pre_market_change', 0):+.2f}%）"
+    pp_line = f"**{t('p6_pre')}**：${prepost['pre_market_price']:.2f}（{prepost.get('pre_market_change', 0):+.2f}%）"
 elif prepost.get("post_market_price"):
-    pp_line = f"**盘后**：${prepost['post_market_price']:.2f}（{prepost.get('post_market_change', 0):+.2f}%）"
+    pp_line = f"**{t('p6_post')}**：${prepost['post_market_price']:.2f}（{prepost.get('post_market_change', 0):+.2f}%）"
 
 report_md = f"""# Price & Volume Analysis: {ticker} — {name}
 
@@ -342,4 +342,4 @@ ADX {adx_v:.1f}（{'趋势明确' if adx_v > 25 else '趋势不明'}），
 rp = Path(__file__).parent.parent / "research" / "stock" / f"{date_pfx}_{ticker}_pv.md"
 rp.parent.mkdir(parents=True, exist_ok=True)
 rp.write_text(report_md, encoding="utf-8")
-download_report_button(report_md, rp.name)
+download_report_button(report_md, rp.name, t("download_report"))
