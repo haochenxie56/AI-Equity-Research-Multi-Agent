@@ -768,6 +768,136 @@ def style_df(df: pd.DataFrame) -> "pd.io.formats.style.Styler":
             ]))
 
 
+# ── HTML table renderer (replaces st.dataframe for full theme control) ────────
+
+def render_table(df: pd.DataFrame, height: int = None) -> None:
+    """
+    Render a DataFrame as a fully-themed HTML <table> via st.markdown.
+
+    Replaces st.dataframe() / style_df() so that both dark and light mode
+    are 100% controlled by our CSS — no canvas renderer interference.
+
+    Features:
+      • Timestamp columns auto-formatted as "FY2024"
+      • Values with "%" → green (≥0) / red (<0)
+      • Values starting with "+" → green
+      • Numeric-looking columns → right-aligned; text → left-aligned
+      • Full row/column names, no truncation
+      • Optional scrollable container via height parameter
+    """
+    dark    = st.session_state.get("dark_mode", True)
+    bg      = "#161b22" if dark else "#ffffff"
+    hdr_bg  = "#1c2128" if dark else "#f6f8fa"
+    alt_bg  = "#1c2128" if dark else "#f6f8fa"
+    txt     = "#e6edf3" if dark else "#1f2328"
+    hdr_txt = "#8b949e" if dark else "#57606a"
+    bd      = "#30363d" if dark else "#d0d7de"
+    pos_c   = "#3fb950"
+    neg_c   = "#f85149"
+
+    def _fmt_col(c) -> str:
+        """Format column header: Timestamp-like strings → FY20xx."""
+        s = str(c)
+        try:
+            ts = pd.Timestamp(s)
+            if ts.year > 2000:
+                return f"FY{ts.year}"
+        except Exception:
+            pass
+        return s
+
+    def _value_color(val) -> str:
+        """Return CSS color for a cell value based on sign/% content."""
+        s = str(val).strip()
+        if s in ("N/A", "—", "", "-", "nan"):
+            return txt
+        if "%" in s:
+            try:
+                num = float(
+                    s.replace("%", "").replace("+", "").replace(",", "").strip()
+                )
+                return pos_c if num >= 0 else neg_c
+            except ValueError:
+                pass
+        if s.startswith("+"):
+            return pos_c
+        if len(s) > 1 and s[0] == "-" and (s[1].isdigit() or s[1] == "$"):
+            return neg_c
+        return txt
+
+    def _is_right_align(col_vals) -> bool:
+        """True if the majority of sample values look numeric."""
+        hits = 0
+        for v in col_vals[:8]:
+            cleaned = (
+                str(v)
+                .replace("$", "").replace("B", "").replace("M", "").replace("K", "")
+                .replace("%", "").replace("+", "").replace("-", "").replace(",", "")
+                .replace("x", "").replace(".", "").strip()
+            )
+            if cleaned.isdigit() and cleaned:
+                hits += 1
+        return hits >= 2
+
+    col_align = {
+        col: ("right" if _is_right_align(df[col].tolist()) else "left")
+        for col in df.columns
+    }
+    col_headers = [_fmt_col(c) for c in df.columns]
+    idx_name    = str(df.index.name) if df.index.name else ""
+
+    # Wrapper div: optional vertical scroll
+    overflow_y = f"max-height:{height}px;overflow-y:auto;" if height else ""
+    wrap_s = (
+        f'style="width:100%;overflow-x:auto;{overflow_y}'
+        f'border-radius:8px;border:1px solid {bd};margin-bottom:8px;"'
+    )
+    tbl_s = 'style="width:100%;border-collapse:collapse;font-size:0.82rem;"'
+
+    parts = [f'<div {wrap_s}><table {tbl_s}>']
+
+    # ── Header ──
+    th_base = (
+        f"background:{hdr_bg};color:{hdr_txt};padding:8px 12px;"
+        f"border-bottom:2px solid {bd};border-right:1px solid {bd};"
+        f"font-weight:600;white-space:nowrap;"
+    )
+    parts.append("<thead><tr>")
+    parts.append(f'<th style="{th_base}text-align:left;">{idx_name}</th>')
+    for i, ch in enumerate(col_headers):
+        col   = df.columns[i]
+        align = col_align[col]
+        parts.append(f'<th style="{th_base}text-align:{align};">{ch}</th>')
+    parts.append("</tr></thead><tbody>")
+
+    # ── Body ──
+    td_base = (
+        f"padding:7px 12px;border-bottom:1px solid {bd};"
+        f"border-right:1px solid {bd};white-space:nowrap;"
+    )
+    for i, (idx_val, row) in enumerate(df.iterrows()):
+        row_bg = alt_bg if i % 2 else bg
+        parts.append(f'<tr style="background:{row_bg};">')
+        # Index cell (always left-aligned, subdued color)
+        parts.append(
+            f'<td style="{td_base}background:{row_bg};color:{hdr_txt};'
+            f'font-weight:500;text-align:left;">{str(idx_val)}</td>'
+        )
+        # Data cells
+        for col in df.columns:
+            val   = row[col]
+            color = _value_color(val)
+            align = col_align[col]
+            parts.append(
+                f'<td style="{td_base}background:{row_bg};color:{color};'
+                f'text-align:{align};">{val}</td>'
+            )
+        parts.append("</tr>")
+
+    parts.append("</tbody></table></div>")
+    st.markdown("".join(parts), unsafe_allow_html=True)
+
+
 # ── Translation ───────────────────────────────────────────────────────────────
 
 @st.cache_data(ttl=86400, show_spinner=False)

@@ -12,7 +12,7 @@ import plotly.graph_objects as go
 from ui_utils import (
     apply_theme, render_sidebar, load_info, load_ohlcv, load_ohlcv_multi,
     load_financials, load_cashflow, load_earnings,
-    fmt_large, fmt_pct, fmt_val, download_report_button, page_header, style_df,
+    fmt_large, fmt_pct, fmt_val, download_report_button, page_header, render_table,
 )
 
 st.set_page_config(page_title="总览", page_icon="🔭", layout="wide")
@@ -408,7 +408,7 @@ with _score_col:
     _score_df = pd.DataFrame(
         [{"维度": d, "分值": f"{v:.1f}/5", "说明": t} for d, v, t in zip(_dims, _vals, _tips)]
     ).set_index("维度")
-    st.dataframe(style_df(_score_df), use_container_width=True, height=230)
+    render_table(_score_df, height=230)
     _overall = round(sum(_vals) / len(_vals), 1)
     st.metric("综合评分", f"{_overall:.1f} / 5.0",
               delta="优质" if _overall >= 3.5 else ("中性" if _overall >= 2.5 else "注意风险"),

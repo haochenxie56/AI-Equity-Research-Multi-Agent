@@ -9,7 +9,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from ui_utils import apply_theme, render_sidebar, load_ohlcv, load_ohlcv_multi, load_info, apply_layout, fmt_large, page_header, style_df
+from ui_utils import apply_theme, render_sidebar, load_ohlcv, load_ohlcv_multi, load_info, apply_layout, fmt_large, page_header, render_table
 
 st.set_page_config(page_title="行业研究", page_icon="🏭", layout="wide")
 apply_theme()
@@ -161,7 +161,7 @@ else:
         })
 
     perf_df = pd.DataFrame(rows).set_index("Ticker")
-    st.dataframe(style_df(perf_df), use_container_width=True)
+    render_table(perf_df)
 
     # Download
     csv_data = pd.DataFrame(rows).to_csv(index=False)

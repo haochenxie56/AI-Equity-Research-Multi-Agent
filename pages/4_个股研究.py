@@ -13,7 +13,7 @@ import plotly.express as px
 from ui_utils import (
     apply_theme, render_sidebar, load_info, load_ohlcv, load_ohlcv_multi, load_earnings,
     fmt_large, fmt_pct, fmt_val, apply_layout, download_report_button, page_header,
-    translate_to_chinese,
+    translate_to_chinese, render_table,
 )
 
 
@@ -207,9 +207,20 @@ with right_col:
         fig_p.update_yaxes(title_text=metric_choice)
         st.plotly_chart(fig_p, use_container_width=True)
 
-        _hl_color = "#1a4a1a" if st.session_state.get("dark_mode", True) else "#d4edda"
-        st.dataframe(peer_df.style.highlight_max(axis=0, color=_hl_color).format("{:.1f}"),
-                     use_container_width=True)
+        # Pre-format peer_df values for render_table:
+        # % columns get +/- sign for color coding; ratio columns get "x" suffix
+        _pct_cols  = [c for c in peer_df.columns if "%" in c]
+        _ratio_cols = [c for c in peer_df.columns if "%" not in c]
+        peer_display = peer_df.copy().astype(object)
+        for c in _pct_cols:
+            peer_display[c] = peer_df[c].apply(
+                lambda v: f"{v:+.1f}%" if pd.notna(v) else "N/A"
+            )
+        for c in _ratio_cols:
+            peer_display[c] = peer_df[c].apply(
+                lambda v: f"{v:.1f}x" if pd.notna(v) and v != 0 else "N/A"
+            )
+        render_table(peer_display)
 
 st.divider()
 

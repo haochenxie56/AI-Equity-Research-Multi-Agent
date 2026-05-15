@@ -14,7 +14,7 @@ from plotly.subplots import make_subplots
 from ui_utils import (
     apply_theme, render_sidebar, load_info, load_financials, load_balance_sheet,
     load_cashflow, load_earnings, fmt_large, fmt_pct, fmt_val,
-    apply_layout, download_report_button, page_header, style_df,
+    apply_layout, download_report_button, page_header, render_table,
 )
 
 st.set_page_config(page_title="财务分析", page_icon="📊", layout="wide")
@@ -58,15 +58,20 @@ if not has_data:
 
 # ── Helper: format df for display ─────────────────────────────────────────────
 def fmt_df_billions(df: pd.DataFrame, key_rows: list) -> pd.DataFrame:
+    """Transpose + format a financial DataFrame for display.
+
+    Returns a DataFrame where:
+      - index  = Timestamp objects (dates) → render_table will format as FY20xx
+      - columns = full metric names (no truncation)
+    """
     available = [r for r in key_rows if r in df.columns]
     sub = df[available].copy()
-    sub.columns = [str(c)[:10] for c in sub.columns]
-    display = sub.T.copy()
+    display = sub.T.copy()           # index=dates, columns=metric names
     for col in display.columns:
         display[col] = display[col].apply(
-            lambda x: f"${x/1e9:.2f}B" if pd.notna(x) and abs(x) >= 1e9
-            else (f"${x/1e6:.1f}M" if pd.notna(x) and abs(x) >= 1e6
-                  else (f"{x:.2f}" if pd.notna(x) else "N/A"))
+            lambda x: f"${x/1e9:.2f}B"  if pd.notna(x) and abs(x) >= 1e9
+            else     (f"${x/1e6:.1f}M"  if pd.notna(x) and abs(x) >= 1e6
+            else     (f"{x:.2f}"         if pd.notna(x) else "N/A"))
         )
     return display
 
@@ -105,7 +110,7 @@ with tab1:
 
         with col_tbl:
             disp = fmt_df_billions(fin, IS_KEYS)
-            st.dataframe(style_df(disp), use_container_width=True)
+            render_table(disp)
 
         with col_chart:
             metric = st.selectbox("趋势图指标", [k for k in IS_KEYS if k in fin.columns], key="is_metric")
@@ -157,7 +162,7 @@ with tab1:
 
         with col_tbl:
             disp = fmt_df_billions(bs, BS_KEYS)
-            st.dataframe(style_df(disp), use_container_width=True)
+            render_table(disp)
 
         with col_chart:
             # Stacked: Assets breakdown
@@ -194,7 +199,7 @@ with tab1:
 
         with col_tbl:
             disp = fmt_df_billions(cf, CF_KEYS)
-            st.dataframe(style_df(disp), use_container_width=True)
+            render_table(disp)
 
         with col_chart:
             if "Operating Cash Flow" in cf.columns:
@@ -348,7 +353,7 @@ with tab2:
                     pass
             if comp_full:
                 _cdf = pd.DataFrame(comp_full).set_index("Ticker")
-                st.dataframe(style_df(_cdf), use_container_width=True)
+                render_table(_cdf)
 
 
 # ════════════════════════════════════════════════════════════════════════════════
