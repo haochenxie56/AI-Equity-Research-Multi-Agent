@@ -473,6 +473,20 @@ def load_prepost(ticker: str) -> dict:
     return get_prepost_price(ticker)
 
 
+@st.cache_data(ttl=1800, show_spinner=False)
+def _load_news_impl(ticker: str, days: int = 7) -> list:
+    from data_fetcher import get_news
+    return get_news(ticker, days=days)
+
+
+def load_news(ticker: str, days: int = 7) -> list:
+    """Cached Finnhub news fetch (30-min TTL). Returns [] on error / missing key."""
+    try:
+        return _load_news_impl(ticker, days)
+    except Exception:
+        return []
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_ohlcv_multi(tickers: tuple, period: str = "1y") -> dict[str, pd.DataFrame]:
     """Load OHLCV for multiple tickers. Use tuple (not list) for cache hashing."""

@@ -18,7 +18,8 @@ import yfinance as yf
 
 from cache_manager import get_or_fetch
 
-POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "")
+POLYGON_API_KEY  = os.getenv("POLYGON_API_KEY",  "")
+FINNHUB_API_KEY  = os.getenv("FINNHUB_API_KEY",  "")
 
 # Safely import yfinance's rate-limit exception (added in ~0.2.38)
 try:
@@ -307,15 +308,154 @@ def format_prepost_summary(ticker: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# News
+# News & Sentiment  (Finnhub primary, silent fallback when key is absent)
 # ---------------------------------------------------------------------------
 
-def get_news(ticker: str, count: int = 10) -> list[dict]:
-    """Recent news headlines for a ticker."""
+# Keyword sets for per-article headline sentiment scoring.
+# Finnhub's free /company-news endpoint has no per-article score,
+# so we derive one from headline keywords (range: -1 → +1).
+_SENT_POS = frozenset({
+    "beat", "beats", "record", "growth", "surges", "surge", "rally",
+    "profit", "gains", "gain", "rises", "rise", "soars", "soar",
+    "jumps", "jump", "upgrade", "upgraded", "outperform", "strong",
+    "bullish", "expansion", "breakthrough", "buy", "positive", "boost",
+    "raises", "raise", "exceeds", "exceed",
+})
+_SENT_NEG = frozenset({
+    "miss", "misses", "missed", "loss", "losses", "decline", "declines",
+    "drops", "drop", "falls", "fall", "slump", "slumps", "warning",
+    "downgrade", "downgraded", "sell", "underperform", "weak", "bearish",
+    "lawsuit", "investigation", "recall", "cuts", "cut", "layoffs",
+    "layoff", "negative", "concern", "worries", "disappoints", "disappointing",
+})
+
+
+def _headline_sentiment(headline: str) -> float:
+    """Keyword-based sentiment score: returns -1.0 … +1.0 (0.0 = neutral)."""
+    words = set(headline.lower().split())
+    pos = len(words & _SENT_POS)
+    neg = len(words & _SENT_NEG)
+    total = pos + neg
+    if total == 0:
+        return 0.0
+    return round((pos - neg) / total, 2)
+
+
+def get_news(ticker: str, days: int = 7) -> list[dict]:
+    """
+    Fetch recent company news from Finnhub for the past `days` days.
+
+    Returns a list of dicts:
+        datetime  : "YYYY-MM-DD HH:MM" (UTC)
+        headline  : str
+        source    : str
+        url       : str
+        sentiment : float  -1…+1  (keyword-derived, 0 = neutral)
+        summary   : str
+
+    Requires FINNHUB_API_KEY env var. Returns [] silently if absent or on
+    any network / parse error.
+    """
+    if not FINNHUB_API_KEY:
+        return []
+
     try:
-        return _with_retry(lambda: yf.Ticker(ticker).news[:count])
+        import requests
+        from datetime import timedelta
+
+        to_dt   = datetime.now(timezone.utc).date()
+        from_dt = to_dt - timedelta(days=days)
+
+        resp = requests.get(
+            "https://finnhub.io/api/v1/company-news",
+            params={
+                "symbol": ticker,
+                "from":   str(from_dt),
+                "to":     str(to_dt),
+                "token":  FINNHUB_API_KEY,
+            },
+            timeout=10,
+        )
+        resp.raise_for_status()
+        raw = resp.json()
+
+        if not isinstance(raw, list):
+            return []
+
+        results: list[dict] = []
+        for item in raw:
+            try:
+                headline = item.get("headline", "")
+                results.append({
+                    "datetime":  datetime.fromtimestamp(
+                        item.get("datetime", 0), tz=timezone.utc
+                    ).strftime("%Y-%m-%d %H:%M"),
+                    "headline":  headline,
+                    "source":    item.get("source", ""),
+                    "url":       item.get("url", ""),
+                    "sentiment": _headline_sentiment(headline),
+                    "summary":   item.get("summary", ""),
+                })
+            except Exception:
+                continue
+
+        results.sort(key=lambda x: x["datetime"], reverse=True)
+        return results
+
     except Exception:
         return []
+
+
+def get_news_sentiment_summary(ticker: str, days: int = 7) -> dict:
+    """
+    Structured sentiment summary — designed as input for Claude agent calls.
+
+    Keys:
+        total            : int   — total article count
+        positive         : int   — articles with sentiment > 0.2
+        neutral          : int   — articles with -0.2 ≤ sentiment ≤ 0.2
+        negative         : int   — articles with sentiment < -0.2
+        avg_sentiment    : float — mean score across all articles (-1…+1)
+        top_headlines    : list[str] — 3 most recent headlines
+        sentiment_trend  : "improving" | "stable" | "deteriorating"
+    """
+    articles = get_news(ticker, days=days)
+
+    result: dict = {
+        "total":           0,
+        "positive":        0,
+        "neutral":         0,
+        "negative":        0,
+        "avg_sentiment":   0.0,
+        "top_headlines":   [],
+        "sentiment_trend": "stable",
+    }
+
+    if not articles:
+        return result
+
+    scores = [a["sentiment"] for a in articles]
+    n = len(scores)
+
+    result["total"]          = n
+    result["positive"]       = sum(1 for s in scores if s >  0.2)
+    result["neutral"]        = sum(1 for s in scores if -0.2 <= s <= 0.2)
+    result["negative"]       = sum(1 for s in scores if s < -0.2)
+    result["avg_sentiment"]  = round(sum(scores) / n, 3)
+    result["top_headlines"]  = [a["headline"] for a in articles[:3]]
+
+    # Trend: compare the first (most-recent) half vs second (older) half
+    mid = n // 2
+    if mid > 0:
+        recent_avg = sum(scores[:mid]) / mid
+        older_avg  = sum(scores[mid:]) / (n - mid)
+        diff = recent_avg - older_avg
+        if diff > 0.1:
+            result["sentiment_trend"] = "improving"
+        elif diff < -0.1:
+            result["sentiment_trend"] = "deteriorating"
+
+    return result
 
 
 # ---------------------------------------------------------------------------
