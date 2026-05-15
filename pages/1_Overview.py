@@ -15,7 +15,7 @@ from ui_utils import (
     fmt_large, fmt_pct, fmt_val, download_report_button, page_header, render_table, t,
 )
 
-st.set_page_config(page_title="总览", page_icon="🔭", layout="wide")
+st.set_page_config(page_title="Overview", page_icon="🔭", layout="wide")
 apply_theme()
 ticker = render_sidebar()
 
@@ -126,14 +126,15 @@ if run_all or any(k in st.session_state for k in [f"overview_done_{ticker}"]):
             om_v  = (info.get("operatingMargins") or 0) * 100
             roe_v = (info.get("returnOnEquity") or 0) * 100
             moat_scores = {
-                "无形资产": min(5, max(1, int(gm_v / 12))),
-                "转换成本": min(5, max(1, int(om_v / 8) + 1)),
-                "网络效应": min(5, max(1, 2)),
-                "成本优势": min(5, max(1, int(om_v / 10))),
-                "高效规模": min(5, max(1, int(roe_v / 15))),
+                t("moat_intangibles"): min(5, max(1, int(gm_v / 12))),
+                t("moat_switching"):   min(5, max(1, int(om_v / 8) + 1)),
+                t("moat_network"):     min(5, max(1, 2)),
+                t("moat_cost_adv"):    min(5, max(1, int(om_v / 10))),
+                t("moat_eff_scale"):   min(5, max(1, int(roe_v / 15))),
             }
             total_moat = sum(moat_scores.values())
-            moat_label = "宽" if total_moat >= 18 else ("窄" if total_moat >= 12 else "无/极窄")
+            moat_label = (t("moat_wide") if total_moat >= 18 else
+                          (t("moat_narrow") if total_moat >= 12 else t("moat_none")))
             results["equity"] = {
                 "moat_scores": moat_scores,
                 "total_moat": total_moat,
@@ -155,76 +156,85 @@ if run_all or any(k in st.session_state for k in [f"overview_done_{ticker}"]):
         tech_r = results.get("technical", {})
         earn_r = results.get("earnings", {})
 
+        _lang_r = st.session_state.get("language", "en")
+        _L = lambda zh, en: en if _lang_r == "en" else zh
+
         report_lines = [
             f"# Research Overview: {ticker} — {name}",
             f"",
-            f"**日期**：{today}  |  **价格**：${price:.2f}  |  **涨跌**：{chg:+.2f}%",
+            f"**{_L('Date', '日期')}**: {today}  |  **{_L('Price', '价格')}**: ${price:.2f}  |  **{_L('Change', '涨跌')}**: {chg:+.2f}%",
             f"",
             f"---",
             f"",
-            f"## 执行摘要",
+            f"## {_L('Executive Summary', '执行摘要')}",
             f"",
         ]
 
         if fin_r:
             gm = f"{fin_r.get('gm',0)*100:.1f}%" if fin_r.get('gm') else 'N/A'
             report_lines += [
-                f"- 营收（TTM）：{fmt_large(fin_r.get('rev'))}",
-                f"- 毛利率：{gm}",
-                f"- 净利润（TTM）：{fmt_large(fin_r.get('ni'))}",
-                f"- 自由现金流（TTM）：{fmt_large(fin_r.get('fcf'))}",
+                f"- {_L('Revenue (TTM)', '营收（TTM）')}: {fmt_large(fin_r.get('rev'))}",
+                f"- {_L('Gross Margin', '毛利率')}: {gm}",
+                f"- {_L('Net Income (TTM)', '净利润（TTM）')}: {fmt_large(fin_r.get('ni'))}",
+                f"- {_L('Free Cash Flow (TTM)', '自由现金流（TTM）')}: {fmt_large(fin_r.get('fcf'))}",
                 f"",
             ]
 
         if tech_r:
-            trend = "多头排列（价格 > SMA20 > SMA50 > SMA200）" if (
-                tech_r.get("price",0) > tech_r.get("SMA_20",0) > tech_r.get("SMA_50",0)
-            ) else "均线结构需关注"
+            trend = (
+                _L("Bullish alignment (Price > SMA20 > SMA50 > SMA200)", "多头排列（价格 > SMA20 > SMA50 > SMA200）")
+                if (tech_r.get("price", 0) > tech_r.get("SMA_20", 0) > tech_r.get("SMA_50", 0))
+                else _L("MA structure needs attention", "均线结构需关注")
+            )
             report_lines += [
-                f"- 当前价：${tech_r.get('price')} | RSI(14)：{tech_r.get('RSI_14')} | ADX：{tech_r.get('ADX')}",
-                f"- 趋势结构：{trend}",
-                f"- 距52周高点：{tech_r.get('pct_from_52w_high')}%",
+                f"- {_L('Price', '当前价')}: ${tech_r.get('price')} | RSI(14): {tech_r.get('RSI_14')} | ADX: {tech_r.get('ADX')}",
+                f"- {_L('Trend', '趋势结构')}: {trend}",
+                f"- {_L('From 52W High', '距52周高点')}: {tech_r.get('pct_from_52w_high')}%",
                 f"",
             ]
 
         if earn_r and earn_r.get("next_earnings_date"):
             d = earn_r["next_earnings_date"].strftime("%Y-%m-%d")
             days = earn_r.get("days_to_earnings", 0)
+            _day_lbl = f"{days}{_L('d out' if days >= 0 else 'd ago', '天后' if days >= 0 else '天前')}"
             report_lines.append(
-                f"- 下次财报：{d}（{'⚠️ ' if abs(days) <= 14 else ''}{days}天{'后' if days >= 0 else '前'}）"
+                f"- {_L('Next Earnings', '下次财报')}: {d} ({'⚠️ ' if abs(days) <= 14 else ''}{_day_lbl})"
             )
             if earn_r.get("eps_estimate"):
-                report_lines.append(f"  - EPS 预期：${earn_r['eps_estimate']:.2f}")
+                report_lines.append(f"  - {_L('EPS Est', 'EPS 预期')}: ${earn_r['eps_estimate']:.2f}")
             if earn_r.get("surprise_pct_last") is not None:
                 s = earn_r['surprise_pct_last']
-                report_lines.append(f"  - 上次EPS惊喜：{'+' if s >= 0 else ''}{s}%")
+                report_lines.append(f"  - {_L('Last Surprise', '上次EPS惊喜')}: {'+' if s >= 0 else ''}{s}%")
             report_lines.append("")
 
         eq_r = results.get("equity", {})
         if eq_r:
             report_lines += [
-                f"- 护城河评级：{eq_r.get('moat_label')}（{eq_r.get('total_moat')}/25）",
-                f"- 分析师评级：{eq_r.get('analyst_rating', 'N/A')}",
+                f"- {_L('Moat Rating', '护城河评级')}: {eq_r.get('moat_label')} ({eq_r.get('total_moat')}/25)",
+                f"- {_L('Analyst Rating', '分析师评级')}: {eq_r.get('analyst_rating', 'N/A')}",
             ]
             if eq_r.get("target_mean"):
                 upside_r = (eq_r["target_mean"] / price - 1) * 100 if price else 0
-                report_lines.append(f"- 目标价均值：${eq_r['target_mean']:.2f}（{upside_r:+.1f}%，{eq_r.get('num_analysts', 0)}位分析师）")
+                _n_ana = eq_r.get('num_analysts', 0)
+                report_lines.append(
+                    f"- {_L('Mean Target', '目标价均值')}: ${eq_r['target_mean']:.2f} ({upside_r:+.1f}%, {_n_ana} {_L('analysts', '位分析师')})"
+                )
             report_lines.append("")
 
         report_lines += [
-            f"## 估值快照",
+            f"## {_L('Valuation Snapshot', '估值快照')}",
             f"",
-            f"| 指标 | 数值 |",
+            f"| {_L('Metric', '指标')} | {_L('Value', '数值')} |",
             f"|------|------|",
             f"| Trailing P/E | {fmt_val(info.get('trailingPE'), decimals=1, suffix='x')} |",
             f"| Forward P/E  | {fmt_val(info.get('forwardPE'),  decimals=1, suffix='x')} |",
             f"| P/S (TTM)    | {fmt_val(info.get('priceToSalesTrailing12Months'), decimals=1, suffix='x')} |",
             f"| EV/EBITDA    | {fmt_val(info.get('enterpriseToEbitda'), decimals=1, suffix='x')} |",
-            f"| 市值         | {fmt_large(info.get('marketCap'))} |",
+            f"| {_L('Mkt Cap', '市值')} | {fmt_large(info.get('marketCap'))} |",
             f"",
             f"---",
             f"",
-            f"> **风险提示**：本报告仅供研究参考，不构成投资建议。",
+            f"> **{_L('Disclaimer', '风险提示')}**: {_L('For research purposes only. Not investment advice.', '本报告仅供研究参考，不构成投资建议。')}",
         ]
         report_content = "\n".join(report_lines)
 
@@ -234,7 +244,7 @@ if run_all or any(k in st.session_state for k in [f"overview_done_{ticker}"]):
         results["report"] = report_content
         st.session_state[f"overview_done_{ticker}"] = results
     except Exception as e:
-        st.warning(f"报告生成遇到问题：{e}")
+        st.warning(t("p1_rpt_gen_err") + f": {e}")
 
     progress.progress(100, text="✅ Done")
     status_box.empty()
@@ -285,10 +295,13 @@ earn_r = stored.get("earnings", {})
 if earn_r and earn_r.get("next_earnings_date"):
     days = earn_r.get("days_to_earnings", 0)
     d_str = earn_r["next_earnings_date"].strftime("%Y-%m-%d")
+    _day_lbl = f"{days}{t('earn_day_out') if days >= 0 else t('earn_day_ago')}"
     if abs(days) <= 14:
-        st.warning(f"⚠️ 财报窗口期：{d_str}（{days}天{'后' if days >= 0 else '前'}）｜EPS预期：${earn_r.get('eps_estimate', 'N/A'):.2f}" if earn_r.get('eps_estimate') else f"⚠️ 财报日：{d_str}（{days}天{'后' if days >= 0 else '前'}）")
+        _eps_part = f" | {t('earn_eps_est')}: ${earn_r['eps_estimate']:.2f}" if earn_r.get('eps_estimate') else ""
+        st.warning(f"⚠️ {t('earn_window_lbl')}: {d_str} — {_day_lbl}{_eps_part}")
     else:
-        st.info(f"📅 下次财报：{d_str}（{days}天{'后' if days >= 0 else '前'}）｜上次EPS惊喜：{earn_r.get('surprise_pct_last', 'N/A')}%")
+        _surp = earn_r.get('surprise_pct_last', 'N/A')
+        st.info(f"📅 {t('earn_next_lbl')}: {d_str} — {_day_lbl} | {t('earn_last_surp')}: {_surp}%")
     st.divider()
 
 # Equity summary
@@ -296,7 +309,7 @@ equity_r = stored.get("equity", {})
 if equity_r:
     st.subheader(t("p1_equity_sum"))
     eq1, eq2, eq3 = st.columns(3)
-    eq1.metric(t("moat_rating"),   f"{equity_r.get('moat_label')}（{equity_r.get('total_moat')}/25）")
+    eq1.metric(t("moat_rating"),   f"{equity_r.get('moat_label')} ({equity_r.get('total_moat')}/25)")
     eq2.metric(t("analyst_rtg"),   equity_r.get("analyst_rating", "N/A"))
     if equity_r.get("target_mean"):
         target_p = equity_r["target_mean"]
@@ -413,7 +426,8 @@ with _score_col:
     ).set_index(t("p1_score_dim"))
     render_table(_score_df, height=230)
     _overall = round(sum(_vals) / len(_vals), 1)
-    _qual = "优质" if _overall >= 3.5 else ("中性" if _overall >= 2.5 else "注意风险")
+    _qual = (t("p1_qual_excel") if _overall >= 3.5 else
+             (t("p1_qual_neutral") if _overall >= 2.5 else t("p1_qual_caution")))
     st.metric(t("p1_overall"), f"{_overall:.1f} / 5.0",
               delta=_qual,
               delta_color="normal" if _overall >= 3.5 else ("off" if _overall >= 2.5 else "inverse"))

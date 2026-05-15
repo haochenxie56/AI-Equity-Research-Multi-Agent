@@ -1,4 +1,4 @@
-"""Page 3 — 选股扫描（自定义股票池）"""
+"""Page 3 — Stock Scanner (custom pool)"""
 
 import sys
 from pathlib import Path
@@ -14,7 +14,7 @@ from ui_utils import (
     apply_layout, fmt_large, download_report_button, page_header, render_table, t,
 )
 
-st.set_page_config(page_title="选股扫描", page_icon="🔍", layout="wide")
+st.set_page_config(page_title="Stock Scanner", page_icon="🔍", layout="wide")
 apply_theme()
 render_sidebar()
 
@@ -28,6 +28,16 @@ DEFAULT_POOL = (
     "AAPL, MSFT, NVDA, AVGO, META, ORCL, CRM, AMD, QCOM, TXN, "
     "AMAT, KLAC, LRCX, MU, ADI, NOW, PANW, SNPS, CDNS, INTC"
 )
+
+# Canonical English strategy codes (used internally for filtering / caching)
+_STRAT_CODES   = ["Momentum", "Value", "Quality Growth", "Oversold Bounce"]
+# Displayed labels (language-aware)
+_STRAT_DISPLAY = [
+    t("p3_strat_momentum"),
+    t("p3_strat_value"),
+    t("p3_strat_quality"),
+    t("p3_strat_oversold"),
+]
 
 # ── Settings ──────────────────────────────────────────────────────────────────
 col_pool, col_params = st.columns([3, 2])
@@ -45,12 +55,10 @@ with col_pool:
 
 with col_params:
     st.subheader(t("p3_strategy"))
-    strategy = st.selectbox(t("p3_strat_lbl"), [
-        "动量 Momentum",
-        "价值 Value",
-        "高质量成长 Quality Growth",
-        "超卖反弹 Oversold Bounce",
-    ])
+    _strat_display_choice = st.selectbox(t("p3_strat_lbl"), _STRAT_DISPLAY)
+    # Convert displayed label back to canonical code
+    strategy = _STRAT_CODES[_STRAT_DISPLAY.index(_strat_display_choice)]
+
     period = st.selectbox(t("p3_period"), ["6mo","1y","2y"], index=1)
     top_n  = st.slider(t("p3_top_n"), min_value=5, max_value=len(pool_tickers), value=min(15, len(pool_tickers)))
 
@@ -60,6 +68,8 @@ st.divider()
 # ── Scanner logic ─────────────────────────────────────────────────────────────
 @st.cache_data(ttl=1800, show_spinner=False)
 def run_scan(tickers: tuple, strategy: str, period: str) -> list[dict]:
+    """Run the scan for the given tickers, strategy code, and period.
+    Column names are always English (language-independent) for caching consistency."""
     sys.path.insert(0, str(Path(__file__).parent.parent / "lib"))
     from technical import snapshot
 
@@ -82,29 +92,29 @@ def run_scan(tickers: tuple, strategy: str, period: str) -> list[dict]:
             ret_6m  = (df["Close"].iloc[-1] / df["Close"].iloc[-126] - 1) * 100 if len(df) >= 126 else None
             vol_ann = df["Close"].pct_change().std() * (252 ** 0.5) * 100
 
-            # Strategy filters
+            # Strategy filters (canonical English codes)
             passes = False
-            if "动量" in strategy:
+            if strategy == "Momentum":
                 passes = (
                     snap["above_SMA200"] and
                     50 <= snap.get("RSI_14", 0) <= 72 and
                     snap.get("Vol_ratio_20d", 0) >= 1.1 and
                     (ret_3m or 0) > 0
                 )
-            elif "价值" in strategy:
+            elif strategy == "Value":
                 try:
                     info_v = load_info(ticker)
                     pe = info_v.get("trailingPE")
                     passes = pe is not None and pe < 20 and snap.get("RSI_14", 50) < 55
                 except Exception:
                     passes = snap.get("RSI_14", 50) < 45
-            elif "Quality" in strategy or "质量" in strategy:
+            elif strategy == "Quality Growth":
                 passes = (
                     snap["above_SMA200"] and
                     snap.get("ADX", 0) > 20 and
                     (ret_3m or 0) > 5
                 )
-            elif "超卖" in strategy:
+            elif strategy == "Oversold Bounce":
                 passes = (
                     snap.get("RSI_14", 50) < 38 and
                     snap["above_SMA200"]
@@ -121,31 +131,32 @@ def run_scan(tickers: tuple, strategy: str, period: str) -> list[dict]:
                 except Exception:
                     name, mktcap, sector, pe, fwd_pe = ticker, 0, "N/A", None, None
 
+                # Always store with English column names for caching consistency
                 results.append({
-                    "Ticker":    ticker,
-                    "公司":      name,
-                    "行业":      sector,
-                    "价格($)":   round(price, 2),
-                    "RSI(14)":   snap.get("RSI_14"),
-                    "ADX":       snap.get("ADX"),
-                    "1M收益%":   round(ret_1m, 1) if ret_1m else None,
-                    "3M收益%":   round(ret_3m, 1) if ret_3m else None,
-                    "6M收益%":   round(ret_6m, 1) if ret_6m else None,
-                    "52W高%":    snap.get("pct_from_52w_high"),
-                    "量比(20D)": snap.get("Vol_ratio_20d"),
-                    "年化波动%": round(vol_ann, 1),
-                    "市值(B)":   round(mktcap / 1e9, 1) if mktcap else None,
-                    "P/E":       round(pe, 1) if pe else None,
-                    "Fwd P/E":   round(fwd_pe, 1) if fwd_pe else None,
+                    "Ticker":          ticker,
+                    "Company":         name,
+                    "Sector":          sector,
+                    "Price($)":        round(price, 2),
+                    "RSI(14)":         snap.get("RSI_14"),
+                    "ADX":             snap.get("ADX"),
+                    "1M Ret%":         round(ret_1m, 1) if ret_1m else None,
+                    "3M Ret%":         round(ret_3m, 1) if ret_3m else None,
+                    "6M Ret%":         round(ret_6m, 1) if ret_6m else None,
+                    "52W High%":       snap.get("pct_from_52w_high"),
+                    "Vol Ratio(20D)":  snap.get("Vol_ratio_20d"),
+                    "Ann. Vol%":       round(vol_ann, 1),
+                    "Mkt Cap(B)":      round(mktcap / 1e9, 1) if mktcap else None,
+                    "P/E":             round(pe, 1) if pe else None,
+                    "Fwd P/E":         round(fwd_pe, 1) if fwd_pe else None,
                 })
         except Exception:
             continue
 
     prog.empty()
 
-    # Sort by strategy
-    sort_key = "3M收益%" if "动量" in strategy else "RSI(14)"
-    results.sort(key=lambda x: (x.get(sort_key) or -9999), reverse=("动量" in strategy or "质量" in strategy))
+    # Sort by strategy (English codes)
+    sort_key = "3M Ret%" if strategy == "Momentum" else "RSI(14)"
+    results.sort(key=lambda x: (x.get(sort_key) or -9999), reverse=(strategy in ("Momentum", "Quality Growth")))
     return results
 
 
@@ -177,42 +188,63 @@ if not results:
 top_results = results[:top_n]
 df_results  = pd.DataFrame(top_results)
 
-# Summary bar
+# Summary bar — always reference English column names internally
 c1, c2, c3 = st.columns(3)
 c1.metric(t("p3_hits"),    len(results))
-c2.metric(t("p3_avg3m"),   f"{pd.Series([r.get('3M收益%') for r in results if r.get('3M收益%')]).mean():.1f}%")
+c2.metric(t("p3_avg3m"),   f"{pd.Series([r.get('3M Ret%') for r in results if r.get('3M Ret%')]).mean():.1f}%")
 c3.metric(t("p3_avg_rsi"), f"{pd.Series([r.get('RSI(14)') for r in results if r.get('RSI(14)')]).mean():.1f}")
 st.divider()
+
+# Language-aware column rename map for display
+_COL_ZH = {
+    "Company":        t("p3_col_company"),
+    "Sector":         t("p3_col_sector"),
+    "Price($)":       t("p3_col_price"),
+    "1M Ret%":        t("p3_col_ret1m"),
+    "3M Ret%":        t("p3_col_ret3m"),
+    "6M Ret%":        t("p3_col_ret6m"),
+    "Vol Ratio(20D)": t("p3_col_volratio"),
+    "Ann. Vol%":      t("p3_col_annvol"),
+    "Mkt Cap(B)":     t("p3_col_mktcap"),
+}
+display_df = df_results.rename(columns=_COL_ZH)
 
 # Results table
 st.subheader(f"Top {top_n}")
 render_table(
-    df_results.set_index("Ticker"),
+    display_df.set_index("Ticker"),
     height=min(400, 50 + len(top_results) * 38),
 )
 st.divider()
 
 # ── Bubble chart ──────────────────────────────────────────────────────────────
-st.subheader("3M Return vs RSI (bubble size = Mkt Cap)")
-plot_df = df_results.dropna(subset=["3M收益%", "RSI(14)"])
+_col_ret3m = _COL_ZH["3M Ret%"]
+_col_rsi   = "RSI(14)"
+_col_mkt   = _COL_ZH["Mkt Cap(B)"]
+_col_sec   = _COL_ZH["Sector"]
+_col_co    = _COL_ZH["Company"]
+_col_px    = _COL_ZH["Price($)"]
+
+st.subheader(f"{_col_ret3m} vs {_col_rsi} (bubble = {_col_mkt})")
+plot_df = display_df.dropna(subset=[_col_ret3m, _col_rsi])
 
 if not plot_df.empty:
     fig = px.scatter(
         plot_df,
-        x="3M收益%",
-        y="RSI(14)",
-        size=[max(v, 1) for v in plot_df["市值(B)"].fillna(1)],
-        color="行业",
+        x=_col_ret3m,
+        y=_col_rsi,
+        size=[max(v, 1) for v in plot_df[_col_mkt].fillna(1)],
+        color=_col_sec,
         text="Ticker",
-        hover_data={"公司": True, "价格($)": True, "P/E": True,
-                    "3M收益%": True, "RSI(14)": True, "市值(B)": True},
+        hover_data={_col_co: True, _col_px: True, "P/E": True,
+                    _col_ret3m: True, _col_rsi: True, _col_mkt: True},
         size_max=60,
     )
     fig.add_hline(y=70, line_dash="dash", line_color="red",   opacity=0.5, annotation_text="Overbought(70)")
     fig.add_hline(y=30, line_dash="dash", line_color="green", opacity=0.5, annotation_text="Oversold(30)")
     fig.add_vline(x=0,  line_dash="dash", line_color="gray",  opacity=0.4)
     fig.update_traces(textposition="top center", textfont_size=11)
-    apply_layout(fig, title="3M Return (%) vs RSI(14)", height=480)
+    apply_layout(fig, title=f"{_col_ret3m} vs {_col_rsi}", height=480)
     st.plotly_chart(fig, use_container_width=True)
 
 st.divider()
@@ -220,30 +252,36 @@ st.divider()
 # ── Download ──────────────────────────────────────────────────────────────────
 col_dl1, col_dl2 = st.columns(2)
 with col_dl1:
-    csv_data = df_results.to_csv(index=False)
+    csv_data = display_df.to_csv(index=False)
     st.download_button(t("p3_dl_csv"), csv_data,
-                       f"{datetime.now().strftime('%Y%m%d')}_scan_{strategy[:5]}.csv", "text/csv")
+                       f"{datetime.now().strftime('%Y%m%d')}_scan_{strategy[:10].replace(' ','_')}.csv", "text/csv")
 with col_dl2:
+    _lang = st.session_state.get("language", "en")
     today = datetime.now().strftime("%Y-%m-%d")
     md_lines = [
-        f"# Stock Scan: {strategy}",
+        f"# Stock Scan: {_strat_display_choice}",
         f"",
-        f"**日期**：{today}  |  **股票池**：{len(pool_tickers)} 只  |  **命中**：{len(results)} 只",
+        f"**{'Date' if _lang=='en' else '日期'}**: {today}  |  "
+        f"**{'Pool' if _lang=='en' else '股票池'}**: {len(pool_tickers)}  |  "
+        f"**{'Hits' if _lang=='en' else '命中'}**: {len(results)}",
         f"",
-        f"| Ticker | 价格 | RSI | ADX | 3M收益 | 市值 |",
-        f"|--------|------|-----|-----|--------|------|",
+        f"| Ticker | Price | RSI | ADX | 3M Ret | Mkt Cap |",
+        f"|--------|-------|-----|-----|--------|---------|",
     ]
     for r in top_results:
         md_lines.append(
-            f"| {r['Ticker']} | ${r['价格($)']} | {r['RSI(14)']} | {r['ADX']} "
-            f"| {r.get('3M收益%','N/A')}% | {r.get('市值(B)','N/A')}B |"
+            f"| {r['Ticker']} | ${r['Price($)']} | {r['RSI(14)']} | {r['ADX']} "
+            f"| {r.get('3M Ret%','N/A')}% | {r.get('Mkt Cap(B)','N/A')}B |"
         )
-    md_lines += ["", "> **风险提示**：本报告仅供研究参考，不构成投资建议。"]
+    _disclaimer = ("> **Disclaimer**: For research purposes only. Not investment advice."
+                   if _lang == "en" else
+                   "> **风险提示**：本报告仅供研究参考，不构成投资建议。")
+    md_lines += ["", _disclaimer]
     report_md = "\n".join(md_lines)
 
     # Save to research/scans/
     scan_path = (Path(__file__).parent.parent / "research" / "scans" /
-                 f"{datetime.now().strftime('%Y%m%d')}_scan_{strategy[:8].replace(' ','_')}.md")
+                 f"{datetime.now().strftime('%Y%m%d')}_scan_{strategy[:12].replace(' ','_')}.md")
     scan_path.parent.mkdir(parents=True, exist_ok=True)
     scan_path.write_text(report_md, encoding="utf-8")
 

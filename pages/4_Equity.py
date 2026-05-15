@@ -104,17 +104,18 @@ with left_col:
     roe   = (info.get("returnOnEquity") or 0) * 100
     rnd_r = (info.get("researchDevelopmentToRevenue") or 0) * 100
 
-    default_scores = {
-        "无形资产\n(品牌/专利)": min(5, max(1, int(gm / 12))),
-        "转换成本":              min(5, max(1, int(om / 8) + 1)),
-        "网络效应":              min(5, max(1, 2)),
-        "成本优势":              min(5, max(1, int(om / 10))),
-        "高效规模":              min(5, max(1, int(roe / 15))),
-    }
+    _moat_dims = [
+        ("moat_intangibles", min(5, max(1, int(gm / 12)))),
+        ("moat_switching",   min(5, max(1, int(om / 8) + 1))),
+        ("moat_network",     min(5, max(1, 2))),
+        ("moat_cost_adv",    min(5, max(1, int(om / 10)))),
+        ("moat_eff_scale",   min(5, max(1, int(roe / 15)))),
+    ]
 
     scores = {}
-    for dim, default_val in default_scores.items():
-        scores[dim] = st.slider(dim, 1, 5, default_val, key=f"moat_{dim}")
+    for _mkey, _mdefault in _moat_dims:
+        _mlabel = t(_mkey)
+        scores[_mlabel] = st.slider(_mlabel, 1, 5, _mdefault, key=f"moat_{_mkey}")
 
     # Radar chart
     dims   = list(scores.keys())
@@ -158,8 +159,9 @@ with left_col:
     st.plotly_chart(fig_r, use_container_width=True)
 
     total_moat = sum(vals)
-    moat_label = "宽" if total_moat >= 18 else ("窄" if total_moat >= 12 else "无/极窄")
-    st.metric(t("p4_moat_rating"), f"{moat_label}（{total_moat}/25）")
+    moat_label = (t("moat_wide") if total_moat >= 18 else
+                  (t("moat_narrow") if total_moat >= 12 else t("moat_none")))
+    st.metric(t("p4_moat_rating"), f"{moat_label} ({total_moat}/25)")
 
 with right_col:
     st.subheader(t("p4_peers"))
@@ -179,12 +181,12 @@ with right_col:
             try:
                 i = load_info(tk)
                 peer_data.append({
-                    "Ticker":      tk,
-                    "P/S":         i.get("priceToSalesTrailing12Months") or 0,
-                    "Fwd P/E":     i.get("forwardPE") or 0,
-                    "毛利率%":     (i.get("grossMargins") or 0) * 100,
-                    "营业利润率%": (i.get("operatingMargins") or 0) * 100,
-                    "ROE%":        (i.get("returnOnEquity") or 0) * 100,
+                    "Ticker":        tk,
+                    "P/S":           i.get("priceToSalesTrailing12Months") or 0,
+                    "Fwd P/E":       i.get("forwardPE") or 0,
+                    t("p4_peer_gm"): (i.get("grossMargins") or 0) * 100,
+                    t("p4_peer_op"): (i.get("operatingMargins") or 0) * 100,
+                    "ROE%":          (i.get("returnOnEquity") or 0) * 100,
                 })
             except Exception:
                 pass
@@ -192,7 +194,7 @@ with right_col:
     if peer_data:
         peer_df = pd.DataFrame(peer_data).set_index("Ticker")
 
-        metric_choice = st.selectbox(t("p4_peer_metric"), ["毛利率%","营业利润率%","ROE%","P/S","Fwd P/E"])
+        metric_choice = st.selectbox(t("p4_peer_metric"), [t("p4_peer_gm"), t("p4_peer_op"), "ROE%", "P/S", "Fwd P/E"])
         colors = ["#4da6ff" if tk == ticker else "#6c757d" for tk in peer_df.index]
 
         fig_p = go.Figure(go.Bar(
@@ -252,12 +254,9 @@ _has_finnhub = bool(__import__("os").getenv("FINNHUB_API_KEY", ""))
 
 if not _news:
     if not _has_finnhub:
-        st.info(
-            "💡 配置 `FINNHUB_API_KEY` 环境变量后可显示新闻情绪分析。\n\n"
-            "免费注册：https://finnhub.io/register"
-        )
+        st.info(t("p4_no_finnhub"))
     else:
-        st.info("过去7天暂无新闻数据")
+        st.info(t("p4_no_news"))
 else:
     # ── Sentiment metrics ─────────────────────────────────────────────────────
     _scores   = [a["sentiment"] for a in _news]
@@ -291,13 +290,13 @@ else:
         for _a in _news:
             _daily[_a["datetime"][:13] + ":00"].append(_a["sentiment"])
         _tick_fmt    = "%m-%d %H:%M"
-        _chart_title = "近期情绪趋势（按小时）"
+        _chart_title = t("p4_chart_hourly")
     else:
         _daily = defaultdict(list)
         for _a in _news:
             _daily[_a["datetime"][:10]].append(_a["sentiment"])
         _tick_fmt    = "%m-%d"
-        _chart_title = "近7天日均情绪趋势"
+        _chart_title = t("p4_chart_daily")
 
     _dates     = sorted(_daily.keys())
     _daily_avg = [sum(_daily[d]) / len(_daily[d]) for d in _dates]
@@ -406,72 +405,85 @@ st.divider()
 st.subheader(t("p4_report"))
 today    = datetime.now().strftime("%Y-%m-%d")
 date_pfx = datetime.now().strftime("%Y%m%d")
-moat_str = "\n".join([f"| {k.replace(chr(10),' ')} | {'★'*v}{'☆'*(5-v)} ({v}/5) |" for k, v in scores.items()])
+moat_str = "\n".join([f"| {k} | {'★'*v}{'☆'*(5-v)} ({v}/5) |" for k, v in scores.items()])
+
+_lang = st.session_state.get("language", "en")
+_L = lambda zh, en: en if _lang == "en" else zh
 
 # Peer table md
+_gm_key = t("p4_peer_gm")
+_op_key = t("p4_peer_op")
+_no_peer = _L("No peer data available", "暂无同业数据")
 peer_md_rows = "\n".join([
-    f"| {r['Ticker']} | {r['毛利率%']:.1f}% | {r['营业利润率%']:.1f}% | {r['ROE%']:.1f}% | {r['P/S']:.1f}x | {r['Fwd P/E']:.1f}x |"
+    f"| {r['Ticker']} | {r[_gm_key]:.1f}% | {r[_op_key]:.1f}% | {r['ROE%']:.1f}% | {r['P/S']:.1f}x | {r['Fwd P/E']:.1f}x |"
     for r in peer_data
-]) if peer_data else "暂无同业数据"
+]) if peer_data else _no_peer
+
+_analysts_txt = (
+    (_L("Analyst consensus: ", "分析师一致评级：") +
+     f"**{str(info.get('recommendationKey','N/A')).upper()}**, ")
+    if info.get("recommendationKey") else ""
+)
+_target_n = info.get('numberOfAnalystOpinions', 0)
+_target_txt = _L(f"{_target_n} analysts", f"{_target_n} 位分析师")
 
 report_md = f"""# Equity Research: {ticker} — {name}
 
-**日期**：{today}
-**Ticker**：{ticker} | {info.get('exchange','N/A')}
-**行业**：{info.get('sector','N/A')} / {info.get('industry','N/A')}
-**分析师 Agent**：equity-research
+**{_L('Date', '日期')}**: {today}
+**Ticker**: {ticker} | {info.get('exchange','N/A')}
+**{_L('Sector', '行业')}**: {info.get('sector','N/A')} / {info.get('industry','N/A')}
+**{_L('Analyst Agent', '分析师 Agent')}**: equity-research
 
 ---
 
-## 执行摘要
+## {_L('Executive Summary', '执行摘要')}
 
-{name} 当前股价 ${price:.2f}，市值 {fmt_large(info.get('marketCap'))}。
-{'分析师一致评级 **' + str(info.get('recommendationKey','N/A')).upper() + '**，' if info.get('recommendationKey') else ''}
-目标价均值 ${info.get('targetMeanPrice', 'N/A')}（{info.get('numberOfAnalystOpinions', 0)} 位分析师）。
+{name} — {_L('current price', '当前股价')} ${price:.2f}, {_L('market cap', '市值')} {fmt_large(info.get('marketCap'))}.
+{_analysts_txt}{_L('price target', '目标价均值')} ${info.get('targetMeanPrice', 'N/A')} ({_target_txt}).
 
 ---
 
-## 关键财务指标
+## {_L('Key Financial Metrics', '关键财务指标')}
 
-| 指标 | 数值 |
-|------|------|
-| 市值 | {fmt_large(info.get('marketCap'))} |
+| {_L('Metric', '指标')} | {_L('Value', '数值')} |
+|---|---|
+| {_L('Market Cap', '市值')} | {fmt_large(info.get('marketCap'))} |
 | Trailing P/E | {fmt_val(info.get('trailingPE'), decimals=1, suffix='x')} |
 | Forward P/E | {fmt_val(info.get('forwardPE'), decimals=1, suffix='x')} |
 | P/S (TTM) | {fmt_val(info.get('priceToSalesTrailing12Months'), decimals=1, suffix='x')} |
-| 毛利率 | {fmt_pct(info.get('grossMargins'))} |
+| {_L('Gross Margin', '毛利率')} | {fmt_pct(info.get('grossMargins'))} |
 | ROE | {fmt_pct(info.get('returnOnEquity'))} |
 | Beta | {fmt_val(info.get('beta'), decimals=2)} |
 
 ---
 
-## 护城河评估
+## {_L('Moat Assessment', '护城河评估')}
 
-| 维度 | 评分 |
-|------|------|
+| {_L('Dimension', '维度')} | {_L('Score', '评分')} |
+|---|---|
 {moat_str}
 
-**综合评级**：{moat_label}（{total_moat}/25）
+**{_L('Overall Rating', '综合评级')}**: {moat_label} ({total_moat}/25)
 
 ---
 
-## 同业对比
+## {_L('Peer Comparison', '同业对比')}
 
-| Ticker | 毛利率 | 营业利润率 | ROE | P/S | Fwd P/E |
-|--------|--------|-----------|-----|-----|---------|
+| Ticker | {_L('Gross Margin', '毛利率')} | {_L('Op. Margin', '营业利润率')} | ROE | P/S | Fwd P/E |
+|---|---|---|---|---|---|
 {peer_md_rows}
 
 ---
 
-## 主要风险
+## {_L('Key Risks', '主要风险')}
 
-1. 估值水平需结合未来增长预期评估
-2. 行业竞争格局变化
-3. 宏观经济与利率环境
+1. {_L('Valuation must be assessed against future growth expectations', '估值水平需结合未来增长预期评估')}
+2. {_L('Changes in competitive landscape', '行业竞争格局变化')}
+3. {_L('Macro environment and interest rate risk', '宏观经济与利率环境')}
 
 ---
 
-> **风险提示**：本报告仅供研究参考，不构成投资建议。
+> **{_L('Disclaimer', '风险提示')}**: {_L('For research purposes only. Not investment advice.', '本报告仅供研究参考，不构成投资建议。')}
 """
 
 with st.expander(t("p4_view_md"), expanded=False):

@@ -30,7 +30,7 @@ c1, c2, c3, c4, c5 = st.columns([2, 2, 1, 1, 1])
 with c1:
     period = st.selectbox(t("p6_period"), ["3mo","6mo","1y","2y","5y"], index=2, key="pv_period")
 with c2:
-    indicator = st.selectbox(t("p6_indicator"), ["RSI","MACD","ADX","布林带"], key="pv_ind")
+    indicator = st.selectbox(t("p6_indicator"), ["RSI", "MACD", "ADX", t("p6_ind_bb")], key="pv_ind")
 with c3:
     show_sma20  = st.checkbox("SMA20",  value=True)
 with c4:
@@ -83,7 +83,9 @@ if pp_parts:
 if cal.get("next_earnings_date"):
     days = cal.get("days_to_earnings", 0)
     if 0 <= days <= 14:
-        st.warning(f"⚠️ Earnings window: {cal['next_earnings_date'].strftime('%Y-%m-%d')} — {days}d out, expect vol. expansion")
+        _d_str = cal["next_earnings_date"].strftime("%Y-%m-%d")
+        _day_lbl = f"{days}{t('earn_day_out')}"
+        st.warning(f"⚠️ {t('earn_window_lbl')}: {_d_str} — {_day_lbl}")
 
 st.divider()
 
@@ -139,7 +141,7 @@ fig = make_subplots(
 fig.add_trace(go.Candlestick(
     x=df.index,
     open=df["Open"], high=df["High"], low=df["Low"], close=df["Close"],
-    name="K线",
+    name="OHLC",
     increasing_line_color="#00c853", decreasing_line_color="#ff3d3d",
     increasing_fillcolor="#00c853", decreasing_fillcolor="#ff3d3d",
 ), row=1, col=1)
@@ -159,7 +161,7 @@ for col_n, show, color, label in ma_config:
         ), row=1, col=1)
 
 # Bollinger Bands
-if indicator == "布林带" and "BB_upper" in df.columns:
+if indicator == t("p6_ind_bb") and "BB_upper" in df.columns:
     for band_col, band_name, band_color in [
         ("BB_upper", "BB Upper", "rgba(150,150,255,0.4)"),
         ("BB_mid",   "BB Mid",   "rgba(150,150,255,0.6)"),
@@ -236,7 +238,7 @@ elif indicator == "ADX" and "ADX" in df.columns:
                   line_color="rgba(150,150,150,0.4)" if _dark else "#8c959f",
                   annotation_text="25", row=3, col=1)
 
-elif indicator == "布林带" and "ATR_14" in df.columns:
+elif indicator == t("p6_ind_bb") and "ATR_14" in df.columns:
     fig.add_trace(go.Scatter(x=df.index, y=df["ATR_14"], name="ATR(14)",
                              line=dict(color="#ff922b", width=1.5)), row=3, col=1)
 
@@ -287,56 +289,80 @@ today    = datetime.now().strftime("%Y-%m-%d")
 date_pfx = datetime.now().strftime("%Y%m%d")
 rsi_v    = last.get("RSI_14", float("nan"))
 adx_v    = last.get("ADX",    float("nan"))
-trend    = ("多头排列" if price > sma20_v > sma50_v else
-            "空头排列" if price < sma20_v < sma50_v else "混合/震荡")
+
+_lang = st.session_state.get("language", "en")
+_L = lambda zh, en: en if _lang == "en" else zh
+
+trend = _L(
+    "多头排列" if price > sma20_v > sma50_v else
+    "空头排列" if price < sma20_v < sma50_v else "混合/震荡",
+    "Bullish alignment" if price > sma20_v > sma50_v else
+    "Bearish alignment" if price < sma20_v < sma50_v else "Mixed/Ranging",
+)
 
 pp_line = ""
 if prepost.get("pre_market_price"):
-    pp_line = f"**{t('p6_pre')}**：${prepost['pre_market_price']:.2f}（{prepost.get('pre_market_change', 0):+.2f}%）"
+    pp_line = f"**{t('p6_pre')}**: ${prepost['pre_market_price']:.2f} ({prepost.get('pre_market_change', 0):+.2f}%)"
 elif prepost.get("post_market_price"):
-    pp_line = f"**{t('p6_post')}**：${prepost['post_market_price']:.2f}（{prepost.get('post_market_change', 0):+.2f}%）"
+    pp_line = f"**{t('p6_post')}**: ${prepost['post_market_price']:.2f} ({prepost.get('post_market_change', 0):+.2f}%)"
+
+_rsi_sig = _L(
+    '超买 ⚠️' if rsi_v > 70 else '超卖 🟢' if rsi_v < 30 else '中性区间 ✓',
+    'Overbought ⚠️' if rsi_v > 70 else 'Oversold 🟢' if rsi_v < 30 else 'Neutral ✓',
+)
+_adx_sig = _L(
+    '趋势明确 ✓' if adx_v > 25 else '震荡市',
+    'Trending ✓' if adx_v > 25 else 'Ranging',
+)
+_vol_r = last.get('Vol_ratio_20d') or 0
+_vol_sig = _L(
+    '放量' if _vol_r > 1.5 else '缩量' if _vol_r < 0.8 else '正常',
+    'High volume' if _vol_r > 1.5 else 'Low volume' if _vol_r < 0.8 else 'Normal',
+)
+_a200_txt = _L('✅ 是' if price > last.get('SMA_200', 0) else '❌ 否',
+               '✅ Yes' if price > last.get('SMA_200', 0) else '❌ No')
 
 report_md = f"""# Price & Volume Analysis: {ticker} — {name}
 
-**日期**：{today}
-**分析周期**：{period}
-**当前价**：${price:.2f} USD
+**{_L('日期', 'Date')}**: {today}  |  **{_L('分析周期', 'Period')}**: {period}  |  **{_L('当前价', 'Price')}**: ${price:.2f} USD
 {pp_line}
 
 ---
 
-## 执行摘要
+## {_L('执行摘要', 'Executive Summary')}
 
-RSI(14) {rsi_v:.1f}（{'超买区域' if rsi_v > 70 else '超卖区域' if rsi_v < 30 else '中性区间'}），
-ADX {adx_v:.1f}（{'趋势明确' if adx_v > 25 else '趋势不明'}），
-均线结构：{trend}。
-距52周高点 {pct_from_high:.1f}%，止损参考（2xATR）${stop_2x:.2f}，风险回报比 1:{rr_ratio:.2f}。
-
----
-
-## 技术指标读数
-
-| 指标 | 值 | 信号 |
-|------|---|------|
-| RSI(14) | {rsi_v:.1f} | {'超买 ⚠️' if rsi_v > 70 else '超卖 🟢' if rsi_v < 30 else '中性区间 ✓'} |
-| ADX | {adx_v:.1f} | {'趋势明确 ✓' if adx_v > 25 else '震荡市'} |
-| ATR(14) | ${atr_val:.2f} | 日均波幅 |
-| 量比(20D) | {last.get('Vol_ratio_20d', 0):.2f}x | {'放量' if (last.get('Vol_ratio_20d') or 0) > 1.5 else '缩量' if (last.get('Vol_ratio_20d') or 0) < 0.8 else '正常'} |
-| SMA200上方 | {'✅ 是' if price > last.get('SMA_200', 0) else '❌ 否'} | |
+RSI(14) {rsi_v:.1f} ({_rsi_sig}),
+ADX {adx_v:.1f} ({_adx_sig}),
+{_L('均线结构', 'MA structure')}: {trend}.
+{_L('距52周高点', 'From 52W High')} {pct_from_high:.1f}%,
+{_L('止损参考（2xATR）', 'Stop loss (2xATR)')} ${stop_2x:.2f},
+{_L('风险回报比', 'Risk/Reward')} 1:{rr_ratio:.2f}.
 
 ---
 
-## 关键价格水平
+## {_L('技术指标读数', 'Technical Indicator Readings')}
 
-- 支撑位 1：${sma20_v:.2f}（SMA20）
-- 支撑位 2：${sma50_v:.2f}（SMA50）
-- 止损参考：${stop_2x:.2f}（2×ATR）
-- 52W High：${high52:.2f} / Low：${low52:.2f}
-- 风险回报比：1 : {rr_ratio:.2f}
+| {_L('指标', 'Indicator')} | {_L('值', 'Value')} | {_L('信号', 'Signal')} |
+|---|---|---|
+| RSI(14) | {rsi_v:.1f} | {_rsi_sig} |
+| ADX | {adx_v:.1f} | {_adx_sig} |
+| ATR(14) | ${atr_val:.2f} | {_L('日均波幅', 'Avg daily range')} |
+| {_L('量比(20D)', 'Vol Ratio(20D)')} | {_vol_r:.2f}x | {_vol_sig} |
+| {_L('SMA200上方', 'Above SMA200')} | {_a200_txt} | |
 
 ---
 
-> **风险提示**：本报告仅供研究参考，不构成任何交易建议。
+## {_L('关键价格水平', 'Key Price Levels')}
+
+- {_L('支撑位 1', 'Support 1')}: ${sma20_v:.2f} (SMA20)
+- {_L('支撑位 2', 'Support 2')}: ${sma50_v:.2f} (SMA50)
+- {_L('止损参考', 'Stop loss')}: ${stop_2x:.2f} (2×ATR)
+- 52W High: ${high52:.2f} / Low: ${low52:.2f}
+- {_L('风险回报比', 'Risk/Reward')}: 1 : {rr_ratio:.2f}
+
+---
+
+> **{_L('风险提示', 'Disclaimer')}**: {_L('本报告仅供研究参考，不构成任何交易建议。', 'For research purposes only. Does not constitute trading advice.')}
 """
 
 rp = Path(__file__).parent.parent / "research" / "stock" / f"{date_pfx}_{ticker}_pv.md"

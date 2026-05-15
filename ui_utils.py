@@ -1139,6 +1139,53 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "p6_rr":              "风险回报比",
         "p6_rr_low":          "偏低",
         "p6_rr_ok":           "合理",
+        # ── Page 6 indicator options ──────────────────────────────────────────────
+        "p6_ind_bb":          "布林带",
+        # ── Scanner strategies ────────────────────────────────────────────────────
+        "p3_strat_momentum":  "动量",
+        "p3_strat_value":     "价值",
+        "p3_strat_quality":   "高质量成长",
+        "p3_strat_oversold":  "超卖反弹",
+        # ── Scanner column headers ────────────────────────────────────────────────
+        "p3_col_company":     "公司",
+        "p3_col_sector":      "行业",
+        "p3_col_price":       "价格($)",
+        "p3_col_ret1m":       "1M收益%",
+        "p3_col_ret3m":       "3M收益%",
+        "p3_col_ret6m":       "6M收益%",
+        "p3_col_volratio":    "量比(20D)",
+        "p3_col_annvol":      "年化波动%",
+        "p3_col_mktcap":      "市值(B)",
+        # ── Moat slider labels ────────────────────────────────────────────────────
+        "moat_intangibles":   "无形资产(品牌/专利)",
+        "moat_switching":     "转换成本",
+        "moat_network":       "网络效应",
+        "moat_cost_adv":      "成本优势",
+        "moat_eff_scale":     "高效规模",
+        "moat_wide":          "宽",
+        "moat_narrow":        "窄",
+        "moat_none":          "无/极窄",
+        # ── Peer comparison metrics ───────────────────────────────────────────────
+        "p4_peer_gm":         "毛利率%",
+        "p4_peer_op":         "营业利润率%",
+        # ── News sentiment chart titles ───────────────────────────────────────────
+        "p4_chart_hourly":    "近期情绪趋势（按小时）",
+        "p4_chart_daily":     "近7天日均情绪趋势",
+        "p4_no_finnhub":      "💡 配置 `FINNHUB_API_KEY` 环境变量后可显示新闻情绪分析。\n\n免费注册：https://finnhub.io/register",
+        "p4_no_news":         "过去7天暂无新闻数据",
+        # ── Overview quality labels ───────────────────────────────────────────────
+        "p1_qual_excel":      "优质",
+        "p1_qual_neutral":    "中性",
+        "p1_qual_caution":    "注意风险",
+        # ── Earnings banner labels ────────────────────────────────────────────────
+        "earn_window_lbl":    "财报窗口期",
+        "earn_next_lbl":      "下次财报",
+        "earn_day_out":       "天后",
+        "earn_day_ago":       "天前",
+        "earn_eps_est":       "EPS预期",
+        "earn_last_surp":     "上次EPS惊喜",
+        "earn_just_rel":      "🗓️ 财报刚发布",
+        "p1_rpt_gen_err":     "报告生成遇到问题",
     },
     "en": {
         # ── Sidebar ──────────────────────────────────────────────────────────────
@@ -1320,11 +1367,58 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "p6_rr":              "Risk/Reward Ratio",
         "p6_rr_low":          "Unfavorable",
         "p6_rr_ok":           "Reasonable",
+        # ── Page 6 indicator options ──────────────────────────────────────────────
+        "p6_ind_bb":          "Bollinger Bands",
+        # ── Scanner strategies ────────────────────────────────────────────────────
+        "p3_strat_momentum":  "Momentum",
+        "p3_strat_value":     "Value",
+        "p3_strat_quality":   "Quality Growth",
+        "p3_strat_oversold":  "Oversold Bounce",
+        # ── Scanner column headers ────────────────────────────────────────────────
+        "p3_col_company":     "Company",
+        "p3_col_sector":      "Sector",
+        "p3_col_price":       "Price($)",
+        "p3_col_ret1m":       "1M Ret%",
+        "p3_col_ret3m":       "3M Ret%",
+        "p3_col_ret6m":       "6M Ret%",
+        "p3_col_volratio":    "Vol Ratio(20D)",
+        "p3_col_annvol":      "Ann. Vol%",
+        "p3_col_mktcap":      "Mkt Cap(B)",
+        # ── Moat slider labels ────────────────────────────────────────────────────
+        "moat_intangibles":   "Intangibles (Brand/Patents)",
+        "moat_switching":     "Switching Costs",
+        "moat_network":       "Network Effects",
+        "moat_cost_adv":      "Cost Advantage",
+        "moat_eff_scale":     "Efficient Scale",
+        "moat_wide":          "Wide",
+        "moat_narrow":        "Narrow",
+        "moat_none":          "None/Very Narrow",
+        # ── Peer comparison metrics ───────────────────────────────────────────────
+        "p4_peer_gm":         "GM%",
+        "p4_peer_op":         "Op. Margin%",
+        # ── News sentiment chart titles ───────────────────────────────────────────
+        "p4_chart_hourly":    "Recent Sentiment (Hourly)",
+        "p4_chart_daily":     "7-Day Avg Sentiment",
+        "p4_no_finnhub":      "💡 Set the `FINNHUB_API_KEY` environment variable to enable news sentiment.\n\nSign up free: https://finnhub.io/register",
+        "p4_no_news":         "No news data for the past 7 days",
+        # ── Overview quality labels ───────────────────────────────────────────────
+        "p1_qual_excel":      "Excellent",
+        "p1_qual_neutral":    "Neutral",
+        "p1_qual_caution":    "Caution",
+        # ── Earnings banner labels ────────────────────────────────────────────────
+        "earn_window_lbl":    "Earnings window",
+        "earn_next_lbl":      "Next earnings",
+        "earn_day_out":       "d out",
+        "earn_day_ago":       "d ago",
+        "earn_eps_est":       "EPS est.",
+        "earn_last_surp":     "Last EPS surprise",
+        "earn_just_rel":      "🗓️ Earnings just released",
+        "p1_rpt_gen_err":     "Report generation error",
     },
 }
 
 
 def t(key: str) -> str:
-    """Return the translated UI string for the current language (defaults to zh)."""
-    lang = st.session_state.get("language", "zh")
-    return TRANSLATIONS.get(lang, TRANSLATIONS["zh"]).get(key, key)
+    """Return the translated UI string for the current language (defaults to en)."""
+    lang = st.session_state.get("language", "en")
+    return TRANSLATIONS.get(lang, TRANSLATIONS["en"]).get(key, key)
