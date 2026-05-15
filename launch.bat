@@ -18,7 +18,7 @@ if %errorlevel% == 0 (
 :: ── Start Streamlit inside WSL (detached, logs to /tmp/streamlit_app.log) ────
 :: nohup + & ensures the process survives after bash exits
 echo Starting Streamlit in WSL Ubuntu...
-wsl.exe -d Ubuntu -- bash -c "cd ~/projects/investment-agents && source ~/.bashrc && nohup streamlit run app.py --server.headless true >> /tmp/streamlit_app.log 2>&1 &"
+wsl.exe -d Ubuntu -- bash -c "cd /home/hchxie/projects/investment-agents && nohup /home/hchxie/.local/bin/streamlit run app.py --server.headless true >> /tmp/streamlit_app.log 2>&1 &"
 
 :: ── Wait for the server to come up (4 seconds) ───────────────────────────────
 echo Waiting for server...
