@@ -11,11 +11,12 @@ requests>=2.31            # polygon.io REST calls
 polygon-api-client>=1.14  # optional higher-level client
 
 # ── Technical analysis ────────────────────────────────────────────────────────
-# pandas-ta is pure Python — no C build required, works on Streamlit Cloud.
-# TA-Lib (C extension) is intentionally excluded:
+# `ta` is pure Python, no numba dependency → compatible with Python 3.14
+# and Streamlit Cloud.  pandas-ta requires numba which breaks on Python 3.14.
+# TA-Lib (C extension) is also intentionally excluded:
 #   macOS:  brew install ta-lib && pip install TA-Lib
 #   Ubuntu: apt install libta-lib-dev && pip install TA-Lib
-pandas-ta>=0.3.14b0
+ta>=0.11.0
 
 # ── Visualization (Plotly only — mplfinance/matplotlib not used in app) ───────
 plotly>=5.22
