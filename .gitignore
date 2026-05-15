@@ -1,0 +1,43 @@
+# ── 敏感配置 ──────────────────────────────────
+.env
+.env.*
+!.env.example
+.streamlit/secrets.toml
+
+# ── 缓存数据（运行时自动生成）────────────────
+data/
+*.parquet
+
+# ── Python ────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# ── 虚拟环境 ──────────────────────────────────
+.venv/
+venv/
+env/
+
+# ── 研究报告输出（本地生成，不纳入版本控制）──
+research/
+
+# ── Claude Code 本地权限配置（含机器特定路径）──
+.claude/settings.local.json
+
+# ── IDE / OS ──────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ── Jupyter ───────────────────────────────────
+.ipynb_checkpoints/
+*.ipynb

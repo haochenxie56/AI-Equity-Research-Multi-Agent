@@ -1,0 +1,42 @@
+# ── Core data & numerics ─────────────────────────────────────────────────────
+pandas>=2.2
+numpy>=1.26
+scipy>=1.13
+
+# ── US equity data (primary) ─────────────────────────────────────────────────
+yfinance>=0.2.40
+
+# ── polygon.io (fallback) ────────────────────────────────────────────────────
+requests>=2.31           # polygon.io REST calls
+polygon-api-client>=1.14 # optional higher-level client
+
+# ── Technical analysis ───────────────────────────────────────────────────────
+pandas-ta>=0.3.14b       # pure-Python TA (no C build required)
+# TA-Lib                 # optional C extension; install separately if needed
+#   macOS:  brew install ta-lib && pip install TA-Lib
+#   Ubuntu: apt install libta-lib-dev && pip install TA-Lib
+
+# ── Visualization ────────────────────────────────────────────────────────────
+matplotlib>=3.9
+mplfinance>=0.12.10      # candlestick / OHLC charts
+plotly>=5.22             # interactive charts
+
+# ── Data storage ─────────────────────────────────────────────────────────────
+pyarrow>=16.0            # Parquet read/write (required by cache_manager)
+openpyxl>=3.1            # Excel export
+
+# ── Report & template ────────────────────────────────────────────────────────
+jinja2>=3.1              # optional templating for HTML reports
+
+# ── Environment & config ─────────────────────────────────────────────────────
+python-dotenv>=1.0       # load .env for POLYGON_API_KEY
+
+# ── Web app ──────────────────────────────────────────────────────────────────
+streamlit>=1.35          # UI framework
+plotly>=5.22             # Interactive charts
+
+# ── AI integration ───────────────────────────────────────────────────────────
+anthropic>=0.30          # Claude API / agent SDK
+
+# ── Translation ─────────────────────────────────────────────────────────────
+deep-translator>=1.11    # free Google Translate wrapper, no API key needed
