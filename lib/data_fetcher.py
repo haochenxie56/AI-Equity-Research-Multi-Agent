@@ -1,13 +1,15 @@
 """
 Unified data fetcher for US equities.
-Primary source: yfinance. Fallback: polygon.io REST API.
-All results are cached via cache_manager.
+Primary source : yfinance  (with retry + timeout)
+Fallback       : polygon.io REST API (requires POLYGON_API_KEY)
 
-Polygon.io free tier: https://polygon.io/dashboard  (register → copy key → set POLYGON_API_KEY in .env)
-Free tier limits: 5 calls/min, delayed 15min for real-time; unlimited for historical EOD data.
+All heavy results are cached via cache_manager to avoid redundant requests.
+Rate-limit / network errors are retried up to 3 times with exponential
+back-off (2 s → 4 s → 8 s) before the exception is re-raised.
 """
 
 import os
+import time
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -18,19 +20,53 @@ from cache_manager import get_or_fetch
 
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "")
 
+# Safely import yfinance's rate-limit exception (added in ~0.2.38)
+try:
+    from yfinance.exceptions import YFRateLimitError
+except ImportError:
+    YFRateLimitError = Exception  # older yfinance — treat all errors as retryable
+
+
+# ---------------------------------------------------------------------------
+# Retry helper
+# ---------------------------------------------------------------------------
+
+_RETRY_DELAYS = (2, 4, 8)  # seconds; exponential back-off
+
+
+def _with_retry(fn, retries: int = 3):
+    """
+    Call fn(), retrying on any exception up to `retries` times.
+
+    Back-off schedule: 2 s → 4 s → 8 s.
+    Re-raises the last exception if all attempts fail.
+    """
+    last_exc: Exception = RuntimeError("No attempts made")
+    for attempt in range(1, retries + 1):
+        try:
+            return fn()
+        except Exception as exc:            # noqa: BLE001
+            last_exc = exc
+            if attempt < retries:
+                time.sleep(_RETRY_DELAYS[attempt - 1])
+    raise last_exc
+
 
 # ---------------------------------------------------------------------------
 # Price / OHLCV
 # ---------------------------------------------------------------------------
 
 def get_ohlcv(ticker: str, period: str = "1y", interval: str = "1d") -> pd.DataFrame:
-    """Fetch OHLCV data. Period examples: 1y, 6mo, 3mo, 5d."""
+    """Fetch OHLCV data with retry. Period examples: 1y, 6mo, 3mo, 5d."""
     cache_key = f"ohlcv_{period}_{interval}"
 
     def fetch():
-        t = yf.Ticker(ticker)
-        df = t.history(period=period, interval=interval, auto_adjust=True)
-        return df
+        return _with_retry(lambda: (
+            yf.Ticker(ticker).history(
+                period=period, interval=interval,
+                auto_adjust=True, timeout=30,
+            )
+        ))
 
     return get_or_fetch(ticker, cache_key, fetch)
 
@@ -41,14 +77,12 @@ def get_ohlcv(ticker: str, period: str = "1y", interval: str = "1d") -> pd.DataF
 
 def get_info(ticker: str) -> dict:
     """Return yfinance info dict (market cap, sector, employees, etc.)."""
-    t = yf.Ticker(ticker)
-    return t.info
+    return _with_retry(lambda: yf.Ticker(ticker).info)
 
 
 def get_fast_info(ticker: str) -> dict:
     """Return lightweight fast_info (price, market cap) — lower latency."""
-    t = yf.Ticker(ticker)
-    return dict(t.fast_info)
+    return _with_retry(lambda: dict(yf.Ticker(ticker).fast_info))
 
 
 # ---------------------------------------------------------------------------
@@ -57,34 +91,34 @@ def get_fast_info(ticker: str) -> dict:
 
 def get_financials(ticker: str) -> pd.DataFrame:
     """Annual income statement (last 4 fiscal years)."""
-    def fetch():
-        return yf.Ticker(ticker).financials.T
-
-    return get_or_fetch(ticker, "financials", fetch)
+    return get_or_fetch(
+        ticker, "financials",
+        lambda: _with_retry(lambda: yf.Ticker(ticker).financials.T),
+    )
 
 
 def get_balance_sheet(ticker: str) -> pd.DataFrame:
     """Annual balance sheet (last 4 fiscal years)."""
-    def fetch():
-        return yf.Ticker(ticker).balance_sheet.T
-
-    return get_or_fetch(ticker, "balance_sheet", fetch)
+    return get_or_fetch(
+        ticker, "balance_sheet",
+        lambda: _with_retry(lambda: yf.Ticker(ticker).balance_sheet.T),
+    )
 
 
 def get_cashflow(ticker: str) -> pd.DataFrame:
     """Annual cash flow statement (last 4 fiscal years)."""
-    def fetch():
-        return yf.Ticker(ticker).cashflow.T
-
-    return get_or_fetch(ticker, "cashflow", fetch)
+    return get_or_fetch(
+        ticker, "cashflow",
+        lambda: _with_retry(lambda: yf.Ticker(ticker).cashflow.T),
+    )
 
 
 def get_quarterly_financials(ticker: str) -> pd.DataFrame:
     """Quarterly income statement (last 8 quarters)."""
-    def fetch():
-        return yf.Ticker(ticker).quarterly_financials.T
-
-    return get_or_fetch(ticker, "quarterly_financials", fetch)
+    return get_or_fetch(
+        ticker, "quarterly_financials",
+        lambda: _with_retry(lambda: yf.Ticker(ticker).quarterly_financials.T),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -94,7 +128,7 @@ def get_quarterly_financials(ticker: str) -> pd.DataFrame:
 def get_recommendations(ticker: str) -> pd.DataFrame:
     """Analyst buy/sell recommendations history."""
     def fetch():
-        df = yf.Ticker(ticker).recommendations
+        df = _with_retry(lambda: yf.Ticker(ticker).recommendations)
         return df if df is not None else pd.DataFrame()
 
     return get_or_fetch(ticker, "recommendations", fetch)
@@ -104,7 +138,7 @@ def get_earnings_estimates(ticker: str) -> dict:
     """Forward EPS and revenue estimates."""
     t = yf.Ticker(ticker)
     return {
-        "eps_trend": t.eps_trend,
+        "eps_trend":        t.eps_trend,
         "revenue_estimate": t.revenue_estimate,
         "earnings_history": t.earnings_history,
     }
@@ -126,26 +160,33 @@ def get_earnings_calendar(ticker: str) -> dict:
       eps_actual_last      : float | None  (most recent reported EPS)
       surprise_pct_last    : float | None  (last earnings surprise %)
     """
-    t = yf.Ticker(ticker)
     result: dict = {
-        "next_earnings_date": None,
-        "days_to_earnings": None,
-        "eps_estimate": None,
-        "revenue_estimate": None,
-        "eps_actual_last": None,
-        "surprise_pct_last": None,
+        "next_earnings_date":  None,
+        "days_to_earnings":    None,
+        "eps_estimate":        None,
+        "revenue_estimate":    None,
+        "eps_actual_last":     None,
+        "surprise_pct_last":   None,
     }
+
+    try:
+        t = _with_retry(lambda: yf.Ticker(ticker))  # lightweight — no network yet
+    except Exception:
+        return result
 
     # Next earnings date from calendar (yfinance returns a dict in v0.2+)
     try:
-        cal = t.calendar
+        cal = _with_retry(lambda: t.calendar)
         if isinstance(cal, dict):
             dates = cal.get("Earnings Date", [])
             if dates:
                 ed = dates[0] if isinstance(dates, list) else dates
                 result["next_earnings_date"] = pd.Timestamp(ed).to_pydatetime()
-                result["days_to_earnings"] = (result["next_earnings_date"].date() - datetime.now(timezone.utc).date()).days
-            result["eps_estimate"] = cal.get("Earnings Average")
+                result["days_to_earnings"] = (
+                    result["next_earnings_date"].date()
+                    - datetime.now(timezone.utc).date()
+                ).days
+            result["eps_estimate"]     = cal.get("Earnings Average")
             result["revenue_estimate"] = cal.get("Revenue Average")
         elif cal is not None and not (hasattr(cal, "empty") and cal.empty):
             # Legacy DataFrame format
@@ -153,7 +194,10 @@ def get_earnings_calendar(ticker: str) -> dict:
                 ed = cal.loc["Earnings Date"].iloc[0]
                 if pd.notna(ed):
                     result["next_earnings_date"] = pd.Timestamp(ed).to_pydatetime()
-                    result["days_to_earnings"] = (result["next_earnings_date"].date() - datetime.now(timezone.utc).date()).days
+                    result["days_to_earnings"] = (
+                        result["next_earnings_date"].date()
+                        - datetime.now(timezone.utc).date()
+                    ).days
             if "EPS Estimate" in cal.index:
                 result["eps_estimate"] = cal.loc["EPS Estimate"].iloc[0]
     except Exception:
@@ -161,14 +205,16 @@ def get_earnings_calendar(ticker: str) -> dict:
 
     # Last actual EPS + surprise from earnings_history
     try:
-        hist = t.earnings_history
+        hist = _with_retry(lambda: t.earnings_history)
         if hist is not None and not hist.empty:
             last = hist.sort_index().iloc[-1]
             result["eps_actual_last"] = last.get("epsActual")
             eps_est = last.get("epsEstimate")
             eps_act = last.get("epsActual")
             if eps_est and eps_act and eps_est != 0:
-                result["surprise_pct_last"] = round((eps_act - eps_est) / abs(eps_est) * 100, 1)
+                result["surprise_pct_last"] = round(
+                    (eps_act - eps_est) / abs(eps_est) * 100, 1
+                )
     except Exception:
         pass
 
@@ -180,9 +226,9 @@ def format_earnings_summary(ticker: str) -> str:
     c = get_earnings_calendar(ticker)
     parts = []
     if c["next_earnings_date"]:
-        d = c["next_earnings_date"].strftime("%Y-%m-%d")
-        days = c["days_to_earnings"]
-        label = f"今日" if days == 0 else (f"{days}天后" if days > 0 else f"{abs(days)}天前")
+        d     = c["next_earnings_date"].strftime("%Y-%m-%d")
+        days  = c["days_to_earnings"]
+        label = "今日" if days == 0 else (f"{days}天后" if days > 0 else f"{abs(days)}天前")
         parts.append(f"下次财报：{d}（{label}）")
         if c["eps_estimate"] is not None:
             parts.append(f"EPS 预期：${c['eps_estimate']:.2f}")
@@ -207,38 +253,44 @@ def get_prepost_price(ticker: str) -> dict:
       post_market_price  : float | None
       post_market_change : float | None  (% vs regular close)
     """
-    t = yf.Ticker(ticker)
-    info = t.fast_info
     result = {
-        "regular_close": None,
-        "pre_market_price": None,
+        "regular_close":     None,
+        "pre_market_price":  None,
         "pre_market_change": None,
         "post_market_price": None,
-        "post_market_change": None,
+        "post_market_change":None,
     }
     try:
-        result["regular_close"] = getattr(info, "previous_close", None) or getattr(info, "regularMarketPreviousClose", None)
-        pre = getattr(info, "pre_market_price", None)
+        info = _with_retry(lambda: yf.Ticker(ticker).fast_info)
+        result["regular_close"] = (
+            getattr(info, "previous_close", None)
+            or getattr(info, "regularMarketPreviousClose", None)
+        )
+        pre  = getattr(info, "pre_market_price",  None)
         post = getattr(info, "post_market_price", None)
         prev = result["regular_close"]
         if pre and prev:
-            result["pre_market_price"] = pre
+            result["pre_market_price"]  = pre
             result["pre_market_change"] = round((pre / prev - 1) * 100, 2)
         if post and prev:
-            result["post_market_price"] = post
+            result["post_market_price"]  = post
             result["post_market_change"] = round((post / prev - 1) * 100, 2)
     except Exception:
         pass
     return result
 
 
-def get_ohlcv_with_prepost(ticker: str, period: str = "5d", interval: str = "1m") -> pd.DataFrame:
+def get_ohlcv_with_prepost(
+    ticker: str, period: str = "5d", interval: str = "1m"
+) -> pd.DataFrame:
     """
     Intraday OHLCV including pre-market and after-hours sessions.
     Use interval='1m' or '5m'. Max period for 1m data is 7 days.
     """
-    t = yf.Ticker(ticker)
-    return t.history(period=period, interval=interval, prepost=True, auto_adjust=True)
+    return _with_retry(lambda: yf.Ticker(ticker).history(
+        period=period, interval=interval, prepost=True,
+        auto_adjust=True, timeout=30,
+    ))
 
 
 def format_prepost_summary(ticker: str) -> str:
@@ -251,9 +303,7 @@ def format_prepost_summary(ticker: str) -> str:
     if d["post_market_price"]:
         sign = "+" if (d["post_market_change"] or 0) >= 0 else ""
         parts.append(f"盘后 ${d['post_market_price']:.2f}（{sign}{d['post_market_change']}%）")
-    if not parts:
-        return "盘前/盘后数据暂不可用（非交易时段或数据源限制）"
-    return " | ".join(parts)
+    return " | ".join(parts) if parts else "盘前/盘后数据暂不可用（非交易时段或数据源限制）"
 
 
 # ---------------------------------------------------------------------------
@@ -262,19 +312,22 @@ def format_prepost_summary(ticker: str) -> str:
 
 def get_news(ticker: str, count: int = 10) -> list[dict]:
     """Recent news headlines for a ticker."""
-    t = yf.Ticker(ticker)
-    return t.news[:count]
+    try:
+        return _with_retry(lambda: yf.Ticker(ticker).news[:count])
+    except Exception:
+        return []
 
 
 # ---------------------------------------------------------------------------
 # Polygon.io fallback
 # ---------------------------------------------------------------------------
 
-def _polygon_ohlcv(ticker: str, from_date: str, to_date: str) -> Optional[pd.DataFrame]:
+def _polygon_ohlcv(
+    ticker: str, from_date: str, to_date: str
+) -> Optional[pd.DataFrame]:
     """Fetch OHLCV from polygon.io. Requires POLYGON_API_KEY env var."""
     if not POLYGON_API_KEY:
         return None
-
     try:
         import requests
         url = (
@@ -289,8 +342,9 @@ def _polygon_ohlcv(ticker: str, from_date: str, to_date: str) -> Optional[pd.Dat
             return None
         df = pd.DataFrame(results)
         df["date"] = pd.to_datetime(df["t"], unit="ms")
-        df = df.rename(columns={"o": "Open", "h": "High", "l": "Low", "c": "Close", "v": "Volume"})
-        df = df.set_index("date")[["Open", "High", "Low", "Close", "Volume"]]
-        return df
+        df = df.rename(columns={
+            "o": "Open", "h": "High", "l": "Low", "c": "Close", "v": "Volume",
+        })
+        return df.set_index("date")[["Open", "High", "Low", "Close", "Volume"]]
     except Exception:
         return None

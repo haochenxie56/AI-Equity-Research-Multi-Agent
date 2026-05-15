@@ -3,6 +3,7 @@ Investment Research App — entry point.
 Run: streamlit run app.py
 """
 
+import os
 import streamlit as st
 
 # Must run before any other st call so dark_mode is set before CSS injection
@@ -22,6 +23,10 @@ sys.path.insert(0, str(Path(__file__).parent))
 from ui_utils import apply_theme, render_sidebar, load_info, fmt_large, fmt_pct, fmt_val, page_header
 
 apply_theme()
+
+if os.environ.get("STREAMLIT_SHARING_MODE"):
+    st.info("☁️ 云端版本 — 数据获取可能较慢，如遇超时请稍等片刻后刷新")
+
 ticker = render_sidebar()
 
 # ── Landing page ──────────────────────────────────────────────────────────────

@@ -333,15 +333,31 @@ def page_header() -> None:
 # ── Cached data loaders (in-memory + parquet) ─────────────────────────────────
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def load_ohlcv(ticker: str, period: str = "1y") -> pd.DataFrame:
+def _load_ohlcv_impl(ticker: str, period: str = "1y") -> pd.DataFrame:
     from data_fetcher import get_ohlcv
     return get_ohlcv(ticker, period)
 
 
+def load_ohlcv(ticker: str, period: str = "1y") -> pd.DataFrame:
+    try:
+        return _load_ohlcv_impl(ticker, period)
+    except Exception:
+        st.warning("⚠️ 数据获取受限，请稍后重试或更换股票代码")
+        return pd.DataFrame()
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
-def load_info(ticker: str) -> dict:
+def _load_info_impl(ticker: str) -> dict:
     from data_fetcher import get_info
     return get_info(ticker)
+
+
+def load_info(ticker: str) -> dict:
+    try:
+        return _load_info_impl(ticker)
+    except Exception:
+        st.warning("⚠️ 数据获取受限，请稍后重试或更换股票代码")
+        return {}
 
 
 @st.cache_data(ttl=7 * 86400, show_spinner=False)
