@@ -219,16 +219,19 @@ with st.expander(t("p2_rotation_signal"), expanded=True):
             orientation="h",
             marker_color=[_pe_color(p) for p in val_df["median_fwd_pe"]],
             text=[
-                f"{r['median_fwd_pe']:.1f}x  (n={r['n_stocks']})"
+                f"{r['median_fwd_pe']:.1f}x"
+                + (f"  (n={r['n_stocks']})" if r["pe_source"] == "fwd"
+                   else "  (ETF trailing)")
                 for _, r in val_df.iterrows()
             ],
             textposition="outside",
             hovertemplate=(
                 "<b>%{y}</b><br>"
-                "Median Fwd P/E: %{x:.1f}x<br>"
-                "Stocks sampled: %{customdata}<extra></extra>"
+                "P/E: %{x:.1f}x<br>"
+                "Source: %{customdata[0]}<br>"
+                "Stocks sampled: %{customdata[1]}<extra></extra>"
             ),
-            customdata=val_df["n_stocks"].values,
+            customdata=val_df[["pe_source", "n_stocks"]].values,
         ))
         _val_h = max(220, len(val_df) * 32 + 60)
         apply_layout(fig_val, title="", height=_val_h)
@@ -402,15 +405,18 @@ with st.expander(t("p2_etf_trend"), expanded=True):
             latest_ratio = sec_row["vol_ratio"]
             is_breakout  = latest_ratio >= 1.5
             label = sec_row["zh"] if _lang == "zh" else sec
+            # Breakout: sector color + bold line + shown in legend
+            # Others:   muted grey + thin line + hidden from legend
             fig_vol.add_trace(go.Scatter(
                 x=sec_data["date"],
                 y=sec_data["vol_ratio"],
                 name=label,
                 mode="lines",
                 line=dict(
-                    color=sec_row["color"],
-                    width=2.5 if is_breakout else 1.2,
+                    color=sec_row["color"] if is_breakout else "#30363d",
+                    width=2.5 if is_breakout else 1.0,
                 ),
+                showlegend=is_breakout,
                 hovertemplate=f"{label}: %{{y:.2f}}x<extra></extra>",
             ))
 

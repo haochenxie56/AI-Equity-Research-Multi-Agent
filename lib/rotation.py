@@ -440,11 +440,10 @@ def compute_sector_valuation() -> pd.DataFrame:
     rows = []
     for sector, cfg in SECTOR_CONFIG.items():
         try:
+            # ── Primary: constituent forward P/E ─────────────────────────────
             tickers = get_theme_constituents(sector)
-            if not tickers:
-                continue
-            pes = []
-            for tk in tickers[:20]:          # cap at 20 for speed
+            pes, source = [], "fwd"
+            for tk in (tickers or [])[:20]:
                 try:
                     info = _get_info(tk)
                     pe   = info.get("forwardPE")
@@ -452,15 +451,30 @@ def compute_sector_valuation() -> pd.DataFrame:
                         pes.append(float(pe))
                 except Exception:
                     continue
-            if len(pes) >= 3:               # need at least 3 data points
-                rows.append({
-                    "sector":       sector,
-                    "etf":          cfg["etf"],
-                    "color":        cfg["color"],
-                    "zh":           cfg["zh"],
-                    "median_fwd_pe": round(float(np.median(pes)), 1),
-                    "n_stocks":     len(pes),
-                })
+
+            # ── Fallback: ETF trailing P/E when < 3 constituent values ───────
+            if len(pes) < 3:
+                try:
+                    etf_info = _get_info(cfg["etf"])
+                    pe_trail = etf_info.get("trailingPE")
+                    if pe_trail and isinstance(pe_trail, (int, float)) and 0 < pe_trail < 200:
+                        pes  = [float(pe_trail)]
+                        source = "trailing"
+                except Exception:
+                    pass
+
+            if not pes:
+                continue
+
+            rows.append({
+                "sector":       sector,
+                "etf":          cfg["etf"],
+                "color":        cfg["color"],
+                "zh":           cfg["zh"],
+                "median_fwd_pe": round(float(np.median(pes)), 1),
+                "n_stocks":     len(pes),
+                "pe_source":    source,          # "fwd" or "trailing"
+            })
         except Exception:
             continue
 
