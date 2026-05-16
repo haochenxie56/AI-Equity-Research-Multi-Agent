@@ -1,12 +1,15 @@
 """Page 2 — Sector Analysis & Rotation (v4.1)
 
 Sections:
-  1  Rotation Signal       — Risk-On / Neutral / Risk-Off + Top3 + accelerating (top of page)
+  0  Macro Environment     — VIX / 10Y yield / DXY / SPX cards with interpretation
+  1  Rotation Signal       — Risk-On / Neutral / Risk-Off + Top3 + accelerating
+                             + Sector Valuation (median Fwd P/E horizontal bar)
   2  Sector Heat Map       — period-aware composite score bar chart (11 GICS)
   3  ETF Trend vs SPY      — normalised return for selected sector
+                             + Volume Flow (3M relative vol for all 11 ETFs)
   4  Stock Ranking         — Leader / Challenger / Sleeper tier cards
-  5  Send to Scanner       — push ranked tickers to page 3
-  6  Sub-sectors           — A: cross-sub-sector comparison heatmap (Layer 2 ETFs vs SPY,
+                             + Send to Scanner button
+  5  Sub-sectors           — A: cross-sub-sector comparison heatmap (Layer 2 ETFs vs SPY,
                                 period-aware 1M/3M/6M/1Y radio)
                              B: styled stock table within chosen sub-sector
 """
@@ -32,6 +35,7 @@ from sectors import (
 from rotation import (
     compute_sector_scores, classify_rotation_phase,
     rank_sector_stocks, compute_subsector_scores,
+    compute_volume_flow, compute_sector_valuation, get_macro_indicators,
 )
 
 st.set_page_config(page_title="Sector Analysis", page_icon="🏭", layout="wide")
@@ -44,6 +48,66 @@ _dark = st.session_state.get("dark_mode", True)
 st.title(t("p2_title"))
 page_header()
 st.caption(t("p2_subtitle"))
+st.divider()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SECTION 0 — Macro Environment Indicators
+# ══════════════════════════════════════════════════════════════════════════════
+_macro = get_macro_indicators()
+
+def _macro_card(col, key: str, label_key: str, fmt: str, interp_fn) -> None:
+    """Render one macro indicator card into a Streamlit column."""
+    d = _macro.get(key, {})
+    cur  = d.get("current")
+    chg  = d.get("change5d")
+    pct  = d.get("change5d_pct")
+    with col:
+        st.markdown(f"**{t(label_key)}**")
+        if cur is None:
+            st.caption("—")
+            return
+        val_str = fmt.format(cur)
+        st.markdown(f"### {val_str}")
+        if chg is not None:
+            sign  = "+" if chg >= 0 else ""
+            color = "#3fb950" if chg <= 0 else "#f85149"   # green=down for risk measures
+            if key in ("SPX",):                             # SPX: green = up
+                color = "#3fb950" if chg >= 0 else "#f85149"
+            st.markdown(
+                f"<span style='color:{color}'>{sign}{chg:.2f} "
+                f"({sign}{pct:.1f}%)</span>  ·  {t('p2_macro_5d')}",
+                unsafe_allow_html=True,
+            )
+        st.caption(interp_fn(cur, chg))
+
+def _vix_interp(cur, chg):
+    if cur is None: return ""
+    if cur > 25: return t("p2_macro_vix_fear")
+    if cur < 15: return t("p2_macro_vix_calm")
+    return t("p2_macro_vix_mid")
+
+def _tnx_interp(cur, chg):
+    if chg is None: return t("p2_macro_tnx_flat")
+    if chg > 0.05:  return t("p2_macro_tnx_up")
+    if chg < -0.05: return t("p2_macro_tnx_down")
+    return t("p2_macro_tnx_flat")
+
+def _dxy_interp(cur, chg):
+    if chg is None: return t("p2_macro_dxy_flat")
+    if chg > 0.3:   return t("p2_macro_dxy_up")
+    if chg < -0.3:  return t("p2_macro_dxy_down")
+    return t("p2_macro_dxy_flat")
+
+def _spx_interp(cur, chg): return ""
+
+st.subheader(t("p2_macro_title"))
+_m1, _m2, _m3, _m4 = st.columns(4)
+_macro_card(_m1, "VIX", "p2_macro_vix", "{:.1f}", _vix_interp)
+_macro_card(_m2, "TNX", "p2_macro_tnx", "{:.2f}%", _tnx_interp)
+_macro_card(_m3, "DXY", "p2_macro_dxy", "{:.1f}", _dxy_interp)
+_macro_card(_m4, "SPX", "p2_macro_spx", "{:,.0f}", _spx_interp)
+
 st.divider()
 
 
@@ -126,6 +190,55 @@ with st.expander(t("p2_rotation_signal"), expanded=True):
                     )
         else:
             st.caption("—")
+
+    # ── Sector valuation (Fwd P/E median) ────────────────────────────────────
+    st.markdown("---")
+    st.markdown(f"**{t('p2_valuation')}**")
+    with st.spinner(t("p2_val_loading")):
+        val_df = compute_sector_valuation()
+
+    if val_df.empty:
+        st.caption(t("p2_val_unavail"))
+    else:
+        val_df["label"] = val_df.apply(
+            lambda r: r["zh"] if _lang == "zh" else r["sector"], axis=1
+        )
+        # Colorscale: low P/E → green, high P/E → red
+        pe_min, pe_max = val_df["median_fwd_pe"].min(), val_df["median_fwd_pe"].max()
+        pe_range = max(pe_max - pe_min, 1.0)
+
+        def _pe_color(pe: float) -> str:
+            norm = (pe - pe_min) / pe_range          # 0=cheap → 1=expensive
+            r = int(min(255, norm * 2 * 255))
+            g = int(min(255, (1 - norm) * 2 * 255))
+            return f"rgb({r},{g},60)"
+
+        fig_val = go.Figure(go.Bar(
+            x=val_df["median_fwd_pe"],
+            y=val_df["label"],
+            orientation="h",
+            marker_color=[_pe_color(p) for p in val_df["median_fwd_pe"]],
+            text=[
+                f"{r['median_fwd_pe']:.1f}x  (n={r['n_stocks']})"
+                for _, r in val_df.iterrows()
+            ],
+            textposition="outside",
+            hovertemplate=(
+                "<b>%{y}</b><br>"
+                "Median Fwd P/E: %{x:.1f}x<br>"
+                "Stocks sampled: %{customdata}<extra></extra>"
+            ),
+            customdata=val_df["n_stocks"].values,
+        ))
+        _val_h = max(220, len(val_df) * 32 + 60)
+        apply_layout(fig_val, title="", height=_val_h)
+        apply_legend(fig_val)
+        fig_val.update_layout(
+            xaxis=dict(title="Fwd P/E", rangemode="tozero"),
+            yaxis=dict(autorange="reversed"),
+            margin=dict(l=180, r=20, t=30, b=20),
+        )
+        st.plotly_chart(fig_val, use_container_width=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -261,6 +374,65 @@ with st.expander(t("p2_etf_trend"), expanded=True):
         st.plotly_chart(fig_trend, use_container_width=True)
     else:
         st.warning(t("p2_insufficient"))
+
+    # ── Volume Flow: 3-month relative volume for all 11 sector ETFs ──────────
+    st.markdown("---")
+    st.markdown(f"**{t('p2_vol_flow')}**")
+    with st.spinner(t("p2_vol_flow")):
+        vol_df = compute_volume_flow()
+
+    if vol_df.empty:
+        st.caption(t("p2_vol_unavail"))
+    else:
+        # Latest vol ratio per sector (for ranking annotation)
+        latest_vr = (
+            vol_df.sort_values("date")
+            .groupby("sector")
+            .last()
+            .reset_index()[["sector", "etf", "color", "zh", "vol_ratio"]]
+            .sort_values("vol_ratio", ascending=False)
+        )
+
+        fig_vol = go.Figure()
+        for _, sec_row in latest_vr.iterrows():
+            sec  = sec_row["sector"]
+            sec_data = vol_df[vol_df["sector"] == sec].sort_values("date")
+            if sec_data.empty:
+                continue
+            latest_ratio = sec_row["vol_ratio"]
+            is_breakout  = latest_ratio >= 1.5
+            label = sec_row["zh"] if _lang == "zh" else sec
+            fig_vol.add_trace(go.Scatter(
+                x=sec_data["date"],
+                y=sec_data["vol_ratio"],
+                name=label,
+                mode="lines",
+                line=dict(
+                    color=sec_row["color"],
+                    width=2.5 if is_breakout else 1.2,
+                ),
+                hovertemplate=f"{label}: %{{y:.2f}}x<extra></extra>",
+            ))
+
+        fig_vol.add_hline(y=1.0, line_dash="dot",  line_color="gray",   opacity=0.5)
+        fig_vol.add_hline(y=1.5, line_dash="dash", line_color="#f85149", opacity=0.6,
+                          annotation_text="1.5x", annotation_position="left")
+        apply_layout(fig_vol, title="", height=360)
+        apply_legend(fig_vol)
+        fig_vol.update_layout(
+            yaxis=dict(title=t("p2_vol_ratio"), rangemode="tozero"),
+            margin=dict(l=20, r=20, t=30, b=20),
+        )
+        st.plotly_chart(fig_vol, use_container_width=True)
+
+        # Ranking annotation: latest vol ratio table
+        breakouts = latest_vr[latest_vr["vol_ratio"] >= 1.5]
+        if not breakouts.empty:
+            _blabels = [
+                f"**{r['zh'] if _lang == 'zh' else r['sector']}** `{r['vol_ratio']:.2f}x`"
+                for _, r in breakouts.iterrows()
+            ]
+            st.caption(f"{t('p2_vol_breakout')}: " + "  ·  ".join(_blabels))
 
 
 # ══════════════════════════════════════════════════════════════════════════════

@@ -382,3 +382,129 @@ def rank_sector_stocks(tickers: tuple, top_n: int = 30) -> pd.DataFrame:
 
     df_out["tier"] = tiers
     return df_out
+
+
+# ── Volume flow ───────────────────────────────────────────────────────────────
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def compute_volume_flow() -> pd.DataFrame:
+    """
+    Daily vol / 20-day avg vol for each sector ETF over the past 3 months.
+
+    Returns a long-format DataFrame with columns:
+      date, sector, etf, color, zh, vol_ratio
+    Sectors with no usable volume data are omitted.
+    """
+    rows = []
+    for sector, cfg in SECTOR_CONFIG.items():
+        try:
+            df = _get_ohlcv(cfg["etf"], "6mo")   # 6mo supplies enough warm-up
+            if df is None or df.empty or "Volume" not in df.columns:
+                continue
+            vol   = df["Volume"].fillna(0).astype(float)
+            avg20 = vol.rolling(20, min_periods=1).mean()
+            ratio = vol / avg20.where(avg20 > 0, other=1.0)
+            ratio = ratio.fillna(1.0)
+            # Keep last 63 trading days (~3M)
+            ratio_3m = ratio.iloc[-63:]
+            for date, val in ratio_3m.items():
+                v = _safe(float(val), 1.0)
+                rows.append({
+                    "date":      date,
+                    "sector":    sector,
+                    "etf":       cfg["etf"],
+                    "color":     cfg["color"],
+                    "zh":        cfg["zh"],
+                    "vol_ratio": round(v, 3),
+                })
+        except Exception:
+            continue
+    if not rows:
+        return pd.DataFrame()
+    return pd.DataFrame(rows).sort_values(["sector", "date"]).reset_index(drop=True)
+
+
+# ── Sector valuation ──────────────────────────────────────────────────────────
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def compute_sector_valuation() -> pd.DataFrame:
+    """
+    Median forward P/E for each GICS sector using up to 20 S&P 500 constituents.
+    Cached 24 h because valuation changes slowly.
+
+    Returns DataFrame sorted by median_fwd_pe ascending with columns:
+      sector, etf, color, zh, median_fwd_pe, n_stocks
+    """
+    from sectors import get_theme_constituents
+
+    rows = []
+    for sector, cfg in SECTOR_CONFIG.items():
+        try:
+            tickers = get_theme_constituents(sector)
+            if not tickers:
+                continue
+            pes = []
+            for tk in tickers[:20]:          # cap at 20 for speed
+                try:
+                    info = _get_info(tk)
+                    pe   = info.get("forwardPE")
+                    if pe and isinstance(pe, (int, float)) and 0 < pe < 200:
+                        pes.append(float(pe))
+                except Exception:
+                    continue
+            if len(pes) >= 3:               # need at least 3 data points
+                rows.append({
+                    "sector":       sector,
+                    "etf":          cfg["etf"],
+                    "color":        cfg["color"],
+                    "zh":           cfg["zh"],
+                    "median_fwd_pe": round(float(np.median(pes)), 1),
+                    "n_stocks":     len(pes),
+                })
+        except Exception:
+            continue
+
+    if not rows:
+        return pd.DataFrame()
+    return (
+        pd.DataFrame(rows)
+        .sort_values("median_fwd_pe", ascending=True)
+        .reset_index(drop=True)
+    )
+
+
+# ── Macro indicators ──────────────────────────────────────────────────────────
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def get_macro_indicators() -> dict:
+    """
+    Fetch VIX, 10Y Treasury yield, DXY, and S&P 500.
+    Returns a dict keyed by "VIX" | "TNX" | "DXY" | "SPX", each containing:
+      current (float|None), change5d (float|None), change5d_pct (float|None)
+    Cached 30 min.
+    """
+    _tickers = {
+        "VIX": "^VIX",
+        "TNX": "^TNX",
+        "DXY": "DX-Y.NYB",
+        "SPX": "^GSPC",
+    }
+    result: dict = {}
+    for key, ticker in _tickers.items():
+        try:
+            df = _get_ohlcv(ticker, "1mo")
+            if df is None or df.empty:
+                raise ValueError("empty")
+            close   = df["Close"].dropna()
+            current = _safe(float(close.iloc[-1]))
+            prev5   = _safe(float(close.iloc[-6] if len(close) >= 6 else close.iloc[0]))
+            chg     = _safe(current - prev5)
+            chg_pct = _safe((current / prev5 - 1) * 100 if prev5 != 0 else 0.0)
+            result[key] = {
+                "current":      round(current, 2),
+                "change5d":     round(chg, 2),
+                "change5d_pct": round(chg_pct, 2),
+            }
+        except Exception:
+            result[key] = {"current": None, "change5d": None, "change5d_pct": None}
+    return result
