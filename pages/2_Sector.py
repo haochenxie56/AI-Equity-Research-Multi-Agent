@@ -118,13 +118,20 @@ fig_heat.update_layout(
 st.plotly_chart(fig_heat, use_container_width=True)
 
 # ── Sector + ETF-period selector ──────────────────────────────────────────────
-sector_labels = scores_df["label"].tolist()
-sector_names  = scores_df["sector"].tolist()
+# English keys only — format_func handles language display
+sector_names = scores_df["sector"].tolist()
 
 col_sel, col_period = st.columns([3, 1])
 with col_sel:
-    sel_label  = st.selectbox(t("p2_select_sector"), sector_labels, key="p2_sector_sel")
-    sel_sector = sector_names[sector_labels.index(sel_label)]
+    # options = language-independent English keys; format_func handles display
+    sel_sector = st.selectbox(
+        t("p2_select_sector"),
+        options=sector_names,
+        format_func=lambda x: SECTOR_CONFIG[x]["zh"] if _lang == "zh" else x,
+        key="p2_sector_sel",
+    )
+    # derive display label for downstream subheaders
+    sel_label = SECTOR_CONFIG[sel_sector]["zh"] if _lang == "zh" else sel_sector
 with col_period:
     period = st.selectbox(
         t("p2_period"),
@@ -458,13 +465,15 @@ with st.expander(t("p2_subsector_drill")):
         # ══════════════════════════════════════════════════════════════════════
         # Part B — Per-stock ranking within a chosen sub-sector
         # ══════════════════════════════════════════════════════════════════════
-        sub_labels = [v["label"] for v in sub_options.values()]
-        sub_names  = list(sub_options.keys())
+        sub_names = list(sub_options.keys())
 
-        sel_sub_label = st.selectbox(
-            t("p2_select_subsector"), sub_labels, key="p2_sub_sel"
+        # options = language-independent English keys; format_func handles display
+        sel_sub = st.selectbox(
+            t("p2_select_subsector"),
+            options=sub_names,
+            format_func=lambda x: sub_options[x]["label"],
+            key="p2_sub_sel",
         )
-        sel_sub = sub_names[sub_labels.index(sel_sub_label)]
         layer   = sub_options[sel_sub]["layer"]
         etf_sub = sub_options[sel_sub]["etf"]
 
