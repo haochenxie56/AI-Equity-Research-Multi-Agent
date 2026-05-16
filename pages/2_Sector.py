@@ -1,15 +1,17 @@
-"""Page 2 — Sector Research & Rotation (v4)
+"""Page 2 — Sector Analysis & Rotation (v4.1)
 
-Architecture:
-  Section 1  Sector Heat Map          — 11 GICS sectors, composite score bar chart
-  Section 2  Rotation Signal          — Risk-On / Neutral / Risk-Off + top3 + accelerating
-  Section 3  ETF Trend vs SPY         — normalised return chart for selected sector
-  Section 4  Stock Ranking            — Leader / Challenger / Sleeper tier cards
-  Section 5  Send to Scanner          — push ranked tickers to page 3
-  Section 6  Sub-Sector Drill-Down    — Layer 2 thematic ETFs + Layer 3 custom pools
+Sections:
+  1  Sector Heat Map       — period-aware composite score bar chart (11 GICS)
+  2  Rotation Signal       — Risk-On / Neutral / Risk-Off + Top3 + accelerating
+  3  ETF Trend vs SPY      — normalised return for selected sector
+  4  Stock Ranking         — Leader / Challenger / Sleeper tier cards
+  5  Send to Scanner       — push ranked tickers to page 3
+  6  Sub-sectors           — Layer 2 thematic ETFs + Layer 3 custom pools,
+                             with per-stock mini heatmap + styled table
 """
 
 import sys
+import numpy as np
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 sys.path.insert(0, str(Path(__file__).parent.parent / "lib"))
@@ -28,7 +30,7 @@ from sectors import (
 )
 from rotation import compute_sector_scores, classify_rotation_phase, rank_sector_stocks
 
-st.set_page_config(page_title="Sector Research", page_icon="🏭", layout="wide")
+st.set_page_config(page_title="Sector Analysis", page_icon="🏭", layout="wide")
 apply_theme()
 render_sidebar()
 
@@ -47,17 +49,39 @@ st.divider()
 st.subheader(t("p2_heatmap"))
 st.caption(t("p2_heatmap_subtitle"))
 
+# ── Period selector for heatmap scoring ───────────────────────────────────────
+_period_map = {"1M": 21, "3M": 63, "6M": 126, "1Y": 252}
+heat_period = st.radio(
+    "", list(_period_map.keys()), index=1,
+    horizontal=True, key="p2_heat_period",
+    label_visibility="collapsed",
+)
+heat_days = _period_map[heat_period]
+
 with st.spinner(t("p2_loading_scores")):
-    scores_df = compute_sector_scores()
+    scores_df = compute_sector_scores(heat_days)
 
 if scores_df.empty:
-    st.error("Failed to load sector ETF data. Please check your connection and try again.")
+    st.error(
+        "Failed to load sector ETF data. Please check your connection and try again."
+    )
     st.stop()
 
-# Build display labels
+# Build display labels (zh / en)
 scores_df["label"] = scores_df.apply(
     lambda r: r["zh"] if _lang == "zh" else r["sector"], axis=1
 )
+
+# ── Bar text: selected period excess + RSI + score ────────────────────────────
+def _bar_text(r: pd.Series) -> str:
+    exc = r.get("primary_excess")
+    rsi = r.get("rsi")
+    sc  = r.get("score")
+    if pd.isna(sc) if sc is not None else True:
+        return "—"
+    if exc is not None and not pd.isna(exc) and rsi is not None and not pd.isna(rsi):
+        return f"{heat_period}: {exc:+.1f}%  RSI: {rsi:.0f}  ▶ {sc:.0f}"
+    return f"▶ {sc:.0f}"
 
 # ── Horizontal bar chart ──────────────────────────────────────────────────────
 fig_heat = go.Figure(go.Bar(
@@ -65,28 +89,20 @@ fig_heat = go.Figure(go.Bar(
     y=scores_df["label"],
     orientation="h",
     marker_color=scores_df["color"].tolist(),
-    text=[
-        (
-            f"1M: {r['1m_excess']:+.1f}%  "
-            f"3M: {r['3m_excess']:+.1f}%  "
-            f"RSI: {r['rsi']:.0f}  "
-            f"▶ {r['score']:.0f}"
-        ) if not (
-            pd.isna(r['1m_excess']) or pd.isna(r['3m_excess']) or
-            pd.isna(r['rsi']) or pd.isna(r['score'])
-        ) else f"▶ {r['score']:.0f}" if not pd.isna(r['score']) else "—"
-        for _, r in scores_df.iterrows()
-    ],
+    text=[_bar_text(r) for _, r in scores_df.iterrows()],
     textposition="outside",
     hovertemplate=(
         "<b>%{y}</b><br>"
-        "Score: %{x:.1f}<br>"
-        "1M Excess: %{customdata[0]:+.1f}%<br>"
-        "3M Excess: %{customdata[1]:+.1f}%<br>"
-        "RSI(14): %{customdata[2]}<br>"
-        "From 52W High: %{customdata[3]:.1f}%<extra></extra>"
+        f"Score ({heat_period}): %{{x:.1f}}<br>"
+        "Primary Excess: %{customdata[0]:+.1f}%<br>"
+        "1M Excess: %{customdata[1]:+.1f}%<br>"
+        "3M Excess: %{customdata[2]:+.1f}%<br>"
+        "RSI(14): %{customdata[3]}<br>"
+        "From 52W High: %{customdata[4]:.1f}%<extra></extra>"
     ),
-    customdata=scores_df[["1m_excess", "3m_excess", "rsi", "from_52w_high"]].values,
+    customdata=scores_df[[
+        "primary_excess", "1m_excess", "3m_excess", "rsi", "from_52w_high"
+    ]].values,
 ))
 apply_layout(fig_heat, title="", height=440)
 apply_legend(fig_heat)
@@ -97,14 +113,13 @@ fig_heat.update_layout(
 )
 st.plotly_chart(fig_heat, use_container_width=True)
 
-# ── Sector selector + period (drives all sections below) ─────────────────────
+# ── Sector + ETF-period selector ──────────────────────────────────────────────
 sector_labels = scores_df["label"].tolist()
 sector_names  = scores_df["sector"].tolist()
 
 col_sel, col_period = st.columns([3, 1])
 with col_sel:
-    sel_label  = st.selectbox(t("p2_select_sector"), sector_labels,
-                              key="p2_sector_sel")
+    sel_label  = st.selectbox(t("p2_select_sector"), sector_labels, key="p2_sector_sel")
     sel_sector = sector_names[sector_labels.index(sel_label)]
 with col_period:
     period = st.selectbox(
@@ -139,7 +154,6 @@ _phase_label = {
 
 
 def _sector_label(sec: str) -> str:
-    """Return display label for a sector name."""
     row = scores_df[scores_df["sector"] == sec]
     return row["label"].iloc[0] if not row.empty else sec
 
@@ -165,7 +179,7 @@ with c2:
             r = row.iloc[0]
             st.markdown(
                 f"- **{_sector_label(sec)}** &nbsp; "
-                f"`{r['score']:.0f}pts` &nbsp; `{r['1m_excess']:+.1f}%`"
+                f"`{r['score']:.0f}pts` &nbsp; `{r['primary_excess']:+.1f}%`"
             )
 
 with c3:
@@ -228,7 +242,7 @@ with st.spinner(t("p2_loading_stocks")):
     constituents = get_theme_constituents(sel_sector)
 
 if not constituents:
-    st.info(t("p2_no_constituents"))
+    st.warning(t("p2_no_constituents"))
 else:
     st.caption(
         f"{len(constituents)} {t('p2_constituents_found')} — {t('p2_ranking_top30')}"
@@ -279,10 +293,11 @@ else:
         st.divider()
 
         # ── Section 5: Send to Scanner ────────────────────────────────────────
-        all_tickers = ranked_df["ticker"].tolist()
-        if st.button(f"▶ {t('p2_send_scanner')} ({len(all_tickers)} tickers)",
-                     type="primary", key="p2_send_main"):
-            st.session_state["scanner_pool"]    = ", ".join(all_tickers)
+        if st.button(
+            f"▶ {t('p2_send_scanner')} ({len(ranked_df)} tickers)",
+            type="primary", key="p2_send_main",
+        ):
+            st.session_state["scanner_pool"]    = ", ".join(ranked_df["ticker"].tolist())
             st.session_state["scanner_trigger"] = True
             st.switch_page("pages/3_Scanner.py")
 
@@ -290,11 +305,71 @@ st.divider()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SECTION 6 — Sub-Sector Drill-Down (Layer 2 & 3)
+# SECTION 6 — Sub-sectors (Layer 2 & 3)
 # ══════════════════════════════════════════════════════════════════════════════
-with st.expander(f"🔍 {t('p2_subsector_drill')}"):
 
-    # Collect sub-sectors parented to the selected GICS sector
+# ── Styled stock table helper ─────────────────────────────────────────────────
+def _render_styled_stocks(df_disp: pd.DataFrame) -> None:
+    """
+    Render a stock table with:
+    - Ticker: monospace + themed blue
+    - 1M/3M Ret%: green (≥0) / red (<0)
+    """
+    tk_c  = "#388bfd" if _dark else "#0969da"
+    pos_c = "#3fb950"
+    neg_c = "#f85149"
+    bd    = "rgba(255,255,255,0.06)" if _dark else "rgba(0,0,0,0.06)"
+    txt_c = "#e6edf3" if _dark else "#1f2328"
+    hdr_c = "#8b949e"
+
+    def _ret_td(v) -> str:
+        if v is None or (isinstance(v, float) and np.isnan(v)):
+            return "<td style='text-align:right'>N/A</td>"
+        c = pos_c if float(v) >= 0 else neg_c
+        return f"<td style='text-align:right;color:{c}'>{float(v):+.1f}%</td>"
+
+    cols = list(df_disp.columns)
+    hdr  = "".join(
+        f"<th style='padding:5px 10px;text-align:{'right' if c in ('1M Ret%','3M Ret%','RSI') else 'left'}"
+        f";color:{hdr_c};font-weight:normal;border-bottom:1px solid {bd}'>{c}</th>"
+        for c in cols
+    )
+
+    rows_html = []
+    for idx, row in df_disp.iterrows():
+        cells = []
+        for col in cols:
+            v = row[col]
+            if col == "1M Ret%" or col == "3M Ret%":
+                cells.append(_ret_td(None if pd.isna(v) else v))
+            elif col == "RSI":
+                cells.append(f"<td style='text-align:right;color:{txt_c}'>{v}</td>")
+            else:
+                cells.append(
+                    f"<td style='padding:5px 10px;color:{txt_c}'>{v}</td>"
+                )
+        # Ticker cell (first, from index)
+        ticker_cell = (
+            f"<td style='padding:5px 10px;font-family:monospace;"
+            f"font-weight:bold;color:{tk_c}'>{idx}</td>"
+        )
+        rows_html.append(
+            f"<tr style='border-bottom:1px solid {bd}'>"
+            f"{ticker_cell}{''.join(cells)}</tr>"
+        )
+
+    html = f"""<div style='overflow-x:auto'>
+<table style='width:100%;border-collapse:collapse;font-size:13px'>
+<thead><tr><th style='padding:5px 10px;text-align:left;color:{hdr_c};
+font-weight:normal;border-bottom:1px solid {bd}'>Ticker</th>{hdr}</tr></thead>
+<tbody>{''.join(rows_html)}</tbody>
+</table></div>"""
+    st.markdown(html, unsafe_allow_html=True)
+
+
+with st.expander(t("p2_subsector_drill")):
+
+    # ── Collect sub-sectors for the selected GICS sector ─────────────────────
     sub_options: dict[str, dict] = {}
     for name, cfg in THEME_ETF_CONFIG.items():
         if cfg["parent"] == sel_sector:
@@ -330,22 +405,84 @@ with st.expander(f"🔍 {t('p2_subsector_drill')}"):
             st.info(t("p2_no_constituents"))
         else:
             preview = ", ".join(sub_tickers[:15])
-            dots    = "..." if len(sub_tickers) > 15 else ""
-            st.caption(f"{len(sub_tickers)} tickers: {preview}{dots}")
+            st.caption(
+                f"{len(sub_tickers)} tickers: {preview}"
+                + ("..." if len(sub_tickers) > 15 else "")
+            )
 
             with st.spinner(t("p2_ranking_stocks")):
                 sub_ranked = rank_sector_stocks(tuple(sub_tickers[:30]))
 
             if not sub_ranked.empty:
+
+                # ── Mini heatmap: per-stock score vs sector ETF ───────────────
+                # Benchmark: 1M return of the sub-sector ETF (or main sector ETF)
+                _bench_etf = etf_sub if etf_sub else etf_ticker
+                try:
+                    _bench_df  = load_ohlcv(_bench_etf, "6mo")
+                    _bench_1m  = float(_bench_df["Close"].pct_change(21).iloc[-1] * 100)
+                    if np.isnan(_bench_1m): _bench_1m = 0.0
+                except Exception:
+                    _bench_1m = 0.0
+
+                # Compute mini_score = f(1M excess vs ETF, RSI)
+                sub_plot = sub_ranked.copy()
+                sub_plot["excess_1m"] = sub_plot["1m_ret"] - _bench_1m
+                sub_plot["mini_score"] = np.clip(
+                    np.clip(sub_plot["excess_1m"], -15, 15) * 2.0 +
+                    np.clip(sub_plot["rsi"] - 50,  -30, 30) * 0.5 +
+                    50,
+                    0, 100,
+                )
+                sub_plot = sub_plot.sort_values("mini_score", ascending=False)
+
+                fig_sub = go.Figure(go.Bar(
+                    x=sub_plot["mini_score"],
+                    y=sub_plot["ticker"],
+                    orientation="h",
+                    marker=dict(
+                        color=sub_plot["mini_score"].tolist(),
+                        colorscale="RdYlGn",
+                        cmin=0, cmax=100,
+                        showscale=False,
+                    ),
+                    text=[
+                        f"1M vs ETF: {r['excess_1m']:+.1f}%  RSI: {r['rsi']:.0f}  ▶ {r['mini_score']:.0f}"
+                        for _, r in sub_plot.iterrows()
+                    ],
+                    textposition="outside",
+                    hovertemplate=(
+                        "<b>%{y}</b><br>"
+                        "Score: %{x:.1f}<br>"
+                        "1M vs ETF: %{customdata[0]:+.1f}%<br>"
+                        "RSI(14): %{customdata[1]}<extra></extra>"
+                    ),
+                    customdata=sub_plot[["excess_1m", "rsi"]].values,
+                ))
+                apply_layout(fig_sub, title="", height=max(280, len(sub_plot) * 28 + 60))
+                apply_legend(fig_sub)
+                _lbl_w = max(60, max((len(t) for t in sub_plot["ticker"]), default=5) * 8)
+                fig_sub.update_layout(
+                    xaxis=dict(range=[0, 115]),
+                    yaxis=dict(autorange="reversed"),
+                    margin=dict(l=_lbl_w, r=20, t=50, b=20),
+                )
+                st.plotly_chart(fig_sub, use_container_width=True)
+
+                # ── Styled stock table ────────────────────────────────────────
                 _tier_map = {
                     "Leader":     t("p2_leader"),
                     "Challenger": t("p2_challenger"),
                     "Sleeper":    t("p2_sleeper"),
                 }
-                disp = sub_ranked[["ticker", "name", "1m_ret", "3m_ret", "rsi", "tier"]].copy()
+                disp = sub_ranked[[
+                    "ticker", "name", "1m_ret", "3m_ret", "rsi", "tier"
+                ]].copy()
                 disp["tier"] = disp["tier"].map(_tier_map).fillna(disp["tier"])
                 disp.columns = ["Ticker", "Company", "1M Ret%", "3M Ret%", "RSI", "Tier"]
-                render_table(disp.set_index("Ticker"))
+                _render_styled_stocks(disp.set_index("Ticker"))
+
+                st.markdown("")  # spacing
 
                 if st.button(
                     f"▶ {t('p2_send_scanner')} ({len(sub_ranked)} tickers)",
