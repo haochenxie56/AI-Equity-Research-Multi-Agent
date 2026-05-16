@@ -417,8 +417,6 @@ with st.expander(t("p2_etf_trend"), expanded=True):
                     continue
                 label = sec_row["zh"] if _lang == "zh" else sec
 
-                if not is_active:
-                    print(f"non-active sector color: {sec_row['color']}, label: {label}")
                 fig_vol.add_trace(go.Scatter(
                     x=sec_data["date"],
                     y=sec_data["vol_ratio"],
