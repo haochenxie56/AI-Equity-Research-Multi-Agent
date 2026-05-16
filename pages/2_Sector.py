@@ -74,269 +74,260 @@ def _sector_label(sec: str) -> str:
 # ══════════════════════════════════════════════════════════════════════════════
 # SECTION 1 — Rotation Signal  (top of page, before heatmap)
 # ══════════════════════════════════════════════════════════════════════════════
-st.subheader(t("p2_rotation_signal"))
+with st.expander(t("p2_rotation_signal"), expanded=True):
+    phase_info = classify_rotation_phase(scores_df)
+    phase      = phase_info["phase"]
 
-phase_info = classify_rotation_phase(scores_df)
-phase      = phase_info["phase"]
+    _phase_color = {
+        "risk_on":  "#3fb950",
+        "neutral":  "#d29922",
+        "risk_off": "#f85149",
+    }[phase]
+    _phase_label = {
+        "risk_on":  t("p2_phase_risk_on"),
+        "neutral":  t("p2_phase_neutral"),
+        "risk_off": t("p2_phase_risk_off"),
+    }[phase]
 
-_phase_color = {
-    "risk_on":  "#3fb950",
-    "neutral":  "#d29922",
-    "risk_off": "#f85149",
-}[phase]
-_phase_label = {
-    "risk_on":  t("p2_phase_risk_on"),
-    "neutral":  t("p2_phase_neutral"),
-    "risk_off": t("p2_phase_risk_off"),
-}[phase]
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.markdown(f"**{t('p2_market_style')}**")
+        st.markdown(
+            f"<span style='color:{_phase_color}; font-size:1.5em; font-weight:bold'>"
+            f"{_phase_label}</span>",
+            unsafe_allow_html=True,
+        )
+        off = phase_info["offensive_score"]
+        dfs = phase_info["defensive_score"]
+        if not (pd.isna(off) or pd.isna(dfs)):
+            st.caption(f"Offensive avg: {off:.1f}  |  Defensive avg: {dfs:.1f}")
 
-c1, c2, c3 = st.columns(3)
-with c1:
-    st.markdown(f"**{t('p2_market_style')}**")
-    st.markdown(
-        f"<span style='color:{_phase_color}; font-size:1.5em; font-weight:bold'>"
-        f"{_phase_label}</span>",
-        unsafe_allow_html=True,
-    )
-    off = phase_info["offensive_score"]
-    dfs = phase_info["defensive_score"]
-    if not (pd.isna(off) or pd.isna(dfs)):
-        st.caption(f"Offensive avg: {off:.1f}  |  Defensive avg: {dfs:.1f}")
-
-with c2:
-    st.markdown(f"**{t('p2_top3')}**")
-    for sec in phase_info["top3_sectors"]:
-        row = scores_df[scores_df["sector"] == sec]
-        if not row.empty:
-            r = row.iloc[0]
-            st.markdown(
-                f"- **{_sector_label(sec)}** &nbsp; "
-                f"`{r['score']:.0f}pts` &nbsp; `{r['primary_excess']:+.1f}%`"
-            )
-
-with c3:
-    st.markdown(f"**{t('p2_accelerating')}**")
-    accel_list = phase_info["accelerating"]
-    if accel_list:
-        for sec in accel_list:
+    with c2:
+        st.markdown(f"**{t('p2_top3')}**")
+        for sec in phase_info["top3_sectors"]:
             row = scores_df[scores_df["sector"] == sec]
             if not row.empty:
                 r = row.iloc[0]
                 st.markdown(
-                    f"- **{_sector_label(sec)}** &nbsp; `+{r['momentum_accel']:.2f}`"
+                    f"- **{_sector_label(sec)}** &nbsp; "
+                    f"`{r['score']:.0f}pts` &nbsp; `{r['primary_excess']:+.1f}%`"
                 )
-    else:
-        st.caption("—")
 
-st.divider()
+    with c3:
+        st.markdown(f"**{t('p2_accelerating')}**")
+        accel_list = phase_info["accelerating"]
+        if accel_list:
+            for sec in accel_list:
+                row = scores_df[scores_df["sector"] == sec]
+                if not row.empty:
+                    r = row.iloc[0]
+                    st.markdown(
+                        f"- **{_sector_label(sec)}** &nbsp; `+{r['momentum_accel']:.2f}`"
+                    )
+        else:
+            st.caption("—")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SECTION 2 — Sector Heat Map
 # ══════════════════════════════════════════════════════════════════════════════
-st.subheader(t("p2_heatmap"))
-st.caption(t("p2_heatmap_subtitle"))
+with st.expander(t("p2_heatmap"), expanded=True):
+    st.caption(t("p2_heatmap_subtitle"))
 
-# ── Period selector: recompute scores with selected window ────────────────────
-heat_period = st.radio(
-    "", list(_period_map.keys()), index=1,
-    horizontal=True, key="p2_heat_period",
-    label_visibility="collapsed",
-)
-heat_days = _period_map[heat_period]
-
-if heat_days != 63:
-    with st.spinner(t("p2_loading_scores")):
-        scores_df = compute_sector_scores(heat_days)
-    scores_df["label"] = scores_df.apply(
-        lambda r: r["zh"] if _lang == "zh" else r["sector"], axis=1
+    # ── Period selector: recompute scores with selected window ────────────────
+    heat_period = st.radio(
+        "", list(_period_map.keys()), index=1,
+        horizontal=True, key="p2_heat_period",
+        label_visibility="collapsed",
     )
+    heat_days = _period_map[heat_period]
 
-# ── Bar text: selected period excess + RSI + score ────────────────────────────
-def _bar_text(r: pd.Series) -> str:
-    exc = r.get("primary_excess")
-    rsi = r.get("rsi")
-    sc  = r.get("score")
-    if pd.isna(sc) if sc is not None else True:
-        return "—"
-    if exc is not None and not pd.isna(exc) and rsi is not None and not pd.isna(rsi):
-        return f"{heat_period}: {exc:+.1f}%  RSI: {rsi:.0f}  ▶ {sc:.0f}"
-    return f"▶ {sc:.0f}"
+    if heat_days != 63:
+        with st.spinner(t("p2_loading_scores")):
+            scores_df = compute_sector_scores(heat_days)
+        scores_df["label"] = scores_df.apply(
+            lambda r: r["zh"] if _lang == "zh" else r["sector"], axis=1
+        )
 
-# ── Horizontal bar chart ──────────────────────────────────────────────────────
-fig_heat = go.Figure(go.Bar(
-    x=scores_df["score"],
-    y=scores_df["label"],
-    orientation="h",
-    marker_color=scores_df["color"].tolist(),
-    text=[_bar_text(r) for _, r in scores_df.iterrows()],
-    textposition="outside",
-    hovertemplate=(
-        "<b>%{y}</b><br>"
-        f"Score ({heat_period}): %{{x:.1f}}<br>"
-        "Primary Excess: %{customdata[0]:+.1f}%<br>"
-        "1M Excess: %{customdata[1]:+.1f}%<br>"
-        "3M Excess: %{customdata[2]:+.1f}%<br>"
-        "RSI(14): %{customdata[3]}<br>"
-        "From 52W High: %{customdata[4]:.1f}%<extra></extra>"
-    ),
-    customdata=scores_df[[
-        "primary_excess", "1m_excess", "3m_excess", "rsi", "from_52w_high"
-    ]].values,
-))
-apply_layout(fig_heat, title="", height=440)
-apply_legend(fig_heat)
-fig_heat.update_layout(
-    xaxis=dict(range=[0, 115]),
-    yaxis=dict(autorange="reversed"),
-    margin=dict(l=180, r=20, t=50, b=20),
-)
-st.plotly_chart(fig_heat, use_container_width=True)
+    # ── Bar text: selected period excess + RSI + score ────────────────────────
+    def _bar_text(r: pd.Series) -> str:
+        exc = r.get("primary_excess")
+        rsi = r.get("rsi")
+        sc  = r.get("score")
+        if pd.isna(sc) if sc is not None else True:
+            return "—"
+        if exc is not None and not pd.isna(exc) and rsi is not None and not pd.isna(rsi):
+            return f"{heat_period}: {exc:+.1f}%  RSI: {rsi:.0f}  ▶ {sc:.0f}"
+        return f"▶ {sc:.0f}"
 
-st.divider()
+    # ── Horizontal bar chart ──────────────────────────────────────────────────
+    fig_heat = go.Figure(go.Bar(
+        x=scores_df["score"],
+        y=scores_df["label"],
+        orientation="h",
+        marker_color=scores_df["color"].tolist(),
+        text=[_bar_text(r) for _, r in scores_df.iterrows()],
+        textposition="outside",
+        hovertemplate=(
+            "<b>%{y}</b><br>"
+            f"Score ({heat_period}): %{{x:.1f}}<br>"
+            "Primary Excess: %{customdata[0]:+.1f}%<br>"
+            "1M Excess: %{customdata[1]:+.1f}%<br>"
+            "3M Excess: %{customdata[2]:+.1f}%<br>"
+            "RSI(14): %{customdata[3]}<br>"
+            "From 52W High: %{customdata[4]:.1f}%<extra></extra>"
+        ),
+        customdata=scores_df[[
+            "primary_excess", "1m_excess", "3m_excess", "rsi", "from_52w_high"
+        ]].values,
+    ))
+    apply_layout(fig_heat, title="", height=440)
+    apply_legend(fig_heat)
+    fig_heat.update_layout(
+        xaxis=dict(range=[0, 115]),
+        yaxis=dict(autorange="reversed"),
+        margin=dict(l=180, r=20, t=50, b=20),
+    )
+    st.plotly_chart(fig_heat, use_container_width=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SECTION 3 — ETF Trend vs SPY
 # ══════════════════════════════════════════════════════════════════════════════
 
-# ── Sector + ETF-period selector ──────────────────────────────────────────────
+# Sector + period selectors live outside the expander so their values are
+# always resolved (Streamlit still executes expander contents when collapsed,
+# but keeping them outside avoids any edge-case ordering surprises).
 sector_names = scores_df["sector"].tolist()
 _is_zh = (_lang == "zh")
 
-col_sel, col_period = st.columns([3, 1])
-with col_sel:
-    # Build current-language display list
-    sector_display = [SECTOR_CONFIG[s]["zh"] if _is_zh else s for s in sector_names]
+# On language switch: rewrite the stored display string to the new language
+# equivalent BEFORE the selectbox renders.
+if st.session_state.get("_p2_sector_lang") != _lang:
+    _eng = st.session_state.get("p2_sector_key", sector_names[0])
+    if _eng not in sector_names:
+        _eng = sector_names[0]
+    st.session_state["p2_sector_sel"] = SECTOR_CONFIG[_eng]["zh"] if _is_zh else _eng
+    st.session_state["_p2_sector_lang"] = _lang
 
-    # On language switch: rewrite the stored display string to the new language
-    # equivalent BEFORE the selectbox renders.
-    if st.session_state.get("_p2_sector_lang") != _lang:
-        _eng = st.session_state.get("p2_sector_key", sector_names[0])
-        if _eng not in sector_names:
-            _eng = sector_names[0]
-        st.session_state["p2_sector_sel"] = SECTOR_CONFIG[_eng]["zh"] if _is_zh else _eng
-        st.session_state["_p2_sector_lang"] = _lang
+sector_display = [SECTOR_CONFIG[s]["zh"] if _is_zh else s for s in sector_names]
 
-    _sel_display = st.selectbox(
-        t("p2_select_sector"),
-        options=sector_display,
-        key="p2_sector_sel",
-        accept_new_options=False,
-    )
+with st.expander(t("p2_etf_trend"), expanded=True):
+    col_sel, col_period = st.columns([3, 1])
+    with col_sel:
+        _sel_display = st.selectbox(
+            t("p2_select_sector"),
+            options=sector_display,
+            key="p2_sector_sel",
+            accept_new_options=False,
+        )
+    with col_period:
+        period = st.selectbox(
+            t("p2_period"),
+            ["1mo", "3mo", "6mo", "1y"],
+            index=3,
+            format_func=lambda x: {"1mo": "1M", "3mo": "3M", "6mo": "6M", "1y": "1Y"}[x],
+            key="p2_period_sel",
+            accept_new_options=False,
+        )
+
     sel_sector = sector_names[sector_display.index(_sel_display)]
     st.session_state["p2_sector_key"] = sel_sector          # persist English key
-    sel_label = SECTOR_CONFIG[sel_sector]["zh"] if _is_zh else sel_sector
-with col_period:
-    period = st.selectbox(
-        t("p2_period"),
-        ["1mo", "3mo", "6mo", "1y"],
-        index=3,
-        format_func=lambda x: {"1mo": "1M", "3mo": "3M", "6mo": "6M", "1y": "1Y"}[x],
-        key="p2_period_sel",
-        accept_new_options=False,
-    )
+    sel_label  = SECTOR_CONFIG[sel_sector]["zh"] if _is_zh else sel_sector
+    etf_ticker = SECTOR_CONFIG[sel_sector]["etf"]
+    etf_color  = SECTOR_CONFIG[sel_sector]["color"]
 
-etf_ticker = SECTOR_CONFIG[sel_sector]["etf"]
-etf_color  = SECTOR_CONFIG[sel_sector]["color"]
+    st.subheader(f"**{etf_ticker}** vs SPY")
 
-st.subheader(f"{t('p2_etf_trend')}: **{etf_ticker}** vs SPY")
+    with st.spinner(f"Loading {etf_ticker} & SPY..."):
+        etf_df = load_ohlcv(etf_ticker, period)
+        spy_df = load_ohlcv("SPY", period)
 
-with st.spinner(f"Loading {etf_ticker} & SPY..."):
-    etf_df = load_ohlcv(etf_ticker, period)
-    spy_df = load_ohlcv("SPY", period)
-
-if not etf_df.empty and not spy_df.empty:
-    fig_trend = go.Figure()
-    for tk, df, color, width in [
-        (etf_ticker, etf_df, etf_color, 2.5),
-        ("SPY",      spy_df, "#8b949e", 1.5),
-    ]:
-        norm = df["Close"] / df["Close"].iloc[0] * 100
-        fig_trend.add_trace(go.Scatter(
-            x=df.index, y=norm, name=tk,
-            line=dict(color=color, width=width),
-            hovertemplate=f"{tk}: %{{y:.1f}}<extra></extra>",
-        ))
-    fig_trend.add_hline(y=100, line_dash="dash", line_color="gray", opacity=0.4)
-    apply_layout(fig_trend, title=f"{t('p2_norm_return')} (Base = 100)", height=380)
-    apply_legend(fig_trend)
-    st.plotly_chart(fig_trend, use_container_width=True)
-else:
-    st.warning(t("p2_insufficient"))
-
-st.divider()
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# SECTION 4 — Intra-Sector Stock Ranking
-# ══════════════════════════════════════════════════════════════════════════════
-st.subheader(f"{t('p2_stock_ranking')}: {sel_label}")
-
-with st.spinner(t("p2_loading_stocks")):
-    constituents = get_theme_constituents(sel_sector)
-
-if not constituents:
-    st.warning(t("p2_no_constituents"))
-else:
-    st.caption(
-        f"{len(constituents)} {t('p2_constituents_found')} — {t('p2_ranking_top30')}"
-    )
-
-    with st.spinner(t("p2_ranking_stocks")):
-        ranked_df = rank_sector_stocks(tuple(constituents[:50]))
-
-    if ranked_df.empty:
-        st.warning(t("p2_rank_failed"))
+    if not etf_df.empty and not spy_df.empty:
+        fig_trend = go.Figure()
+        for tk, df, color, width in [
+            (etf_ticker, etf_df, etf_color, 2.5),
+            ("SPY",      spy_df, "#8b949e", 1.5),
+        ]:
+            norm = df["Close"] / df["Close"].iloc[0] * 100
+            fig_trend.add_trace(go.Scatter(
+                x=df.index, y=norm, name=tk,
+                line=dict(color=color, width=width),
+                hovertemplate=f"{tk}: %{{y:.1f}}<extra></extra>",
+            ))
+        fig_trend.add_hline(y=100, line_dash="dash", line_color="gray", opacity=0.4)
+        apply_layout(fig_trend, title=f"{t('p2_norm_return')} (Base = 100)", height=380)
+        apply_legend(fig_trend)
+        st.plotly_chart(fig_trend, use_container_width=True)
     else:
-        leaders     = ranked_df[ranked_df["tier"] == "Leader"]
-        challengers = ranked_df[ranked_df["tier"] == "Challenger"]
-        sleepers    = ranked_df[ranked_df["tier"] == "Sleeper"]
+        st.warning(t("p2_insufficient"))
 
-        def _stars(rsi: float) -> str:
-            if rsi >= 65:   return "★★★★★"
-            elif rsi >= 55: return "★★★★"
-            elif rsi >= 45: return "★★★"
-            else:           return "★★"
 
-        def _tier_card(df_tier: pd.DataFrame, title: str, border_color: str) -> None:
-            st.markdown(
-                f"<div style='border-left:3px solid {border_color};"
-                f" padding:4px 0 4px 10px; margin-bottom:6px;'>"
-                f"<b>{title}</b> &nbsp;<span style='color:{border_color}'>"
-                f"({len(df_tier)})</span></div>",
-                unsafe_allow_html=True,
-            )
-            for _, row in df_tier.head(8).iterrows():
-                ret3_str = f"{row['3m_ret']:+.1f}%" if row["3m_ret"] is not None else "N/A"
-                pe_str   = f" · PE {row['fwd_pe']:.0f}x" if row["fwd_pe"] else ""
+# ══════════════════════════════════════════════════════════════════════════════
+# SECTION 4 — Intra-Sector Stock Ranking  (+ Section 5: Send to Scanner)
+# ══════════════════════════════════════════════════════════════════════════════
+with st.expander(f"{t('p2_stock_ranking')}: {sel_label}", expanded=True):
+    with st.spinner(t("p2_loading_stocks")):
+        constituents = get_theme_constituents(sel_sector)
+
+    if not constituents:
+        st.warning(t("p2_no_constituents"))
+    else:
+        st.caption(
+            f"{len(constituents)} {t('p2_constituents_found')} — {t('p2_ranking_top30')}"
+        )
+
+        with st.spinner(t("p2_ranking_stocks")):
+            ranked_df = rank_sector_stocks(tuple(constituents[:50]))
+
+        if ranked_df.empty:
+            st.warning(t("p2_rank_failed"))
+        else:
+            leaders     = ranked_df[ranked_df["tier"] == "Leader"]
+            challengers = ranked_df[ranked_df["tier"] == "Challenger"]
+            sleepers    = ranked_df[ranked_df["tier"] == "Sleeper"]
+
+            def _stars(rsi: float) -> str:
+                if rsi >= 65:   return "★★★★★"
+                elif rsi >= 55: return "★★★★"
+                elif rsi >= 45: return "★★★"
+                else:           return "★★"
+
+            def _tier_card(df_tier: pd.DataFrame, title: str, border_color: str) -> None:
                 st.markdown(
-                    f"**{row['ticker']}** {_stars(row['rsi'])}  "
-                    f"`{row['name'][:22]}`  \n"
-                    f"1M {row['1m_ret']:+.1f}% · 3M {ret3_str} · "
-                    f"RSI {row['rsi']} · {fmt_large(row['mkt_cap'])}{pe_str}"
+                    f"<div style='border-left:3px solid {border_color};"
+                    f" padding:4px 0 4px 10px; margin-bottom:6px;'>"
+                    f"<b>{title}</b> &nbsp;<span style='color:{border_color}'>"
+                    f"({len(df_tier)})</span></div>",
+                    unsafe_allow_html=True,
                 )
+                for _, row in df_tier.head(8).iterrows():
+                    ret3_str = f"{row['3m_ret']:+.1f}%" if row["3m_ret"] is not None else "N/A"
+                    pe_str   = f" · PE {row['fwd_pe']:.0f}x" if row["fwd_pe"] else ""
+                    st.markdown(
+                        f"**{row['ticker']}** {_stars(row['rsi'])}  "
+                        f"`{row['name'][:22]}`  \n"
+                        f"1M {row['1m_ret']:+.1f}% · 3M {ret3_str} · "
+                        f"RSI {row['rsi']} · {fmt_large(row['mkt_cap'])}{pe_str}"
+                    )
 
-        col_lead, col_chal, col_sleep = st.columns(3)
-        with col_lead:
-            _tier_card(leaders,     t("p2_leader"),     "#3fb950")
-        with col_chal:
-            _tier_card(challengers, t("p2_challenger"), "#d29922")
-        with col_sleep:
-            _tier_card(sleepers,    t("p2_sleeper"),    "#8b949e")
+            col_lead, col_chal, col_sleep = st.columns(3)
+            with col_lead:
+                _tier_card(leaders,     t("p2_leader"),     "#3fb950")
+            with col_chal:
+                _tier_card(challengers, t("p2_challenger"), "#d29922")
+            with col_sleep:
+                _tier_card(sleepers,    t("p2_sleeper"),    "#8b949e")
 
-        st.divider()
+            st.divider()
 
-        # ── Section 5: Send to Scanner ────────────────────────────────────────
-        if st.button(
-            f"▶ {t('p2_send_scanner')} ({len(ranked_df)} tickers)",
-            type="primary", key="p2_send_main",
-        ):
-            st.session_state["scanner_pool"]    = ", ".join(ranked_df["ticker"].tolist())
-            st.session_state["scanner_trigger"] = True
-            st.switch_page("pages/3_Scanner.py")
-
-st.divider()
+            if st.button(
+                f"▶ {t('p2_send_scanner')} ({len(ranked_df)} tickers)",
+                type="primary", key="p2_send_main",
+            ):
+                st.session_state["scanner_pool"]    = ", ".join(ranked_df["ticker"].tolist())
+                st.session_state["scanner_trigger"] = True
+                st.switch_page("pages/3_Scanner.py")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
