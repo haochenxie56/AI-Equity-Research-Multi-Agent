@@ -118,20 +118,34 @@ fig_heat.update_layout(
 st.plotly_chart(fig_heat, use_container_width=True)
 
 # ── Sector + ETF-period selector ──────────────────────────────────────────────
-# English keys only — format_func handles language display
 sector_names = scores_df["sector"].tolist()
+_is_zh = (_lang == "zh")
 
 col_sel, col_period = st.columns([3, 1])
 with col_sel:
-    # options = language-independent English keys; format_func handles display
-    sel_sector = st.selectbox(
+    # Build current-language display list
+    sector_display = [SECTOR_CONFIG[s]["zh"] if _is_zh else s for s in sector_names]
+
+    # On language switch: rewrite the stored display string to the new language
+    # equivalent BEFORE the selectbox renders. Streamlit uses session_state[key]
+    # as the source of truth and ignores index= when a value already exists, so
+    # popping / using index= is unreliable — rewriting the value is the fix.
+    if st.session_state.get("_p2_sector_lang") != _lang:
+        _eng = st.session_state.get("p2_sector_key", sector_names[0])
+        if _eng not in sector_names:
+            _eng = sector_names[0]
+        st.session_state["p2_sector_sel"] = SECTOR_CONFIG[_eng]["zh"] if _is_zh else _eng
+        st.session_state["_p2_sector_lang"] = _lang
+
+    _sel_display = st.selectbox(
         t("p2_select_sector"),
-        options=sector_names,
-        format_func=lambda x: SECTOR_CONFIG[x]["zh"] if _lang == "zh" else x,
+        options=sector_display,
         key="p2_sector_sel",
+        accept_new_options=False,
     )
-    # derive display label for downstream subheaders
-    sel_label = SECTOR_CONFIG[sel_sector]["zh"] if _lang == "zh" else sel_sector
+    sel_sector = sector_names[sector_display.index(_sel_display)]
+    st.session_state["p2_sector_key"] = sel_sector          # persist English key
+    sel_label = SECTOR_CONFIG[sel_sector]["zh"] if _is_zh else sel_sector
 with col_period:
     period = st.selectbox(
         t("p2_period"),
@@ -139,6 +153,7 @@ with col_period:
         index=3,
         format_func=lambda x: {"1mo": "1M", "3mo": "3M", "6mo": "6M", "1y": "1Y"}[x],
         key="p2_period_sel",
+        accept_new_options=False,
     )
 
 st.divider()
@@ -465,15 +480,28 @@ with st.expander(t("p2_subsector_drill")):
         # ══════════════════════════════════════════════════════════════════════
         # Part B — Per-stock ranking within a chosen sub-sector
         # ══════════════════════════════════════════════════════════════════════
-        sub_names = list(sub_options.keys())
+        sub_names   = list(sub_options.keys())
+        # sub_options labels are already built in current language
+        sub_display = [sub_options[k]["label"] for k in sub_names]
 
-        # options = language-independent English keys; format_func handles display
-        sel_sub = st.selectbox(
+        # On language switch OR parent sector change: rewrite stored display
+        # string to the new-language equivalent before rendering.
+        _sub_cache_sig = f"{_lang}__{sel_sector}"
+        if st.session_state.get("_p2_sub_cache") != _sub_cache_sig:
+            _sub_eng = st.session_state.get("p2_sub_key", sub_names[0])
+            if _sub_eng not in sub_names:
+                _sub_eng = sub_names[0]
+            st.session_state["p2_sub_sel"] = sub_options[_sub_eng]["label"]
+            st.session_state["_p2_sub_cache"] = _sub_cache_sig
+
+        _sel_sub_display = st.selectbox(
             t("p2_select_subsector"),
-            options=sub_names,
-            format_func=lambda x: sub_options[x]["label"],
+            options=sub_display,
             key="p2_sub_sel",
+            accept_new_options=False,
         )
+        sel_sub = sub_names[sub_display.index(_sel_sub_display)]
+        st.session_state["p2_sub_key"] = sel_sub             # persist English key
         layer   = sub_options[sel_sub]["layer"]
         etf_sub = sub_options[sel_sub]["etf"]
 
