@@ -180,6 +180,90 @@ def compute_sector_scores(period_days: int = 63) -> pd.DataFrame:
     )
 
 
+# ── Sub-sector comparison ─────────────────────────────────────────────────────
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def compute_subsector_scores(parent_sector: str) -> pd.DataFrame:
+    """
+    Compute momentum scores for all Layer 2 thematic ETF sub-sectors
+    belonging to the given parent GICS sector. Uses SPY as benchmark.
+
+    Returns DataFrame sorted by score desc with columns:
+      name, etf, zh, 1m_ret, 3m_ret, 1m_excess, 3m_excess,
+      rsi, from_52w_high, score
+    """
+    from sectors import THEME_ETF_CONFIG
+
+    sub_themes = {
+        name: cfg
+        for name, cfg in THEME_ETF_CONFIG.items()
+        if cfg["parent"] == parent_sector
+    }
+    if not sub_themes:
+        return pd.DataFrame()
+
+    spy_ret = {"1m": 0.0, "3m": 0.0}
+    try:
+        spy_close = _get_ohlcv("SPY", "1y")["Close"].dropna()
+        spy_ret = {
+            "1m": _pct_ret(spy_close, 21),
+            "3m": _pct_ret(spy_close, 63),
+        }
+    except Exception:
+        pass
+
+    rows = []
+    for name, cfg in sub_themes.items():
+        try:
+            df = _get_ohlcv(cfg["etf"], "1y")
+            if df is None or df.empty:
+                continue
+            close = df["Close"].dropna()
+            if len(close) < 22:
+                continue
+
+            ret_1m = _pct_ret(close, 21)
+            ret_3m = _pct_ret(close, 63)
+            excess_1m = ret_1m - spy_ret["1m"]
+            excess_3m = ret_3m - spy_ret["3m"]
+            rsi       = _rsi14(close)
+            from_high = _from_52w_high(close)
+            vol_r     = _vol_ratio(df["Volume"])
+
+            raw = (
+                np.clip(excess_1m * 100, -20, 20) * 1.5 +
+                np.clip(excess_3m * 100, -20, 20) * 1.0 +
+                np.clip(rsi - 50,        -30, 30) * 0.5 +
+                np.clip(from_high,       -30,  0) * (-0.3) +
+                np.clip((vol_r - 1) * 100, -10, 10) * 0.3
+            )
+            score = _safe(float(np.clip(raw + 50, 0, 100)), 50.0)
+
+            rows.append({
+                "name":         name,
+                "etf":          cfg["etf"],
+                "zh":           cfg["zh"],
+                "1m_ret":       round(ret_1m * 100, 1),
+                "3m_ret":       round(ret_3m * 100, 1),
+                "1m_excess":    round(excess_1m * 100, 2),
+                "3m_excess":    round(excess_3m * 100, 2),
+                "rsi":          round(rsi, 1),
+                "from_52w_high": round(from_high, 1),
+                "score":        round(score, 1),
+            })
+        except Exception:
+            continue
+
+    if not rows:
+        return pd.DataFrame()
+
+    return (
+        pd.DataFrame(rows)
+        .sort_values("score", ascending=False)
+        .reset_index(drop=True)
+    )
+
+
 # ── Rotation phase detection ──────────────────────────────────────────────────
 
 def classify_rotation_phase(scores_df: pd.DataFrame) -> dict:

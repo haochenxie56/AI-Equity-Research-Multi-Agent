@@ -6,8 +6,8 @@ Sections:
   3  ETF Trend vs SPY      — normalised return for selected sector
   4  Stock Ranking         — Leader / Challenger / Sleeper tier cards
   5  Send to Scanner       — push ranked tickers to page 3
-  6  Sub-sectors           — Layer 2 thematic ETFs + Layer 3 custom pools,
-                             with per-stock mini heatmap + styled table
+  6  Sub-sectors           — A: cross-sub-sector comparison heatmap (Layer 2 ETFs vs SPY)
+                             B: per-stock mini heatmap + styled table within chosen sub-sector
 """
 
 import sys
@@ -28,7 +28,10 @@ from sectors import (
     SECTOR_CONFIG, THEME_ETF_CONFIG, CUSTOM_THEME_CONFIG,
     get_theme_constituents,
 )
-from rotation import compute_sector_scores, classify_rotation_phase, rank_sector_stocks
+from rotation import (
+    compute_sector_scores, classify_rotation_phase,
+    rank_sector_stocks, compute_subsector_scores,
+)
 
 st.set_page_config(page_title="Sector Analysis", page_icon="🏭", layout="wide")
 apply_theme()
@@ -383,6 +386,66 @@ with st.expander(t("p2_subsector_drill")):
     if not sub_options:
         st.caption(t("p2_no_subsectors"))
     else:
+        # ══════════════════════════════════════════════════════════════════════
+        # Part A — Cross-sub-sector comparison heatmap (Layer 2 ETFs only)
+        # ══════════════════════════════════════════════════════════════════════
+        st.subheader(t("p2_subsector_comparison"))
+
+        with st.spinner(t("p2_loading_scores")):
+            subsec_df = compute_subsector_scores(sel_sector)
+
+        if subsec_df.empty:
+            st.caption("No Layer 2 thematic ETF data available for this sector.")
+        else:
+            # Display label: zh name or English name
+            subsec_df["label"] = subsec_df.apply(
+                lambda r: r["zh"] if _lang == "zh" else r["name"], axis=1
+            )
+
+            fig_comp = go.Figure(go.Bar(
+                x=subsec_df["score"],
+                y=subsec_df["label"],
+                orientation="h",
+                marker=dict(
+                    color=subsec_df["score"].tolist(),
+                    colorscale="RdYlGn",
+                    cmin=0, cmax=100,
+                    showscale=False,
+                ),
+                text=[
+                    f"1M: {r['1m_excess']:+.1f}%  3M: {r['3m_excess']:+.1f}%  "
+                    f"RSI: {r['rsi']:.0f}  ▶ {r['score']:.0f}"
+                    for _, r in subsec_df.iterrows()
+                ],
+                textposition="outside",
+                hovertemplate=(
+                    "<b>%{y}</b>  (%{customdata[0]})<br>"
+                    "Score: %{x:.1f}<br>"
+                    "1M vs SPY: %{customdata[1]:+.1f}%<br>"
+                    "3M vs SPY: %{customdata[2]:+.1f}%<br>"
+                    "RSI(14): %{customdata[3]}<br>"
+                    "From 52W High: %{customdata[4]:.1f}%<extra></extra>"
+                ),
+                customdata=subsec_df[[
+                    "etf", "1m_excess", "3m_excess", "rsi", "from_52w_high"
+                ]].values,
+            ))
+            _comp_h   = max(200, len(subsec_df) * 36 + 60)
+            _comp_lbl = max(120, max((len(lbl) for lbl in subsec_df["label"]), default=8) * 8)
+            apply_layout(fig_comp, title="", height=_comp_h)
+            apply_legend(fig_comp)
+            fig_comp.update_layout(
+                xaxis=dict(range=[0, 120]),
+                yaxis=dict(autorange="reversed"),
+                margin=dict(l=_comp_lbl, r=20, t=40, b=20),
+            )
+            st.plotly_chart(fig_comp, use_container_width=True)
+
+        st.divider()
+
+        # ══════════════════════════════════════════════════════════════════════
+        # Part B — Per-stock ranking within a chosen sub-sector
+        # ══════════════════════════════════════════════════════════════════════
         sub_labels = [v["label"] for v in sub_options.values()]
         sub_names  = list(sub_options.keys())
 
@@ -398,6 +461,7 @@ with st.expander(t("p2_subsector_drill")):
         else:
             st.caption(f"Layer 3 — {t('p2_custom_pool')}")
 
+        # ── Stock ranking within selected sub-sector ──────────────────────────
         with st.spinner(t("p2_loading_stocks")):
             sub_tickers = get_theme_constituents(sel_sub)
 
@@ -415,17 +479,22 @@ with st.expander(t("p2_subsector_drill")):
 
             if not sub_ranked.empty:
 
-                # ── Mini heatmap: per-stock score vs sector ETF ───────────────
-                # Benchmark: 1M return of the sub-sector ETF (or main sector ETF)
+                # ── Stock heatmap: score vs sub-sector ETF ────────────────────
+                _stock_heatmap_title = (
+                    f"{'Stock Ranking within' if _lang == 'en' else ''} "
+                    f"{sel_sub_label}"
+                    f"{' 内股票排名' if _lang == 'zh' else ''}"
+                ).strip()
+                st.markdown(f"**{_stock_heatmap_title}**")
+
                 _bench_etf = etf_sub if etf_sub else etf_ticker
                 try:
-                    _bench_df  = load_ohlcv(_bench_etf, "6mo")
-                    _bench_1m  = float(_bench_df["Close"].pct_change(21).iloc[-1] * 100)
+                    _bench_df = load_ohlcv(_bench_etf, "6mo")
+                    _bench_1m = float(_bench_df["Close"].pct_change(21).iloc[-1] * 100)
                     if np.isnan(_bench_1m): _bench_1m = 0.0
                 except Exception:
                     _bench_1m = 0.0
 
-                # Compute mini_score = f(1M excess vs ETF, RSI)
                 sub_plot = sub_ranked.copy()
                 sub_plot["excess_1m"] = sub_plot["1m_ret"] - _bench_1m
                 sub_plot["mini_score"] = np.clip(
@@ -461,7 +530,7 @@ with st.expander(t("p2_subsector_drill")):
                 ))
                 apply_layout(fig_sub, title="", height=max(280, len(sub_plot) * 28 + 60))
                 apply_legend(fig_sub)
-                _lbl_w = max(60, max((len(t) for t in sub_plot["ticker"]), default=5) * 8)
+                _lbl_w = max(60, max((len(tk) for tk in sub_plot["ticker"]), default=5) * 8)
                 fig_sub.update_layout(
                     xaxis=dict(range=[0, 115]),
                     yaxis=dict(autorange="reversed"),
