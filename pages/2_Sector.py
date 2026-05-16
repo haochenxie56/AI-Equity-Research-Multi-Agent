@@ -396,43 +396,71 @@ with st.expander(t("p2_etf_trend"), expanded=True):
             .sort_values("vol_ratio", ascending=False)
         )
 
+        # Highlight set: vol_ratio >= 1.5 OR top-3 by latest ratio
+        # (top-3 ensures at least some highlighted traces even in quiet markets)
+        _top3_sectors = set(latest_vr.head(3)["sector"].tolist())
+
+        _grp_active = t("p2_vol_legend_active")
+        _grp_others = t("p2_vol_legend_others")
+        _grey       = "#484f58"
+
         fig_vol = go.Figure()
-        for _, sec_row in latest_vr.iterrows():
-            sec  = sec_row["sector"]
-            sec_data = vol_df[vol_df["sector"] == sec].sort_values("date")
-            if sec_data.empty:
-                continue
-            latest_ratio = sec_row["vol_ratio"]
-            is_breakout  = latest_ratio >= 1.5
-            label = sec_row["zh"] if _lang == "zh" else sec
-            # Breakout: sector color + bold line + shown in legend
-            # Others:   muted grey + thin line + hidden from legend
-            fig_vol.add_trace(go.Scatter(
-                x=sec_data["date"],
-                y=sec_data["vol_ratio"],
-                name=label,
-                mode="lines",
-                line=dict(
-                    color=sec_row["color"] if is_breakout else "#30363d",
-                    width=2.5 if is_breakout else 1.0,
-                ),
-                showlegend=is_breakout,
-                hovertemplate=f"{label}: %{{y:.2f}}x<extra></extra>",
-            ))
+        # Render active (highlighted) traces first so they sit on top
+        for group_pass in ("active", "others"):
+            for _, sec_row in latest_vr.iterrows():
+                sec          = sec_row["sector"]
+                latest_ratio = sec_row["vol_ratio"]
+                is_active    = latest_ratio >= 1.5 or sec in _top3_sectors
+                if (group_pass == "active") != is_active:
+                    continue
+
+                sec_data = vol_df[vol_df["sector"] == sec].sort_values("date")
+                if sec_data.empty:
+                    continue
+                label = sec_row["zh"] if _lang == "zh" else sec
+
+                if is_active:
+                    trace_color = sec_row["color"]
+                    line_width  = 2.5
+                    legend_grp  = _grp_active
+                    visible     = True
+                else:
+                    trace_color = _grey
+                    line_width  = 1.0
+                    legend_grp  = _grp_others
+                    visible     = "legendonly"   # in legend but hidden by default
+
+                fig_vol.add_trace(go.Scatter(
+                    x=sec_data["date"],
+                    y=sec_data["vol_ratio"],
+                    name=label,
+                    mode="lines",
+                    line=dict(color=trace_color, width=line_width),
+                    marker=dict(color=trace_color),   # legend swatch colour
+                    legendgroup=legend_grp,
+                    legendgrouptitle=dict(text=legend_grp),
+                    showlegend=True,
+                    visible=visible,
+                    hovertemplate=f"{label}: %{{y:.2f}}x<extra></extra>",
+                ))
 
         fig_vol.add_hline(y=1.0, line_dash="dot",  line_color="gray",   opacity=0.5)
         fig_vol.add_hline(y=1.5, line_dash="dash", line_color="#f85149", opacity=0.6,
                           annotation_text="1.5x", annotation_position="left")
-        apply_layout(fig_vol, title="", height=360)
+        apply_layout(fig_vol, title="", height=400)
         apply_legend(fig_vol)
         fig_vol.update_layout(
             yaxis=dict(title=t("p2_vol_ratio"), rangemode="tozero"),
-            margin=dict(l=20, r=20, t=30, b=20),
+            margin=dict(l=20, r=160, t=30, b=20),   # extra right margin for legend
         )
         st.plotly_chart(fig_vol, use_container_width=True)
+        st.caption(t("p2_vol_click_hint"))
 
-        # Ranking annotation: latest vol ratio table
-        breakouts = latest_vr[latest_vr["vol_ratio"] >= 1.5]
+        # Active sectors annotation
+        breakouts = latest_vr[
+            (latest_vr["vol_ratio"] >= 1.5) |
+            (latest_vr["sector"].isin(_top3_sectors))
+        ]
         if not breakouts.empty:
             _blabels = [
                 f"**{r['zh'] if _lang == 'zh' else r['sector']}** `{r['vol_ratio']:.2f}x`"
