@@ -183,14 +183,19 @@ def compute_sector_scores(period_days: int = 63) -> pd.DataFrame:
 # ── Sub-sector comparison ─────────────────────────────────────────────────────
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def compute_subsector_scores(parent_sector: str) -> pd.DataFrame:
+def compute_subsector_scores(parent_sector: str, period_days: int = 63) -> pd.DataFrame:
     """
     Compute momentum scores for all Layer 2 thematic ETF sub-sectors
     belonging to the given parent GICS sector. Uses SPY as benchmark.
 
+    period_days: primary scoring window (21=1M, 63=3M, 126=6M, 252=1Y).
+      The selected period's excess return is shown in bar annotations and
+      given weight 2.0; 1M (1.5) and 3M (1.0) are always included as base
+      components (merged if period_days matches).
+
     Returns DataFrame sorted by score desc with columns:
       name, etf, zh, 1m_ret, 3m_ret, 1m_excess, 3m_excess,
-      rsi, from_52w_high, score
+      primary_excess, rsi, from_52w_high, score
     """
     from sectors import THEME_ETF_CONFIG
 
@@ -202,12 +207,21 @@ def compute_subsector_scores(parent_sector: str) -> pd.DataFrame:
     if not sub_themes:
         return pd.DataFrame()
 
-    spy_ret = {"1m": 0.0, "3m": 0.0}
+    # ── Weight matrix (mirrors compute_sector_scores) ─────────────────────────
+    if period_days == 21:
+        w1m, w3m, w_extra = 2.0, 1.0, 0.0
+    elif period_days == 63:
+        w1m, w3m, w_extra = 1.5, 2.0, 0.0
+    else:
+        w1m, w3m, w_extra = 1.5, 1.0, 2.0
+
+    spy_ret = {"1m": 0.0, "3m": 0.0, "primary": 0.0}
     try:
         spy_close = _get_ohlcv("SPY", "1y")["Close"].dropna()
         spy_ret = {
-            "1m": _pct_ret(spy_close, 21),
-            "3m": _pct_ret(spy_close, 63),
+            "1m":      _pct_ret(spy_close, 21),
+            "3m":      _pct_ret(spy_close, 63),
+            "primary": _pct_ret(spy_close, period_days),
         }
     except Exception:
         pass
@@ -222,34 +236,38 @@ def compute_subsector_scores(parent_sector: str) -> pd.DataFrame:
             if len(close) < 22:
                 continue
 
-            ret_1m = _pct_ret(close, 21)
-            ret_3m = _pct_ret(close, 63)
-            excess_1m = ret_1m - spy_ret["1m"]
-            excess_3m = ret_3m - spy_ret["3m"]
+            ret_1m      = _pct_ret(close, 21)
+            ret_3m      = _pct_ret(close, 63)
+            ret_primary = _pct_ret(close, period_days)
+            excess_1m      = ret_1m      - spy_ret["1m"]
+            excess_3m      = ret_3m      - spy_ret["3m"]
+            excess_primary = ret_primary - spy_ret["primary"]
             rsi       = _rsi14(close)
             from_high = _from_52w_high(close)
             vol_r     = _vol_ratio(df["Volume"])
 
             raw = (
-                np.clip(excess_1m * 100, -20, 20) * 1.5 +
-                np.clip(excess_3m * 100, -20, 20) * 1.0 +
-                np.clip(rsi - 50,        -30, 30) * 0.5 +
-                np.clip(from_high,       -30,  0) * (-0.3) +
-                np.clip((vol_r - 1) * 100, -10, 10) * 0.3
+                np.clip(excess_1m      * 100, -20, 20) * w1m    +
+                np.clip(excess_3m      * 100, -20, 20) * w3m    +
+                np.clip(excess_primary * 100, -20, 20) * w_extra +
+                np.clip(rsi - 50,             -30, 30) * 0.5    +
+                np.clip(from_high,            -30,  0) * (-0.3) +
+                np.clip((vol_r - 1) * 100,    -10, 10) * 0.3
             )
             score = _safe(float(np.clip(raw + 50, 0, 100)), 50.0)
 
             rows.append({
-                "name":         name,
-                "etf":          cfg["etf"],
-                "zh":           cfg["zh"],
-                "1m_ret":       round(ret_1m * 100, 1),
-                "3m_ret":       round(ret_3m * 100, 1),
-                "1m_excess":    round(excess_1m * 100, 2),
-                "3m_excess":    round(excess_3m * 100, 2),
-                "rsi":          round(rsi, 1),
-                "from_52w_high": round(from_high, 1),
-                "score":        round(score, 1),
+                "name":           name,
+                "etf":            cfg["etf"],
+                "zh":             cfg["zh"],
+                "1m_ret":         round(ret_1m * 100, 1),
+                "3m_ret":         round(ret_3m * 100, 1),
+                "1m_excess":      round(excess_1m * 100, 2),
+                "3m_excess":      round(excess_3m * 100, 2),
+                "primary_excess": round(excess_primary * 100, 2),
+                "rsi":            round(rsi, 1),
+                "from_52w_high":  round(from_high, 1),
+                "score":          round(score, 1),
             })
         except Exception:
             continue

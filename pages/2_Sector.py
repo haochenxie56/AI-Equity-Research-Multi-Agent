@@ -6,8 +6,9 @@ Sections:
   3  ETF Trend vs SPY      — normalised return for selected sector
   4  Stock Ranking         — Leader / Challenger / Sleeper tier cards
   5  Send to Scanner       — push ranked tickers to page 3
-  6  Sub-sectors           — A: cross-sub-sector comparison heatmap (Layer 2 ETFs vs SPY)
-                             B: per-stock mini heatmap + styled table within chosen sub-sector
+  6  Sub-sectors           — A: cross-sub-sector comparison heatmap (Layer 2 ETFs vs SPY,
+                                period-aware 1M/3M/6M/1Y radio)
+                             B: styled stock table within chosen sub-sector
 """
 
 import sys
@@ -391,8 +392,17 @@ with st.expander(t("p2_subsector_drill")):
         # ══════════════════════════════════════════════════════════════════════
         st.subheader(t("p2_subsector_comparison"))
 
+        # Period selector — same style as main heatmap radio
+        _sub_period_map = {"1M": 21, "3M": 63, "6M": 126, "1Y": 252}
+        sub_heat_period = st.radio(
+            "", list(_sub_period_map.keys()), index=1,
+            horizontal=True, key="p2_sub_heat_period",
+            label_visibility="collapsed",
+        )
+        sub_heat_days = _sub_period_map[sub_heat_period]
+
         with st.spinner(t("p2_loading_scores")):
-            subsec_df = compute_subsector_scores(sel_sector)
+            subsec_df = compute_subsector_scores(sel_sector, sub_heat_days)
 
         if subsec_df.empty:
             st.caption("No Layer 2 thematic ETF data available for this sector.")
@@ -413,7 +423,7 @@ with st.expander(t("p2_subsector_drill")):
                     showscale=False,
                 ),
                 text=[
-                    f"1M: {r['1m_excess']:+.1f}%  3M: {r['3m_excess']:+.1f}%  "
+                    f"{sub_heat_period}: {r['primary_excess']:+.1f}%  "
                     f"RSI: {r['rsi']:.0f}  ▶ {r['score']:.0f}"
                     for _, r in subsec_df.iterrows()
                 ],
@@ -421,13 +431,15 @@ with st.expander(t("p2_subsector_drill")):
                 hovertemplate=(
                     "<b>%{y}</b>  (%{customdata[0]})<br>"
                     "Score: %{x:.1f}<br>"
-                    "1M vs SPY: %{customdata[1]:+.1f}%<br>"
-                    "3M vs SPY: %{customdata[2]:+.1f}%<br>"
-                    "RSI(14): %{customdata[3]}<br>"
-                    "From 52W High: %{customdata[4]:.1f}%<extra></extra>"
+                    f"{sub_heat_period} vs SPY: %{{customdata[1]:+.1f}}%<br>"
+                    "1M vs SPY: %{customdata[2]:+.1f}%<br>"
+                    "3M vs SPY: %{customdata[3]:+.1f}%<br>"
+                    "RSI(14): %{customdata[4]}<br>"
+                    "From 52W High: %{customdata[5]:.1f}%<extra></extra>"
                 ),
                 customdata=subsec_df[[
-                    "etf", "1m_excess", "3m_excess", "rsi", "from_52w_high"
+                    "etf", "primary_excess", "1m_excess", "3m_excess",
+                    "rsi", "from_52w_high"
                 ]].values,
             ))
             _comp_h   = max(200, len(subsec_df) * 36 + 60)
@@ -478,65 +490,6 @@ with st.expander(t("p2_subsector_drill")):
                 sub_ranked = rank_sector_stocks(tuple(sub_tickers[:30]))
 
             if not sub_ranked.empty:
-
-                # ── Stock heatmap: score vs sub-sector ETF ────────────────────
-                _stock_heatmap_title = (
-                    f"{'Stock Ranking within' if _lang == 'en' else ''} "
-                    f"{sel_sub_label}"
-                    f"{' 内股票排名' if _lang == 'zh' else ''}"
-                ).strip()
-                st.markdown(f"**{_stock_heatmap_title}**")
-
-                _bench_etf = etf_sub if etf_sub else etf_ticker
-                try:
-                    _bench_df = load_ohlcv(_bench_etf, "6mo")
-                    _bench_1m = float(_bench_df["Close"].pct_change(21).iloc[-1] * 100)
-                    if np.isnan(_bench_1m): _bench_1m = 0.0
-                except Exception:
-                    _bench_1m = 0.0
-
-                sub_plot = sub_ranked.copy()
-                sub_plot["excess_1m"] = sub_plot["1m_ret"] - _bench_1m
-                sub_plot["mini_score"] = np.clip(
-                    np.clip(sub_plot["excess_1m"], -15, 15) * 2.0 +
-                    np.clip(sub_plot["rsi"] - 50,  -30, 30) * 0.5 +
-                    50,
-                    0, 100,
-                )
-                sub_plot = sub_plot.sort_values("mini_score", ascending=False)
-
-                fig_sub = go.Figure(go.Bar(
-                    x=sub_plot["mini_score"],
-                    y=sub_plot["ticker"],
-                    orientation="h",
-                    marker=dict(
-                        color=sub_plot["mini_score"].tolist(),
-                        colorscale="RdYlGn",
-                        cmin=0, cmax=100,
-                        showscale=False,
-                    ),
-                    text=[
-                        f"1M vs ETF: {r['excess_1m']:+.1f}%  RSI: {r['rsi']:.0f}  ▶ {r['mini_score']:.0f}"
-                        for _, r in sub_plot.iterrows()
-                    ],
-                    textposition="outside",
-                    hovertemplate=(
-                        "<b>%{y}</b><br>"
-                        "Score: %{x:.1f}<br>"
-                        "1M vs ETF: %{customdata[0]:+.1f}%<br>"
-                        "RSI(14): %{customdata[1]}<extra></extra>"
-                    ),
-                    customdata=sub_plot[["excess_1m", "rsi"]].values,
-                ))
-                apply_layout(fig_sub, title="", height=max(280, len(sub_plot) * 28 + 60))
-                apply_legend(fig_sub)
-                _lbl_w = max(60, max((len(tk) for tk in sub_plot["ticker"]), default=5) * 8)
-                fig_sub.update_layout(
-                    xaxis=dict(range=[0, 115]),
-                    yaxis=dict(autorange="reversed"),
-                    margin=dict(l=_lbl_w, r=20, t=50, b=20),
-                )
-                st.plotly_chart(fig_sub, use_container_width=True)
 
                 # ── Styled stock table ────────────────────────────────────────
                 _tier_map = {
