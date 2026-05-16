@@ -1069,7 +1069,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "p1_score_note":      "说明",
         # ── Page 2 ───────────────────────────────────────────────────────────────
         "p2_title":           "🏭 行业研究",
-        "p2_subtitle":        "ETF 价格走势 + 自定义标的横向对比",
+        "p2_subtitle":        "GICS 板块轮动分析 · 主题 ETF 子板块 · 板块内选股",
         "p2_etf":             "选择行业 ETF",
         "p2_period":          "时间周期",
         "p2_peers":           "自定义对比标的",
@@ -1081,7 +1081,6 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "p2_norm_return":          "📊 归一化收益率（基准 = 100）",
         "p2_insufficient":         "有效标的不足，请检查 Ticker 是否正确",
         # ── Page 2 v4: rotation ───────────────────────────────────────────────────
-        "p2_subtitle":             "GICS 板块轮动分析 · 主题 ETF 子板块 · 板块内选股",
         "p2_heatmap":              "📊 板块热力图",
         "p2_heatmap_subtitle":     "综合评分基于超额收益、RSI、距52周高点、成交量；分值越高动量越强",
         "p2_loading_scores":       "计算板块评分中...",
@@ -1098,7 +1097,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "p2_loading_stocks":       "加载成分股...",
         "p2_ranking_stocks":       "计算股票排名...",
         "p2_no_constituents":      "暂无成分股数据，请稍后重试",
-        "p2_constituents_found":   "只只成分股",
+        "p2_constituents_found":   "只成分股",
         "p2_ranking_top30":        "展示市值前30名评级",
         "p2_rank_failed":          "排名计算失败，请重试",
         "p2_leader":               "龙头 Leaders",
@@ -1376,7 +1375,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "p1_score_note":      "Notes",
         # ── Page 2 ───────────────────────────────────────────────────────────────
         "p2_title":           "🏭 Sector Research",
-        "p2_subtitle":        "ETF Price Trends + Custom Peer Comparison",
+        "p2_subtitle":        "GICS Sector Rotation · Thematic ETF Sub-Sectors · Intra-Sector Stock Ranking",
         "p2_etf":             "Select Sector ETF",
         "p2_period":          "Time Period",
         "p2_peers":           "Custom Comparison Tickers",
@@ -1388,7 +1387,6 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "p2_norm_return":          "📊 Normalized Return (Base = 100)",
         "p2_insufficient":         "Not enough valid tickers. Please check the symbols.",
         # ── Page 2 v4: rotation ───────────────────────────────────────────────────
-        "p2_subtitle":             "GICS Sector Rotation · Thematic ETF Sub-Sectors · Intra-Sector Stock Ranking",
         "p2_heatmap":              "📊 Sector Heat Map",
         "p2_heatmap_subtitle":     "Composite score based on excess return, RSI, distance from 52W high, and volume. Higher = stronger momentum.",
         "p2_loading_scores":       "Computing sector scores...",

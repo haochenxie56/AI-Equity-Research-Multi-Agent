@@ -13,7 +13,7 @@ import streamlit as st
 from sectors import SECTOR_CONFIG
 
 
-# ── Internal data helpers (lazy import to avoid circular issues) ──────────────
+# ── Internal data helpers ─────────────────────────────────────────────────────
 
 def _get_ohlcv(ticker: str, period: str = "1y") -> pd.DataFrame:
     from data_fetcher import get_ohlcv
@@ -28,6 +28,55 @@ def _get_info(ticker: str) -> dict:
         return {}
 
 
+def _safe(v: float, default: float = 0.0) -> float:
+    """Return default if v is NaN or Inf."""
+    if v is None:
+        return default
+    try:
+        return default if (np.isnan(v) or np.isinf(v)) else float(v)
+    except Exception:
+        return default
+
+
+def _pct_ret(close: pd.Series, n: int) -> float:
+    """Return n-period percentage return, or 0.0 if not enough data."""
+    if len(close) < n + 1:
+        return 0.0
+    v = float(close.pct_change(n).iloc[-1])
+    return _safe(v, 0.0)
+
+
+def _rsi14(close: pd.Series) -> float:
+    """RSI(14). Returns 50.0 if calculation is not possible."""
+    if len(close) < 15:
+        return 50.0
+    delta = close.diff()
+    gain  = delta.clip(lower=0).rolling(14).mean()
+    loss  = (-delta.clip(upper=0)).rolling(14).mean()
+    # When loss == 0 all gains → RSI = 100
+    rs         = gain / loss.where(loss > 0)
+    rsi_series = (100 - 100 / (1 + rs)).fillna(100)
+    return _safe(float(rsi_series.iloc[-1]), 50.0)
+
+
+def _from_52w_high(close: pd.Series) -> float:
+    """Percent distance from 52-week high. Uses min_periods=1 to avoid NaN."""
+    high = float(close.rolling(252, min_periods=1).max().iloc[-1])
+    if high == 0 or np.isnan(high):
+        return 0.0
+    return _safe((float(close.iloc[-1]) / high - 1) * 100, 0.0)
+
+
+def _vol_ratio(volume: pd.Series) -> float:
+    """5-day vs 20-day average volume ratio. Returns 1.0 on error."""
+    vol = volume.fillna(0)
+    v20 = float(vol.iloc[-20:].mean())
+    v5  = float(vol.iloc[-5:].mean())
+    if v20 == 0:
+        return 1.0
+    return _safe(v5 / v20, 1.0)
+
+
 # ── Sector scoring ────────────────────────────────────────────────────────────
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -35,61 +84,57 @@ def compute_sector_scores() -> pd.DataFrame:
     """
     Compute composite momentum scores for all 11 GICS sectors.
 
-    Returns a DataFrame sorted by score (descending) with columns:
-    sector, etf, color, zh, 1m_ret, 3m_ret, 6m_ret,
-    1m_excess, 3m_excess, rsi, from_52w_high, vol_ratio,
-    momentum_accel, score
+    Scoring formula (raw score → normalised to 0–100):
+      1M excess return × 1.5  (clipped ±20pp)
+      3M excess return × 1.0  (clipped ±20pp)
+      RSI deviation   × 0.5   (RSI − 50, clipped ±30)
+      Distance from 52W high × 0.3  (clipped −30 to 0, inverted)
+      Volume ratio    × 0.3   (vol_ratio−1 × 100, clipped ±10)
+
+    All intermediate values are NaN-guarded with sensible defaults.
     """
-    # Benchmark returns
+    # ── Benchmark (SPY) ───────────────────────────────────────────────────────
+    spy_ret = {"1m": 0.0, "3m": 0.0, "6m": 0.0}
     try:
-        spy_close = _get_ohlcv("SPY", "1y")["Close"]
+        spy_close = _get_ohlcv("SPY", "1y")["Close"].dropna()
         spy_ret = {
-            "1m": float(spy_close.pct_change(21).iloc[-1]),
-            "3m": float(spy_close.pct_change(63).iloc[-1]),
-            "6m": float(spy_close.pct_change(126).iloc[-1]),
+            "1m": _pct_ret(spy_close, 21),
+            "3m": _pct_ret(spy_close, 63),
+            "6m": _pct_ret(spy_close, 126),
         }
     except Exception:
-        spy_ret = {"1m": 0.0, "3m": 0.0, "6m": 0.0}
+        pass  # keep zeros — excess returns will equal absolute returns
 
+    # ── Per-sector metrics ────────────────────────────────────────────────────
     rows = []
     for sector, cfg in SECTOR_CONFIG.items():
         try:
-            df    = _get_ohlcv(cfg["etf"], "1y")
-            close = df["Close"]
+            df = _get_ohlcv(cfg["etf"], "1y")
+            if df is None or df.empty:
+                continue
+            close = df["Close"].dropna()
+            if len(close) < 22:          # need at least 1-month of data
+                continue
 
-            ret_1m = float(close.pct_change(21).iloc[-1])
-            ret_3m = float(close.pct_change(63).iloc[-1])
-            ret_6m = float(close.pct_change(126).iloc[-1])
+            ret_1m    = _pct_ret(close, 21)
+            ret_3m    = _pct_ret(close, 63)
+            ret_6m    = _pct_ret(close, 126)
             excess_1m = ret_1m - spy_ret["1m"]
             excess_3m = ret_3m - spy_ret["3m"]
 
-            # RSI(14)
-            delta = close.diff()
-            gain  = delta.clip(lower=0).rolling(14).mean()
-            loss  = (-delta.clip(upper=0)).rolling(14).mean()
-            rsi   = float((100 - 100 / (1 + gain / loss.replace(0, np.nan))).iloc[-1])
+            rsi       = _rsi14(close)
+            from_high = _from_52w_high(close)
+            vol_r     = _vol_ratio(df["Volume"])
+            accel     = excess_1m - (excess_3m / 3)
 
-            # Distance from 52-week high
-            high_52w  = float(close.rolling(252).max().iloc[-1])
-            from_high = (float(close.iloc[-1]) / high_52w - 1) * 100
-
-            # Volume ratio: 5-day vs 20-day average
-            vol_ratio = float(
-                df["Volume"].iloc[-5:].mean() / df["Volume"].iloc[-20:].mean()
-            )
-
-            # Momentum acceleration: is short-term excess gaining vs medium-term?
-            accel = excess_1m - (excess_3m / 3)
-
-            # Composite score (raw → normalised to 0-100)
             raw = (
                 np.clip(excess_1m * 100, -20, 20) * 1.5 +
                 np.clip(excess_3m * 100, -20, 20) * 1.0 +
                 np.clip(rsi - 50,        -30, 30) * 0.5 +
                 np.clip(from_high,       -30,  0) * (-0.3) +
-                np.clip((vol_ratio - 1) * 100, -10, 10) * 0.3
+                np.clip((vol_r - 1) * 100, -10, 10) * 0.3
             )
-            score = float(np.clip(raw + 50, 0, 100))
+            score = _safe(float(np.clip(raw + 50, 0, 100)), 50.0)
 
             rows.append({
                 "sector":         sector,
@@ -103,7 +148,7 @@ def compute_sector_scores() -> pd.DataFrame:
                 "3m_excess":      round(excess_3m * 100, 2),
                 "rsi":            round(rsi, 1),
                 "from_52w_high":  round(from_high, 1),
-                "vol_ratio":      round(vol_ratio, 2),
+                "vol_ratio":      round(vol_r, 2),
                 "momentum_accel": round(accel * 100, 2),
                 "score":          round(score, 1),
             })
@@ -125,18 +170,16 @@ def compute_sector_scores() -> pd.DataFrame:
 def classify_rotation_phase(scores_df: pd.DataFrame) -> dict:
     """
     Detect market rotation phase from sector relative strength.
-    Returns a dict with: phase, offensive_score, defensive_score,
-    top3_sectors, accelerating.
+    Returns: phase, offensive_score, defensive_score, top3_sectors, accelerating.
     """
     defensive = ["Utilities", "Consumer Staples", "Health Care"]
     offensive = ["Information Technology", "Consumer Discretionary", "Financials"]
 
-    def_score = float(
-        scores_df[scores_df["sector"].isin(defensive)]["score"].mean()
-    )
-    off_score = float(
-        scores_df[scores_df["sector"].isin(offensive)]["score"].mean()
-    )
+    def_scores = scores_df[scores_df["sector"].isin(defensive)]["score"].dropna()
+    off_scores = scores_df[scores_df["sector"].isin(offensive)]["score"].dropna()
+
+    def_score = _safe(float(def_scores.mean()), 50.0) if not def_scores.empty else 50.0
+    off_score = _safe(float(off_scores.mean()), 50.0) if not off_scores.empty else 50.0
 
     top3       = scores_df.head(3)["sector"].tolist()
     accel_secs = scores_df[scores_df["momentum_accel"] > 1]["sector"].tolist()
@@ -167,36 +210,29 @@ def rank_sector_stocks(tickers: tuple, top_n: int = 30) -> pd.DataFrame:
     Tiers:
       Leader     — top-3 by mkt cap, RSI > 45, above SMA200
       Challenger — top-10 by mkt cap OR above-average 3M return
-      Sleeper    — below-average 3M return, RSI < 60 (mean-reversion candidates)
+      Sleeper    — below-average 3M return + RSI < 60 (potential mean-reversion)
 
-    `tickers` must be a tuple (hashable for st.cache_data).
+    `tickers` is a tuple (hashable for st.cache_data).
     """
     rows = []
     for ticker in tickers[:top_n]:
         try:
             info  = _get_info(ticker)
             df    = _get_ohlcv(ticker, "6mo")
-            close = df["Close"]
+            if df is None or df.empty:
+                continue
+            close = df["Close"].dropna()
             if len(close) < 21:
                 continue
 
             mkt_cap = info.get("marketCap", 0) or 0
-            ret_1m  = float(close.pct_change(21).iloc[-1] * 100)
-            ret_3m  = (
-                float(close.pct_change(63).iloc[-1] * 100)
-                if len(close) >= 63 else None
-            )
+            ret_1m  = _pct_ret(close, 21) * 100
+            ret_3m  = (_pct_ret(close, 63) * 100) if len(close) >= 64 else None
 
-            # RSI(14)
-            delta = close.diff()
-            gain  = delta.clip(lower=0).rolling(14).mean()
-            loss  = (-delta.clip(upper=0)).rolling(14).mean()
-            rsi   = float(
-                (100 - 100 / (1 + gain / loss.replace(0, np.nan))).iloc[-1]
-            )
+            rsi = _rsi14(close)
 
-            sma200       = float(close.rolling(200).mean().iloc[-1]) if len(close) >= 200 else float(close.mean())
-            above_sma200 = bool(close.iloc[-1] > sma200)
+            sma_n        = min(200, len(close))
+            above_sma200 = bool(float(close.iloc[-1]) > float(close.rolling(sma_n).mean().iloc[-1]))
             fwd_pe       = info.get("forwardPE")
 
             rows.append({
@@ -215,16 +251,18 @@ def rank_sector_stocks(tickers: tuple, top_n: int = 30) -> pd.DataFrame:
     if not rows:
         return pd.DataFrame()
 
-    df_out  = (
+    df_out = (
         pd.DataFrame(rows)
         .sort_values("mkt_cap", ascending=False)
         .reset_index(drop=True)
     )
-    avg_3m  = df_out["3m_ret"].dropna().mean()
+    avg_3m = df_out["3m_ret"].dropna().mean()
+    avg_3m = _safe(avg_3m, 0.0)
 
     tiers = []
     for i, row in df_out.iterrows():
-        r3 = row["3m_ret"] if row["3m_ret"] is not None else -999.0
+        r3 = row["3m_ret"] if (row["3m_ret"] is not None) else -999.0
+        r3 = _safe(r3, -999.0)
         if i < 3 and row["rsi"] > 45 and row["above_sma200"]:
             tiers.append("Leader")
         elif i < 10 and r3 >= avg_3m:

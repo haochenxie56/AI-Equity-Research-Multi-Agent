@@ -66,7 +66,15 @@ fig_heat = go.Figure(go.Bar(
     orientation="h",
     marker_color=scores_df["color"].tolist(),
     text=[
-        f"1M: {r['1m_excess']:+.1f}%  3M: {r['3m_excess']:+.1f}%  RSI: {r['rsi']}  ▶ {r['score']:.0f}"
+        (
+            f"1M: {r['1m_excess']:+.1f}%  "
+            f"3M: {r['3m_excess']:+.1f}%  "
+            f"RSI: {r['rsi']:.0f}  "
+            f"▶ {r['score']:.0f}"
+        ) if not (
+            pd.isna(r['1m_excess']) or pd.isna(r['3m_excess']) or
+            pd.isna(r['rsi']) or pd.isna(r['score'])
+        ) else f"▶ {r['score']:.0f}" if not pd.isna(r['score']) else "—"
         for _, r in scores_df.iterrows()
     ],
     textposition="outside",
@@ -146,7 +154,8 @@ with c1:
     )
     off = phase_info["offensive_score"]
     dfs = phase_info["defensive_score"]
-    st.caption(f"Offensive avg: {off}  |  Defensive avg: {dfs}")
+    if not (pd.isna(off) or pd.isna(dfs)):
+        st.caption(f"Offensive avg: {off:.1f}  |  Defensive avg: {dfs:.1f}")
 
 with c2:
     st.markdown(f"**{t('p2_top3')}**")
@@ -328,7 +337,13 @@ with st.expander(f"🔍 {t('p2_subsector_drill')}"):
                 sub_ranked = rank_sector_stocks(tuple(sub_tickers[:30]))
 
             if not sub_ranked.empty:
+                _tier_map = {
+                    "Leader":     t("p2_leader"),
+                    "Challenger": t("p2_challenger"),
+                    "Sleeper":    t("p2_sleeper"),
+                }
                 disp = sub_ranked[["ticker", "name", "1m_ret", "3m_ret", "rsi", "tier"]].copy()
+                disp["tier"] = disp["tier"].map(_tier_map).fillna(disp["tier"])
                 disp.columns = ["Ticker", "Company", "1M Ret%", "3M Ret%", "RSI", "Tier"]
                 render_table(disp.set_index("Ticker"))
 
