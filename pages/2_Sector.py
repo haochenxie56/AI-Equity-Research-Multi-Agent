@@ -417,13 +417,15 @@ with st.expander(t("p2_etf_trend"), expanded=True):
                     continue
                 label = sec_row["zh"] if _lang == "zh" else sec
 
+                if not is_active:
+                    print(f"non-active sector color: {sec_row['color']}, label: {label}")
                 fig_vol.add_trace(go.Scatter(
                     x=sec_data["date"],
                     y=sec_data["vol_ratio"],
                     name=label,
                     mode="lines",
-                    opacity=1.0 if is_active else 0.2,
-                    line=dict(color=sec_row["color"], width=2.5 if is_active else 1.0),
+                    opacity=1.0,
+                    line=dict(color=sec_row["color"], width=2.5),
                     showlegend=True,
                     visible=True if is_active else "legendonly",
                     hovertemplate=f"{label}: %{{y:.2f}}x<extra></extra>",
