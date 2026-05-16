@@ -39,6 +39,16 @@ _STRAT_DISPLAY = [
     t("p3_strat_oversold"),
 ]
 
+# ── Scanner linkage from Sector page ──────────────────────────────────────────
+if st.session_state.get("scanner_trigger"):
+    _injected_pool = st.session_state.get("scanner_pool", "")
+    st.session_state["scanner_trigger"] = False
+    if _injected_pool:
+        st.session_state["_scanner_pool_prefill"] = _injected_pool
+        st.info(f"📥 Pool pre-filled from Sector page ({len([t for t in _injected_pool.split(',') if t.strip()])} tickers)")
+
+_default_pool = st.session_state.pop("_scanner_pool_prefill", DEFAULT_POOL)
+
 # ── Settings ──────────────────────────────────────────────────────────────────
 col_pool, col_params = st.columns([3, 2])
 
@@ -46,7 +56,7 @@ with col_pool:
     st.subheader(t("p3_pool"))
     pool_input = st.text_area(
         t("p3_pool_input"),
-        value=DEFAULT_POOL,
+        value=_default_pool,
         height=120,
         help=t("p3_pool_help"),
     )
