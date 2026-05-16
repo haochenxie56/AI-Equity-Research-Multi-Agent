@@ -27,6 +27,7 @@ import plotly.graph_objects as go
 from ui_utils import (
     apply_theme, render_sidebar, load_ohlcv,
     apply_layout, apply_legend, fmt_large, page_header, render_table, t,
+    render_workflow_bar,
 )
 from sectors import (
     SECTOR_CONFIG, THEME_ETF_CONFIG, CUSTOM_THEME_CONFIG,
@@ -47,6 +48,7 @@ _dark = st.session_state.get("dark_mode", True)
 
 st.title(t("p2_title"))
 page_header()
+render_workflow_bar()
 st.caption(t("p2_subtitle"))
 st.divider()
 

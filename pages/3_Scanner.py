@@ -12,6 +12,7 @@ import plotly.graph_objects as go
 from ui_utils import (
     apply_theme, render_sidebar, load_info, load_ohlcv,
     apply_layout, apply_legend, fmt_large, download_report_button, page_header, render_table, t,
+    render_workflow_bar,
 )
 
 st.set_page_config(page_title="Stock Scanner", page_icon="🔍", layout="wide")
@@ -20,6 +21,7 @@ render_sidebar()
 
 st.title(t("p3_title"))
 page_header()
+render_workflow_bar()
 st.caption(t("p3_subtitle"))
 st.divider()
 

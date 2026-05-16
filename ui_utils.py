@@ -1285,6 +1285,23 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "fin_net_income":     "净利润",
         "fin_basic_eps":      "基本EPS",
         "fin_diluted_eps":    "摊薄EPS",
+        # ── Workflow status bar ───────────────────────────────────────────────────
+        "wf_status_running":    "工作流进行中",
+        "wf_status_done":       "工作流已完成",
+        "wf_sector_lbl":        "板块",
+        "wf_ticker_lbl":        "标的",
+        "wf_fork_btn":          "从这里 Fork",
+        "wf_back_btn":          "↩ 返回总览",
+        "wf_forked":            "已 Fork",
+        # ── Equity page tabs ──────────────────────────────────────────────────────
+        "p4_tab_overview":      "个股概览",
+        "p4_tab_financial":     "财务分析",
+        "p4_tab_pv":            "量价分析",
+        "p4_tab_news":          "新闻情绪",
+        # ── Redirect pages ────────────────────────────────────────────────────────
+        "redirect_financial":   "财务分析已合并至 **个股研究** 页面。",
+        "redirect_pv":          "量价分析已合并至 **个股研究** 页面。",
+        "redirect_goto":        "前往个股研究 →",
         # ── Column name translation map (EN→ZH, applied by render_table) ─────────
         "column_names": {
             # General
@@ -1618,6 +1635,23 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "fin_net_income":     "Net Income",
         "fin_basic_eps":      "Basic EPS",
         "fin_diluted_eps":    "Diluted EPS",
+        # ── Workflow status bar ───────────────────────────────────────────────────
+        "wf_status_running":    "Workflow running",
+        "wf_status_done":       "Workflow completed",
+        "wf_sector_lbl":        "Sector",
+        "wf_ticker_lbl":        "Ticker",
+        "wf_fork_btn":          "Fork from here",
+        "wf_back_btn":          "↩ Overview",
+        "wf_forked":            "Forked",
+        # ── Equity page tabs ──────────────────────────────────────────────────────
+        "p4_tab_overview":      "Overview",
+        "p4_tab_financial":     "Financials",
+        "p4_tab_pv":            "Price & Volume",
+        "p4_tab_news":          "News & Sentiment",
+        # ── Redirect pages ────────────────────────────────────────────────────────
+        "redirect_financial":   "Financial Analysis has been merged into **Equity Research**.",
+        "redirect_pv":          "Price & Volume has been merged into **Equity Research**.",
+        "redirect_goto":        "Go to Equity Research →",
         # ── Column name translation map (ZH→EN, applied by render_table) ─────────
         "column_names": {
             # General
@@ -1653,6 +1687,59 @@ def t(key: str) -> str:
     """Return the translated UI string for the current language (defaults to en)."""
     lang = st.session_state.get("language", "en")
     return TRANSLATIONS.get(lang, TRANSLATIONS["en"]).get(key, key)
+
+
+def render_workflow_bar() -> None:
+    """Show a workflow status banner on sector / scan / equity pages.
+
+    Hidden when research_state.status is 'idle'.
+    Displays current sector/ticker, fork badge, Fork and Overview buttons.
+    """
+    state = st.session_state.get("research_state", {})
+    if state.get("status", "idle") == "idle":
+        return
+
+    _dark  = st.session_state.get("dark_mode", True)
+    bar_bg = "#161b22" if _dark else "#f0f3f6"
+    bar_bd = "#30363d" if _dark else "#d0d7de"
+    t0_c   = "#e6edf3" if _dark else "#1f2328"
+    t1_c   = "#8b949e" if _dark else "#57606a"
+
+    is_running = state.get("status") == "running"
+    dot_color  = "#ffd43b" if is_running else "#3fb950"
+    status_lbl = t("wf_status_running") if is_running else t("wf_status_done")
+
+    parts: list[str] = []
+    if state.get("sector"):
+        parts.append(f"{t('wf_sector_lbl')}: <b>{state['sector']}</b>")
+    if state.get("ticker"):
+        parts.append(f"{t('wf_ticker_lbl')}: <b>{state['ticker']}</b>")
+    if state.get("fork"):
+        parts.append(f"✂️ {t('wf_forked')}")
+    info_html = " &nbsp;·&nbsp; ".join(parts)
+
+    st.markdown(
+        f'<div style="background:{bar_bg};border:1px solid {bar_bd};border-radius:8px;'
+        f'padding:8px 16px;margin-bottom:8px;display:flex;align-items:center;gap:10px;">'
+        f'<span style="width:8px;height:8px;border-radius:50%;background:{dot_color};'
+        f'display:inline-block;flex-shrink:0;"></span>'
+        f'<span style="font-size:0.80rem;color:{t1_c};white-space:nowrap;">{status_lbl}</span>'
+        f'<span style="font-size:0.83rem;color:{t0_c};flex:1;">{info_html}</span>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+    _bc = st.columns([1, 1, 5])
+    with _bc[0]:
+        if not state.get("fork"):
+            if st.button(t("wf_fork_btn"), key="_wf_fork", use_container_width=True):
+                st.session_state["research_state"]["fork"] = True
+                st.rerun()
+        else:
+            st.caption(f"✂️ {t('wf_forked')}")
+    with _bc[1]:
+        if st.button(t("wf_back_btn"), key="_wf_back", use_container_width=True):
+            st.switch_page("pages/1_Overview.py")
 
 
 # ── Financial statement row-name translation ──────────────────────────────────
