@@ -1,8 +1,8 @@
 """Page 2 — Sector Analysis & Rotation (v4.1)
 
 Sections:
-  1  Sector Heat Map       — period-aware composite score bar chart (11 GICS)
-  2  Rotation Signal       — Risk-On / Neutral / Risk-Off + Top3 + accelerating
+  1  Rotation Signal       — Risk-On / Neutral / Risk-Off + Top3 + accelerating (top of page)
+  2  Sector Heat Map       — period-aware composite score bar chart (11 GICS)
   3  ETF Trend vs SPY      — normalised return for selected sector
   4  Stock Ranking         — Leader / Challenger / Sleeper tier cards
   5  Send to Scanner       — push ranked tickers to page 3
@@ -47,23 +47,12 @@ st.caption(t("p2_subtitle"))
 st.divider()
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# SECTION 1 — Sector Heat Map
-# ══════════════════════════════════════════════════════════════════════════════
-st.subheader(t("p2_heatmap"))
-st.caption(t("p2_heatmap_subtitle"))
-
-# ── Period selector for heatmap scoring ───────────────────────────────────────
+# ── Load scores (shared by rotation signal + heatmap) ────────────────────────
 _period_map = {"1M": 21, "3M": 63, "6M": 126, "1Y": 252}
-heat_period = st.radio(
-    "", list(_period_map.keys()), index=1,
-    horizontal=True, key="p2_heat_period",
-    label_visibility="collapsed",
-)
-heat_days = _period_map[heat_period]
 
 with st.spinner(t("p2_loading_scores")):
-    scores_df = compute_sector_scores(heat_days)
+    # Default to 3M for the rotation signal; heatmap period chosen below
+    scores_df = compute_sector_scores(63)
 
 if scores_df.empty:
     st.error(
@@ -75,6 +64,93 @@ if scores_df.empty:
 scores_df["label"] = scores_df.apply(
     lambda r: r["zh"] if _lang == "zh" else r["sector"], axis=1
 )
+
+# Helper: English sector key → current-language display label
+def _sector_label(sec: str) -> str:
+    row = scores_df[scores_df["sector"] == sec]
+    return row["label"].iloc[0] if not row.empty else sec
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SECTION 1 — Rotation Signal  (top of page, before heatmap)
+# ══════════════════════════════════════════════════════════════════════════════
+st.subheader(t("p2_rotation_signal"))
+
+phase_info = classify_rotation_phase(scores_df)
+phase      = phase_info["phase"]
+
+_phase_color = {
+    "risk_on":  "#3fb950",
+    "neutral":  "#d29922",
+    "risk_off": "#f85149",
+}[phase]
+_phase_label = {
+    "risk_on":  t("p2_phase_risk_on"),
+    "neutral":  t("p2_phase_neutral"),
+    "risk_off": t("p2_phase_risk_off"),
+}[phase]
+
+c1, c2, c3 = st.columns(3)
+with c1:
+    st.markdown(f"**{t('p2_market_style')}**")
+    st.markdown(
+        f"<span style='color:{_phase_color}; font-size:1.5em; font-weight:bold'>"
+        f"{_phase_label}</span>",
+        unsafe_allow_html=True,
+    )
+    off = phase_info["offensive_score"]
+    dfs = phase_info["defensive_score"]
+    if not (pd.isna(off) or pd.isna(dfs)):
+        st.caption(f"Offensive avg: {off:.1f}  |  Defensive avg: {dfs:.1f}")
+
+with c2:
+    st.markdown(f"**{t('p2_top3')}**")
+    for sec in phase_info["top3_sectors"]:
+        row = scores_df[scores_df["sector"] == sec]
+        if not row.empty:
+            r = row.iloc[0]
+            st.markdown(
+                f"- **{_sector_label(sec)}** &nbsp; "
+                f"`{r['score']:.0f}pts` &nbsp; `{r['primary_excess']:+.1f}%`"
+            )
+
+with c3:
+    st.markdown(f"**{t('p2_accelerating')}**")
+    accel_list = phase_info["accelerating"]
+    if accel_list:
+        for sec in accel_list:
+            row = scores_df[scores_df["sector"] == sec]
+            if not row.empty:
+                r = row.iloc[0]
+                st.markdown(
+                    f"- **{_sector_label(sec)}** &nbsp; `+{r['momentum_accel']:.2f}`"
+                )
+    else:
+        st.caption("—")
+
+st.divider()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SECTION 2 — Sector Heat Map
+# ══════════════════════════════════════════════════════════════════════════════
+st.subheader(t("p2_heatmap"))
+st.caption(t("p2_heatmap_subtitle"))
+
+# ── Period selector: recompute scores with selected window ────────────────────
+heat_period = st.radio(
+    "", list(_period_map.keys()), index=1,
+    horizontal=True, key="p2_heat_period",
+    label_visibility="collapsed",
+)
+heat_days = _period_map[heat_period]
+
+if heat_days != 63:
+    with st.spinner(t("p2_loading_scores")):
+        scores_df = compute_sector_scores(heat_days)
+    scores_df["label"] = scores_df.apply(
+        lambda r: r["zh"] if _lang == "zh" else r["sector"], axis=1
+    )
 
 # ── Bar text: selected period excess + RSI + score ────────────────────────────
 def _bar_text(r: pd.Series) -> str:
@@ -127,9 +203,7 @@ with col_sel:
     sector_display = [SECTOR_CONFIG[s]["zh"] if _is_zh else s for s in sector_names]
 
     # On language switch: rewrite the stored display string to the new language
-    # equivalent BEFORE the selectbox renders. Streamlit uses session_state[key]
-    # as the source of truth and ignores index= when a value already exists, so
-    # popping / using index= is unreliable — rewriting the value is the fix.
+    # equivalent BEFORE the selectbox renders.
     if st.session_state.get("_p2_sector_lang") != _lang:
         _eng = st.session_state.get("p2_sector_key", sector_names[0])
         if _eng not in sector_names:
@@ -155,72 +229,6 @@ with col_period:
         key="p2_period_sel",
         accept_new_options=False,
     )
-
-st.divider()
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# SECTION 2 — Rotation Signal
-# ══════════════════════════════════════════════════════════════════════════════
-st.subheader(t("p2_rotation_signal"))
-
-phase_info = classify_rotation_phase(scores_df)
-phase      = phase_info["phase"]
-
-_phase_color = {
-    "risk_on":  "#3fb950",
-    "neutral":  "#d29922",
-    "risk_off": "#f85149",
-}[phase]
-_phase_label = {
-    "risk_on":  t("p2_phase_risk_on"),
-    "neutral":  t("p2_phase_neutral"),
-    "risk_off": t("p2_phase_risk_off"),
-}[phase]
-
-
-def _sector_label(sec: str) -> str:
-    row = scores_df[scores_df["sector"] == sec]
-    return row["label"].iloc[0] if not row.empty else sec
-
-
-c1, c2, c3 = st.columns(3)
-with c1:
-    st.markdown(f"**{t('p2_market_style')}**")
-    st.markdown(
-        f"<span style='color:{_phase_color}; font-size:1.5em; font-weight:bold'>"
-        f"{_phase_label}</span>",
-        unsafe_allow_html=True,
-    )
-    off = phase_info["offensive_score"]
-    dfs = phase_info["defensive_score"]
-    if not (pd.isna(off) or pd.isna(dfs)):
-        st.caption(f"Offensive avg: {off:.1f}  |  Defensive avg: {dfs:.1f}")
-
-with c2:
-    st.markdown(f"**{t('p2_top3')}**")
-    for sec in phase_info["top3_sectors"]:
-        row = scores_df[scores_df["sector"] == sec]
-        if not row.empty:
-            r = row.iloc[0]
-            st.markdown(
-                f"- **{_sector_label(sec)}** &nbsp; "
-                f"`{r['score']:.0f}pts` &nbsp; `{r['primary_excess']:+.1f}%`"
-            )
-
-with c3:
-    st.markdown(f"**{t('p2_accelerating')}**")
-    accel_list = phase_info["accelerating"]
-    if accel_list:
-        for sec in accel_list:
-            row = scores_df[scores_df["sector"] == sec]
-            if not row.empty:
-                r = row.iloc[0]
-                st.markdown(
-                    f"- **{_sector_label(sec)}** &nbsp; `+{r['momentum_accel']:.2f}`"
-                )
-    else:
-        st.caption("—")
 
 st.divider()
 
