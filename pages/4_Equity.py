@@ -12,7 +12,7 @@ import plotly.express as px
 
 from ui_utils import (
     apply_theme, render_sidebar, load_info, load_ohlcv, load_ohlcv_multi, load_earnings,
-    fmt_large, fmt_pct, fmt_val, apply_layout, download_report_button, page_header,
+    fmt_large, fmt_pct, fmt_val, apply_layout, apply_legend, download_report_button, page_header,
     translate_to_chinese, render_table, load_news, t,
 )
 
@@ -208,6 +208,7 @@ with right_col:
         ))
         suffix = "%" if "%" in metric_choice else "x"
         apply_layout(fig_p, title=f"{t('p4_peers')} — {metric_choice}", height=300)
+        apply_legend(fig_p)
         fig_p.update_yaxes(title_text=metric_choice)
         st.plotly_chart(fig_p, use_container_width=True)
 
@@ -332,6 +333,7 @@ else:
             annotation_font_color=_hline_c,
         )
         apply_layout(_fig_s, title=_chart_title, height=240)
+        apply_legend(_fig_s)
         _fig_s.update_yaxes(range=[-1.1, 1.1], title_text="Sentiment")
         _fig_s.update_xaxes(tickformat=_tick_fmt)
         st.plotly_chart(_fig_s, use_container_width=True)
@@ -410,7 +412,7 @@ date_pfx = datetime.now().strftime("%Y%m%d")
 moat_str = "\n".join([f"| {k} | {'★'*v}{'☆'*(5-v)} ({v}/5) |" for k, v in scores.items()])
 
 _lang = st.session_state.get("language", "en")
-_L = lambda zh, en: en if _lang == "en" else zh
+_L = lambda en, zh: en if _lang == "en" else zh  # (English, Chinese) → picks by lang
 
 # Peer table md
 _gm_key = t("p4_peer_gm")
@@ -429,7 +431,7 @@ _analysts_txt = (
 _target_n = info.get('numberOfAnalystOpinions', 0)
 _target_txt = _L(f"{_target_n} analysts", f"{_target_n} 位分析师")
 
-report_md = f"""# Equity Research: {ticker} — {name}
+report_md = f"""# {_L('Equity Research', '个股研究报告')}: {ticker} — {name}
 
 **{_L('Date', '日期')}**: {today}
 **Ticker**: {ticker} | {info.get('exchange','N/A')}

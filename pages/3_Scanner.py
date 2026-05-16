@@ -11,7 +11,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from ui_utils import (
     apply_theme, render_sidebar, load_info, load_ohlcv,
-    apply_layout, fmt_large, download_report_button, page_header, render_table, t,
+    apply_layout, apply_legend, fmt_large, download_report_button, page_header, render_table, t,
 )
 
 st.set_page_config(page_title="Stock Scanner", page_icon="🔍", layout="wide")
@@ -245,6 +245,7 @@ if not plot_df.empty:
     fig.add_vline(x=0,  line_dash="dash", line_color="gray",  opacity=0.4)
     fig.update_traces(textposition="top center", textfont_size=11)
     apply_layout(fig, title=f"{_col_ret3m} vs {_col_rsi}", height=480)
+    apply_legend(fig)
     st.plotly_chart(fig, use_container_width=True)
 
 st.divider()
@@ -259,7 +260,7 @@ with col_dl2:
     _lang = st.session_state.get("language", "en")
     today = datetime.now().strftime("%Y-%m-%d")
     md_lines = [
-        f"# Stock Scan: {_strat_display_choice}",
+        f"# {'Stock Scan' if _lang == 'en' else '选股扫描'}: {_strat_display_choice}",
         f"",
         f"**{'Date' if _lang=='en' else '日期'}**: {today}  |  "
         f"**{'Pool' if _lang=='en' else '股票池'}**: {len(pool_tickers)}  |  "

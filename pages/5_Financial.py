@@ -14,7 +14,8 @@ from plotly.subplots import make_subplots
 from ui_utils import (
     apply_theme, render_sidebar, load_info, load_financials, load_balance_sheet,
     load_cashflow, load_earnings, fmt_large, fmt_pct, fmt_val,
-    apply_layout, download_report_button, page_header, render_table, t,
+    apply_layout, apply_legend, download_report_button, page_header, render_table, t,
+    translate_index,
 )
 
 st.set_page_config(page_title="Financials", page_icon="📊", layout="wide")
@@ -49,7 +50,8 @@ st.markdown(f"### {name} &nbsp; `{ticker}` &nbsp; **${price:.2f}**")
 if cal.get("next_earnings_date"):
     days = cal.get("days_to_earnings", 0)
     if 0 <= days <= 14:
-        st.warning(f"⚠️ Earnings window: {cal['next_earnings_date'].strftime('%Y-%m-%d')} — {days}d out")
+        _day_lbl = f"{days}{t('earn_day_out') if days >= 0 else t('earn_day_ago')}"
+        st.warning(f"⚠️ {t('earn_window_lbl')}: {cal['next_earnings_date'].strftime('%Y-%m-%d')} — {_day_lbl}")
 
 st.divider()
 
@@ -82,6 +84,7 @@ def bar_trend(df: pd.DataFrame, col: str, title: str, color: str = "#4da6ff", pc
                            text=[f"{v:.1f}" for v in vals], textposition="outside"))
     ylabel = "%" if pct else "B USD"
     apply_layout(fig, title=title, height=280)
+    apply_legend(fig)
     fig.update_yaxes(title_text=ylabel)
     return fig
 
@@ -103,12 +106,25 @@ with tab1:
         col_tbl, col_chart = st.columns([1, 1])
 
         with col_tbl:
-            disp = fmt_df_billions(fin, IS_KEYS)
+            disp = translate_index(fmt_df_billions(fin, IS_KEYS), st.session_state.get("language", "en"))
             render_table(disp)
 
         with col_chart:
-            metric = st.selectbox(t("p5_trend_metric"), [k for k in IS_KEYS if k in fin.columns], key="is_metric")
-            is_pct = metric in ("Basic EPS", "Diluted EPS")
+            # Build display-label → English-key mapping for the dropdown
+            _is_label_map = {
+                "Total Revenue":    t("fin_total_revenue"),
+                "Gross Profit":     t("fin_gross_profit"),
+                "Operating Income": t("fin_op_income"),
+                "Net Income":       t("fin_net_income"),
+                "EBITDA":           "EBITDA",
+                "Basic EPS":        t("fin_basic_eps"),
+                "Diluted EPS":      t("fin_diluted_eps"),
+            }
+            _is_display  = [_is_label_map[k] for k in IS_KEYS if k in fin.columns]
+            _is_reverse  = {v: k for k, v in _is_label_map.items()}
+            _metric_lbl  = st.selectbox(t("p5_trend_metric"), _is_display, key="is_metric")
+            metric       = _is_reverse.get(_metric_lbl, _metric_lbl)  # back to English key
+            is_pct  = metric in ("Basic EPS", "Diluted EPS")
             divisor = 1 if is_pct else 1e9
             if metric in fin.columns:
                 s = fin[metric].dropna()
@@ -119,7 +135,8 @@ with tab1:
                     text=[f"{v/divisor:.2f}" for v in s.values],
                     textposition="outside",
                 ))
-                apply_layout(fig, title=metric, height=280)
+                apply_layout(fig, title=_metric_lbl, height=280)
+                apply_legend(fig)
                 fig.update_yaxes(title_text="USD" if not is_pct else "EPS")
                 st.plotly_chart(fig, use_container_width=True)
 
@@ -143,6 +160,7 @@ with tab1:
                         hovertemplate=f"{label}: %{{y:.1f}}%<extra></extra>",
                     ))
             apply_layout(margin_fig, title=t("p5_margin_trend"), height=280)
+            apply_legend(margin_fig)
             margin_fig.update_yaxes(title_text="%")
             st.plotly_chart(margin_fig, use_container_width=True)
 
@@ -155,7 +173,7 @@ with tab1:
         col_tbl, col_chart = st.columns([1, 1])
 
         with col_tbl:
-            disp = fmt_df_billions(bs, BS_KEYS)
+            disp = translate_index(fmt_df_billions(bs, BS_KEYS), st.session_state.get("language", "en"))
             render_table(disp)
 
         with col_chart:
@@ -169,6 +187,7 @@ with tab1:
                 fig_bs.add_trace(go.Bar(x=years, y=debt.values,   name="Total Debt",          marker_color="#ef5350"))
                 fig_bs.update_layout(barmode="stack")
                 apply_layout(fig_bs, title=t("p5_cap_struct"), height=280)
+                apply_legend(fig_bs)
                 st.plotly_chart(fig_bs, use_container_width=True)
 
         if "Total Current Assets" in bs.columns and "Total Current Liabilities" in bs.columns:
@@ -180,6 +199,7 @@ with tab1:
             ))
             fig_cr.add_hline(y=1, line_dash="dash", line_color="orange", annotation_text="1.0x")
             apply_layout(fig_cr, title="Current Ratio", height=240)
+            apply_legend(fig_cr)
             st.plotly_chart(fig_cr, use_container_width=True)
 
     # ── Cash Flow ─────────────────────────────────────────────────────────────
@@ -190,7 +210,7 @@ with tab1:
         col_tbl, col_chart = st.columns([1, 1])
 
         with col_tbl:
-            disp = fmt_df_billions(cf, CF_KEYS)
+            disp = translate_index(fmt_df_billions(cf, CF_KEYS), st.session_state.get("language", "en"))
             render_table(disp)
 
         with col_chart:
@@ -210,6 +230,7 @@ with tab1:
                                             line=dict(color="#ffd43b", width=2.5)))
                 fig_cf.update_layout(barmode="relative")
                 apply_layout(fig_cf, title="Cash Flow Trend (B USD)", height=300)
+                apply_legend(fig_cf)
                 st.plotly_chart(fig_cf, use_container_width=True)
 
 
@@ -285,6 +306,7 @@ with tab2:
             fig_dcf.add_hline(y=price, line_dash="dash", line_color=_hline_col,
                               annotation_text=f"Current ${price:.0f}", annotation_position="right")
             apply_layout(fig_dcf, title=f"DCF Intrinsic Value vs Current (WACC={wacc_pct}%)", height=320)
+            apply_legend(fig_dcf)
             fig_dcf.update_yaxes(title_text="USD/share")
             st.plotly_chart(fig_dcf, use_container_width=True)
 
@@ -324,6 +346,7 @@ with tab2:
                 textposition="outside",
             ))
             apply_layout(fig_comp, title=f"{mult_labels[mult_choice]} Peer Comparison", height=320)
+            apply_legend(fig_comp)
             st.plotly_chart(fig_comp, use_container_width=True)
 
             comp_full = []
@@ -358,14 +381,15 @@ with tab3:
         fcf_q  = op_cf_ - capex_
 
         fig_q = go.Figure()
-        fig_q.add_trace(go.Bar(x=years, y=ni.values,     name="Net Income",    marker_color="#4da6ff", opacity=0.7))
-        fig_q.add_trace(go.Scatter(x=years, y=op_cf_.values, name="Operating CF",
+        fig_q.add_trace(go.Bar(x=years, y=ni.values,     name=t("p5_qual_ni"),  marker_color="#4da6ff", opacity=0.7))
+        fig_q.add_trace(go.Scatter(x=years, y=op_cf_.values, name=t("p5_qual_ocf"),
                                    mode="lines+markers", line=dict(color="#51cf66", width=2)))
-        fig_q.add_trace(go.Scatter(x=years, y=fcf_q.values, name="FCF",
+        fig_q.add_trace(go.Scatter(x=years, y=fcf_q.values, name=t("p5_qual_fcf"),
                                    mode="lines+markers", line=dict(color="#ffd43b", width=2, dash="dot")))
-        apply_layout(fig_q, title="Net Income vs Operating CF vs FCF (B USD)", height=320)
+        apply_layout(fig_q, title=t("p5_qual_title"), height=350)
+        apply_legend(fig_q)
         st.plotly_chart(fig_q, use_container_width=True)
-        st.caption("If operating cash flow consistently lags net income, earnings quality may be in question.")
+        st.caption(t("p5_qual_caption"))
 
     st.divider()
     st.subheader(t("p5_checklist"))
@@ -380,20 +404,21 @@ with tab3:
 
         if len(rev_s) >= 2:
             rev_g = (rev_s.iloc[0] / rev_s.iloc[1] - 1) if rev_s.iloc[1] != 0 else None
-            checks.append(("Revenue Growth", "✅" if (rev_g or 0) > 0 else "⚠️",
-                           f"{(rev_g or 0)*100:.1f}% YoY"))
+            checks.append((t("p5_chk_rev"), "✅" if (rev_g or 0) > 0 else "⚠️",
+                           f"{(rev_g or 0)*100:.1f}{t('p5_chk_rev_note')}"))
         if len(gp_s) >= 1 and len(rev_s) >= 1 and rev_s.iloc[0]:
             gm_v = gp_s.iloc[0] / rev_s.iloc[0] * 100
-            checks.append(("Gross Margin", "✅" if gm_v > 30 else "⚠️", f"{gm_v:.1f}%"))
+            checks.append((t("p5_chk_gm"), "✅" if gm_v > 30 else "⚠️", f"{gm_v:.1f}%"))
         if len(ocf_s) >= 1 and len(ni_s) >= 1:
             ni_v  = ni_s.iloc[0]
             ocf_v = ocf_s.iloc[0]
-            checks.append(("Operating CF > Net Income", "✅" if ocf_v >= ni_v else "⚠️",
-                           f"CF ${ocf_v/1e9:.1f}B vs NI ${ni_v/1e9:.1f}B"))
+            _ocf_note = t("p5_chk_ocf_note").format(ocf=f"{ocf_v/1e9:.1f}", ni=f"{ni_v/1e9:.1f}")
+            checks.append((t("p5_chk_ocf"), "✅" if ocf_v >= ni_v else "⚠️", _ocf_note))
         if len(gw_s) >= 1 and len(ta_s) >= 1 and ta_s.iloc[0]:
             gw_ratio = gw_s.iloc[0] / ta_s.iloc[0] * 100
-            checks.append(("Goodwill/Total Assets", "✅" if gw_ratio < 30 else "⚠️",
-                           f"{gw_ratio:.1f}% {'(impairment risk)' if gw_ratio > 30 else ''}"))
+            _gw_risk = t("p5_chk_gw_risk") if gw_ratio > 30 else ""
+            checks.append((t("p5_chk_gw"), "✅" if gw_ratio < 30 else "⚠️",
+                           f"{gw_ratio:.1f}% {_gw_risk}".strip()))
     except Exception:
         pass
 
@@ -401,30 +426,33 @@ with tab3:
         for item, status, note in checks:
             st.markdown(f"- {status} **{item}**: {note}")
     else:
-        st.caption("Insufficient data to generate quality checklist")
+        st.caption(t("p5_no_data"))
 
 # ── Download ──────────────────────────────────────────────────────────────────
 st.divider()
 today    = datetime.now().strftime("%Y-%m-%d")
 date_pfx = datetime.now().strftime("%Y%m%d")
 
-report_md = f"""# Financial Analysis: {ticker} — {name}
+_lang5 = st.session_state.get("language", "en")
+_L5 = lambda en, zh: en if _lang5 == "en" else zh
 
-**日期**：{today}  |  **数据来源**：yfinance  |  **货币**：USD
+report_md = f"""# {_L5('Financial Analysis', '财务分析报告')}: {ticker} — {name}
 
-## 估值快照
+**{_L5('Date', '日期')}**: {today}  |  **{_L5('Source', '数据来源')}**: yfinance  |  **{_L5('Currency', '货币')}**: USD
 
-| 指标 | 数值 |
+## {_L5('Valuation Snapshot', '估值快照')}
+
+| {_L5('Metric', '指标')} | {_L5('Value', '数值')} |
 |------|------|
-| 市值 | {fmt_large(info.get('marketCap'))} |
+| {_L5('Mkt Cap', '市值')} | {fmt_large(info.get('marketCap'))} |
 | Trailing P/E | {fmt_val(info.get('trailingPE'), decimals=1, suffix='x')} |
 | Forward P/E | {fmt_val(info.get('forwardPE'), decimals=1, suffix='x')} |
 | P/S (TTM) | {fmt_val(info.get('priceToSalesTrailing12Months'), decimals=1, suffix='x')} |
 | EV/EBITDA | {fmt_val(info.get('enterpriseToEbitda'), decimals=1, suffix='x')} |
-| 毛利率 | {fmt_pct(info.get('grossMargins'))} |
+| {_L5('Gross Margin', '毛利率')} | {fmt_pct(info.get('grossMargins'))} |
 | ROE | {fmt_pct(info.get('returnOnEquity'))} |
 
-> **风险提示**：本报告仅供研究参考，不构成投资建议。
+> **{_L5('Disclaimer', '风险提示')}**: {_L5('For research purposes only. Not investment advice.', '本报告仅供研究参考，不构成投资建议。')}
 """
 
 rp = Path(__file__).parent.parent / "research" / "stock" / f"{date_pfx}_{ticker}_financial.md"

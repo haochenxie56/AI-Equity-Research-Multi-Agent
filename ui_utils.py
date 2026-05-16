@@ -733,6 +733,25 @@ def apply_layout(fig, title: str = "", height: int = 400):
     return fig
 
 
+def apply_legend(fig):
+    """Place legend above the plot area, right-aligned, same level as title."""
+    dark = st.session_state.get("dark_mode", True)
+    font_color = "#e6edf3" if dark else "#1f2328"
+    fig.update_layout(
+        legend=dict(
+            orientation="h",
+            x=1,
+            y=1.02,
+            xanchor="right",
+            yanchor="bottom",
+            bgcolor="rgba(0,0,0,0)",
+            borderwidth=0,
+            font=dict(color=font_color, size=11),
+        ),
+        margin=dict(t=50),
+    )
+
+
 # ── Report save & download ────────────────────────────────────────────────────
 
 def download_report_button(content: str, filename: str, label: str = "⬇ Download Report"):
@@ -887,7 +906,10 @@ def render_table(df: pd.DataFrame, height: int = None) -> None:
         col: ("right" if _is_right_align(df[col].tolist()) else "left")
         for col in df.columns
     }
-    col_headers = [_fmt_col(c) for c in df.columns]
+    # Apply language-aware column name translation
+    _lang_tbl = st.session_state.get("language", "en")
+    _col_map  = TRANSLATIONS.get(_lang_tbl, TRANSLATIONS["en"]).get("column_names", {})
+    col_headers = [_col_map.get(_fmt_col(c), _fmt_col(c)) for c in df.columns]
     idx_name    = str(df.index.name) if df.index.name else ""
 
     # Wrapper div: optional vertical scroll
@@ -1127,6 +1149,19 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "p5_mult":            "估值倍数",
         "p5_quality":         "FCF vs 净利润（盈利质量检验）",
         "p5_checklist":       "财务质量检查清单",
+        "p5_qual_title":      "净利润 vs 经营现金流 vs 自由现金流（十亿美元）",
+        "p5_qual_ni":         "净利润",
+        "p5_qual_ocf":        "经营现金流",
+        "p5_qual_fcf":        "自由现金流",
+        "p5_qual_caption":    "若经营现金流持续低于净利润，盈利质量可能存疑。",
+        "p5_chk_rev":         "营收增长",
+        "p5_chk_rev_note":    "% 同比",
+        "p5_chk_gm":          "毛利率",
+        "p5_chk_ocf":         "经营现金流 > 净利润",
+        "p5_chk_ocf_note":    "经营CF {ocf}B vs 净利润 {ni}B",
+        "p5_chk_gw":          "商誉/总资产",
+        "p5_chk_gw_risk":     "（商誉减值风险）",
+        "p5_no_data":         "数据不足，无法生成质量检查清单",
         "p5_loading":         "加载同业估值...",
         # ── Page 6 ───────────────────────────────────────────────────────────────
         "p6_title":           "📉 量价分析",
@@ -1188,6 +1223,41 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "earn_last_surp":     "上次EPS惊喜",
         "earn_just_rel":      "🗓️ 财报刚发布",
         "p1_rpt_gen_err":     "报告生成遇到问题",
+        # ── Financial metric names (for dropdowns & column headers) ───────────────
+        "fin_total_revenue":  "营业收入",
+        "fin_gross_profit":   "毛利润",
+        "fin_op_income":      "营业利润",
+        "fin_net_income":     "净利润",
+        "fin_basic_eps":      "基本EPS",
+        "fin_diluted_eps":    "摊薄EPS",
+        # ── Column name translation map (EN→ZH, applied by render_table) ─────────
+        "column_names": {
+            # General
+            "Company": "公司", "Sector": "行业", "Price($)": "价格($)",
+            "Mkt Cap": "市值", "Metric": "指标", "Value": "数值",
+            "Dimension": "维度", "Score": "评分", "Notes": "说明",
+            # Financial statements
+            "Total Revenue": "营业收入", "Gross Profit": "毛利润",
+            "Operating Income": "营业利润", "Net Income": "净利润",
+            "Basic EPS": "基本EPS", "Diluted EPS": "摊薄EPS",
+            "Total Assets": "总资产", "Stockholders Equity": "股东权益",
+            "Total Liabilities Net Minority Interest": "总负债",
+            "Total Debt": "总债务", "Cash And Cash Equivalents": "现金及等价物",
+            "Goodwill": "商誉", "Total Current Assets": "流动资产",
+            "Total Current Liabilities": "流动负债",
+            "Operating Cash Flow": "经营现金流", "Capital Expenditure": "资本支出",
+            "Free Cash Flow": "自由现金流",
+            "Repurchase Of Capital Stock": "股票回购", "Cash Dividends Paid": "股息支付",
+            # Quality check
+            "Revenue Growth": "营收增长", "Gross Margin": "毛利率",
+            "Operating CF > Net Income": "经营现金流>净利润",
+            "Goodwill/Total Assets": "商誉/总资产",
+            # Peer / scanner
+            "1M Ret%": "1M回报%", "3M Ret%": "3M回报%", "6M Ret%": "6M回报%",
+            "Vol Ratio(20D)": "量比(20D)", "Ann. Vol%": "年化波动%",
+            "Fwd P/E": "远期P/E", "Mkt Cap(B)": "市值(B)",
+            "52W High%": "距52周高%",
+        },
     },
     "en": {
         # ── Sidebar ──────────────────────────────────────────────────────────────
@@ -1357,6 +1427,19 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "p5_mult":            "Valuation Multiple",
         "p5_quality":         "FCF vs Net Income (Earnings Quality)",
         "p5_checklist":       "Financial Quality Checklist",
+        "p5_qual_title":      "Net Income vs Operating CF vs FCF (B USD)",
+        "p5_qual_ni":         "Net Income",
+        "p5_qual_ocf":        "Operating CF",
+        "p5_qual_fcf":        "FCF",
+        "p5_qual_caption":    "If operating cash flow consistently lags net income, earnings quality may be in question.",
+        "p5_chk_rev":         "Revenue Growth",
+        "p5_chk_rev_note":    "% YoY",
+        "p5_chk_gm":          "Gross Margin",
+        "p5_chk_ocf":         "Operating CF > Net Income",
+        "p5_chk_ocf_note":    "CF ${ocf}B vs NI ${ni}B",
+        "p5_chk_gw":          "Goodwill/Total Assets",
+        "p5_chk_gw_risk":     "(impairment risk)",
+        "p5_no_data":         "Insufficient data to generate quality checklist",
         "p5_loading":         "Loading peer valuations...",
         # ── Page 6 ───────────────────────────────────────────────────────────────
         "p6_title":           "📉 Price & Volume",
@@ -1418,6 +1501,40 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "earn_last_surp":     "Last EPS surprise",
         "earn_just_rel":      "🗓️ Earnings just released",
         "p1_rpt_gen_err":     "Report generation error",
+        # ── Financial metric names ────────────────────────────────────────────────
+        "fin_total_revenue":  "Total Revenue",
+        "fin_gross_profit":   "Gross Profit",
+        "fin_op_income":      "Operating Income",
+        "fin_net_income":     "Net Income",
+        "fin_basic_eps":      "Basic EPS",
+        "fin_diluted_eps":    "Diluted EPS",
+        # ── Column name translation map (ZH→EN, applied by render_table) ─────────
+        "column_names": {
+            # General
+            "公司": "Company", "行业": "Sector", "价格($)": "Price($)",
+            "市值": "Mkt Cap", "指标": "Metric", "数值": "Value",
+            "维度": "Dimension", "评分": "Score", "说明": "Notes",
+            # Financial statements
+            "营业收入": "Total Revenue", "毛利润": "Gross Profit",
+            "营业利润": "Operating Income", "净利润": "Net Income",
+            "基本EPS": "Basic EPS", "摊薄EPS": "Diluted EPS",
+            "总资产": "Total Assets", "股东权益": "Stockholders Equity",
+            "总负债": "Total Liabilities", "总债务": "Total Debt",
+            "现金及等价物": "Cash & Equivalents", "商誉": "Goodwill",
+            "流动资产": "Current Assets", "流动负债": "Current Liabilities",
+            "经营现金流": "Operating CF", "资本支出": "CapEx",
+            "自由现金流": "Free Cash Flow",
+            "股票回购": "Share Buybacks", "股息支付": "Dividends Paid",
+            # Quality check
+            "营收增长": "Revenue Growth", "毛利率": "Gross Margin",
+            "经营现金流>净利润": "Op. CF > Net Income",
+            "商誉/总资产": "Goodwill/Assets",
+            # Peer / scanner
+            "1M回报%": "1M Ret%", "3M回报%": "3M Ret%", "6M回报%": "6M Ret%",
+            "量比(20D)": "Vol Ratio(20D)", "年化波动%": "Ann. Vol%",
+            "远期P/E": "Fwd P/E", "市值(B)": "Mkt Cap(B)",
+            "距52周高%": "52W High%",
+        },
     },
 }
 
@@ -1426,3 +1543,67 @@ def t(key: str) -> str:
     """Return the translated UI string for the current language (defaults to en)."""
     lang = st.session_state.get("language", "en")
     return TRANSLATIONS.get(lang, TRANSLATIONS["en"]).get(key, key)
+
+
+# ── Financial statement row-name translation ──────────────────────────────────
+
+ROW_NAME_MAP: dict[str, str] = {
+    # ── Income Statement ──────────────────────────────────────────────────────
+    "Total Revenue":                       "营业收入",
+    "Cost Of Revenue":                     "营业成本",
+    "Gross Profit":                        "毛利润",
+    "Operating Expense":                   "营业费用",
+    "Research And Development":            "研发费用",
+    "Selling General Administrative":      "销售及管理费用",
+    "Operating Income":                    "营业利润",
+    "EBITDA":                              "EBITDA",
+    "Net Income":                          "净利润",
+    "Basic EPS":                           "基本每股收益",
+    "Diluted EPS":                         "稀释每股收益",
+    "Interest Expense":                    "利息费用",
+    "Tax Provision":                       "所得税",
+    "Pretax Income":                       "税前利润",
+    # ── Balance Sheet ─────────────────────────────────────────────────────────
+    "Total Assets":                        "总资产",
+    "Total Liabilities Net Minority Interest": "总负债",
+    "Total Equity Gross Minority Interest":"总权益",
+    "Stockholders Equity":                 "股东权益",
+    "Total Current Assets":                "流动资产",
+    "Total Current Liabilities":           "流动负债",
+    "Cash And Cash Equivalents":           "现金及等价物",
+    "Total Debt":                          "总债务",
+    "Net Debt":                            "净债务",
+    "Inventory":                           "存货",
+    "Accounts Receivable":                 "应收账款",
+    "Retained Earnings":                   "留存收益",
+    "Goodwill":                            "商誉",
+    "Goodwill And Other Intangible Assets":"商誉及无形资产",
+    "Long Term Debt":                      "长期债务",
+    # ── Cash Flow Statement ───────────────────────────────────────────────────
+    "Operating Cash Flow":                 "经营活动现金流",
+    "Free Cash Flow":                      "自由现金流",
+    "Capital Expenditure":                 "资本支出",
+    "Investing Cash Flow":                 "投资活动现金流",
+    "Financing Cash Flow":                 "融资活动现金流",
+    "Net Income From Continuing Operations":"持续经营净利润",
+    "Depreciation And Amortization":       "折旧与摊销",
+    "Change In Working Capital":           "营运资本变动",
+    "Repurchase Of Capital Stock":         "股票回购",
+    "Cash Dividends Paid":                 "股息支付",
+    "Issuance Of Debt":                    "债务发行",
+    "Repayment Of Debt":                   "债务偿还",
+    "Net Common Stock Issuance":           "股本变动（净）",
+}
+
+
+def translate_index(df, lang: str) -> pd.DataFrame:
+    """
+    Translate the row index of a financial-statement DataFrame into Chinese.
+    Rows not found in ROW_NAME_MAP are left unchanged (e.g. already-translated
+    or vendor-specific names).  Only applied when lang == "zh".
+    """
+    if lang != "zh":
+        return df
+    df = df.copy()
+    df.index = [ROW_NAME_MAP.get(str(idx), str(idx)) for idx in df.index]
+    return df

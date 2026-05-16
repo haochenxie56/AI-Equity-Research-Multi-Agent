@@ -11,7 +11,7 @@ from plotly.subplots import make_subplots
 
 from ui_utils import (
     apply_theme, render_sidebar, load_ohlcv, load_ohlcv_multi, load_info,
-    apply_layout, fmt_large, page_header, render_table, t,
+    apply_layout, apply_legend, fmt_large, page_header, render_table, t,
 )
 
 st.set_page_config(page_title="Sector Research", page_icon="🏭", layout="wide")
@@ -89,6 +89,7 @@ fig1.add_trace(go.Bar(
 fig1.update_yaxes(title_text=t("p2_price_usd"), row=1, col=1)
 fig1.update_yaxes(title_text=t("p2_volume"),    row=2, col=1)
 apply_layout(fig1, title=f"{etf_ticker} — {period}", height=450)
+apply_legend(fig1)
 st.plotly_chart(fig1, use_container_width=True)
 
 st.divider()
@@ -125,6 +126,7 @@ else:
 
     fig2.add_hline(y=100, line_dash="dash", line_color="gray", opacity=0.5)
     apply_layout(fig2, title=f"Relative Performance ({period}, Base=100)", height=420)
+    apply_legend(fig2)
     st.plotly_chart(fig2, use_container_width=True)
 
     # ── Performance summary table ─────────────────────────────────────────────
