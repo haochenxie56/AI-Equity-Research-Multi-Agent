@@ -193,6 +193,13 @@ fig_heat.update_layout(
 )
 st.plotly_chart(fig_heat, use_container_width=True)
 
+st.divider()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SECTION 3 — ETF Trend vs SPY
+# ══════════════════════════════════════════════════════════════════════════════
+
 # ── Sector + ETF-period selector ──────────────────────────────────────────────
 sector_names = scores_df["sector"].tolist()
 _is_zh = (_lang == "zh")
@@ -230,12 +237,6 @@ with col_period:
         accept_new_options=False,
     )
 
-st.divider()
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# SECTION 3 — ETF Trend vs SPY
-# ══════════════════════════════════════════════════════════════════════════════
 etf_ticker = SECTOR_CONFIG[sel_sector]["etf"]
 etf_color  = SECTOR_CONFIG[sel_sector]["color"]
 
