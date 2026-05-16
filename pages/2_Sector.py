@@ -400,12 +400,10 @@ with st.expander(t("p2_etf_trend"), expanded=True):
         # (top-3 ensures at least some highlighted traces even in quiet markets)
         _top3_sectors = set(latest_vr.head(3)["sector"].tolist())
 
-        _grp_active = t("p2_vol_legend_active")
-        _grp_others = t("p2_vol_legend_others")
-        _grey       = "#484f58"
-
         fig_vol = go.Figure()
-        # Render active (highlighted) traces first so they sit on top
+        # Render active (highlighted) traces first so they sit on top visually;
+        # inactive traces are hidden by default (visible="legendonly") but keep
+        # their original sector colour — clicking the legend entry reveals them.
         for group_pass in ("active", "others"):
             for _, sec_row in latest_vr.iterrows():
                 sec          = sec_row["sector"]
@@ -419,28 +417,15 @@ with st.expander(t("p2_etf_trend"), expanded=True):
                     continue
                 label = sec_row["zh"] if _lang == "zh" else sec
 
-                if is_active:
-                    trace_color = sec_row["color"]
-                    line_width  = 2.5
-                    legend_grp  = _grp_active
-                    visible     = True
-                else:
-                    trace_color = _grey
-                    line_width  = 1.0
-                    legend_grp  = _grp_others
-                    visible     = "legendonly"   # in legend but hidden by default
-
                 fig_vol.add_trace(go.Scatter(
                     x=sec_data["date"],
                     y=sec_data["vol_ratio"],
                     name=label,
                     mode="lines",
-                    line=dict(color=trace_color, width=line_width),
-                    marker=dict(color=trace_color),   # legend swatch colour
-                    legendgroup=legend_grp,
-                    legendgrouptitle=dict(text=legend_grp),
+                    opacity=1.0 if is_active else 0.2,
+                    line=dict(color=sec_row["color"], width=2.5 if is_active else 1.0),
                     showlegend=True,
-                    visible=visible,
+                    visible=True if is_active else "legendonly",
                     hovertemplate=f"{label}: %{{y:.2f}}x<extra></extra>",
                 ))
 
