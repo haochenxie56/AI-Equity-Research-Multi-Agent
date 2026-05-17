@@ -49,6 +49,16 @@ if st.session_state.get("scanner_trigger"):
         st.session_state["_scanner_pool_prefill"] = _injected_pool
         st.info(f"📥 Pool pre-filled from Sector page ({len([t for t in _injected_pool.split(',') if t.strip()])} tickers)")
 
+# ── Workflow state linkage ─────────────────────────────────────────────────────
+if "_scanner_pool_prefill" not in st.session_state:
+    _wf_pool = (
+        st.session_state.get("research_state", {})
+        .get("results", {})
+        .get("scan", {}) or {}
+    ).get("pool")
+    if _wf_pool:
+        st.session_state["_scanner_pool_prefill"] = _wf_pool
+
 _default_pool = st.session_state.pop("_scanner_pool_prefill", DEFAULT_POOL)
 
 # ── Settings ──────────────────────────────────────────────────────────────────

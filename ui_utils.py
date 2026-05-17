@@ -512,7 +512,7 @@ def init_session():
             st.session_state[k] = v
 
 
-def render_sidebar() -> str:
+def render_sidebar() -> None:
     inject_global_css()
     init_session()
     with st.sidebar:
@@ -523,45 +523,6 @@ def render_sidebar() -> str:
             '</div>',
             unsafe_allow_html=True,
         )
-
-        ticker = st.text_input(
-            t("sidebar_ticker"),
-            value=st.session_state.ticker,
-            placeholder=t("sidebar_ticker_ph"),
-            key="sidebar_ticker",
-        ).upper().strip()
-
-        if ticker and ticker != st.session_state.ticker:
-            st.session_state.ticker = ticker
-            st.cache_data.clear()
-            st.rerun()
-
-        if ticker:
-            st.divider()
-            st.markdown(
-                f'<p style="font-size:0.70rem;color:var(--t1);text-transform:uppercase;'
-                f'letter-spacing:0.08em;margin-bottom:6px">{t("sidebar_cache")} · {ticker}</p>',
-                unsafe_allow_html=True,
-            )
-            try:
-                from cache_manager import cache_status
-                status = cache_status(ticker)
-                labels = {
-                    "ohlcv_1y_1d":   t("cache_ohlcv"),
-                    "financials":    t("cache_financials"),
-                    "balance_sheet": t("cache_balance"),
-                    "cashflow":      t("cache_cashflow"),
-                }
-                cols = st.columns(2)
-                for i, (key, label) in enumerate(labels.items()):
-                    fresh = status.get(key, {}).get("fresh", False)
-                    dot   = '<span class="cdot cdot-ok"></span>' if fresh else '<span class="cdot cdot-old"></span>'
-                    cols[i % 2].markdown(
-                        f'<span style="font-size:0.73rem">{dot}{label}</span>',
-                        unsafe_allow_html=True,
-                    )
-            except Exception:
-                pass
 
         st.divider()
 
@@ -601,8 +562,6 @@ def render_sidebar() -> str:
         st.page_link("pages/4_Equity.py",           label=t("nav_p4"))
         st.page_link("pages/5_Financial.py",        label=t("nav_p5"))
         st.page_link("pages/6_PriceVolume.py",      label=t("nav_p6"))
-
-    return st.session_state.ticker
 
 
 # ── Number formatting ─────────────────────────────────────────────────────────
@@ -1293,6 +1252,27 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "wf_fork_btn":          "从这里 Fork",
         "wf_back_btn":          "↩ 返回总览",
         "wf_forked":            "已 Fork",
+        # ── Overview workflow control center ──────────────────────────────────────
+        "p1_wf_sector_lbl":  "目标板块",
+        "p1_wf_ticker_lbl":  "目标标的",
+        "p1_wf_start":       "▶ 启动完整工作流",
+        "p1_wf_new":         "🔄 重新开始",
+        "p1_wf_done":        "✅ 工作流已完成",
+        "p1_wf_running":     "工作流进行中",
+        "p1_wf_idle_hint":   "选择板块与标的，启动完整研究工作流",
+        "p1_step1_name":     "① 板块研究",
+        "p1_step2_name":     "② 选股扫描",
+        "p1_step3_name":     "③ 个股研究",
+        "p1_step4_name":     "④ 财务分析",
+        "p1_step5_name":     "⑤ 量价分析",
+        "p1_view_sector":    "查看板块详情 →",
+        "p1_view_scanner":   "查看扫描结果 →",
+        "p1_view_equity":    "查看个股研究 →",
+        "p1_step_pending":   "待执行",
+        "p1_step_running":   "执行中...",
+        "p1_step_done":      "完成",
+        "p1_step_failed":    "失败",
+        "p1_no_ticker_wf":   "请输入目标标的代码",
         # ── Equity page tabs ──────────────────────────────────────────────────────
         "p4_tab_overview":      "个股概览",
         "p4_tab_financial":     "财务分析",
@@ -1643,6 +1623,27 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "wf_fork_btn":          "Fork from here",
         "wf_back_btn":          "↩ Overview",
         "wf_forked":            "Forked",
+        # ── Overview workflow control center ──────────────────────────────────────
+        "p1_wf_sector_lbl":  "Target Sector",
+        "p1_wf_ticker_lbl":  "Target Ticker",
+        "p1_wf_start":       "▶ Start Full Workflow",
+        "p1_wf_new":         "🔄 New Workflow",
+        "p1_wf_done":        "✅ Workflow Complete",
+        "p1_wf_running":     "Workflow in Progress",
+        "p1_wf_idle_hint":   "Select a sector and ticker, then launch the full research pipeline",
+        "p1_step1_name":     "① Sector Analysis",
+        "p1_step2_name":     "② Stock Scanner",
+        "p1_step3_name":     "③ Equity Research",
+        "p1_step4_name":     "④ Financial Analysis",
+        "p1_step5_name":     "⑤ Price & Volume",
+        "p1_view_sector":    "View Sector →",
+        "p1_view_scanner":   "View Scanner →",
+        "p1_view_equity":    "View Equity →",
+        "p1_step_pending":   "Pending",
+        "p1_step_running":   "Running...",
+        "p1_step_done":      "Done",
+        "p1_step_failed":    "Failed",
+        "p1_no_ticker_wf":   "Please enter a target ticker symbol",
         # ── Equity page tabs ──────────────────────────────────────────────────────
         "p4_tab_overview":      "Overview",
         "p4_tab_financial":     "Financials",

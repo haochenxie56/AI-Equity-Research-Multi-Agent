@@ -32,7 +32,7 @@ apply_theme()
 if os.environ.get("STREAMLIT_SHARING_MODE"):
     st.info("☁️ Cloud deployment — data fetching may be slow. If you hit a timeout, wait a moment and refresh.")
 
-ticker = render_sidebar()
+render_sidebar()
 
 # ── Landing page ──────────────────────────────────────────────────────────────
 st.title(f"📈 {t('app_title')}")
@@ -40,41 +40,7 @@ page_header()
 st.caption(t("app_subtitle"))
 st.divider()
 
-# Quick ticker preview
-if ticker:
-    with st.spinner(f"Loading {ticker}..."):
-        try:
-            info     = load_info(ticker)
-            name     = info.get("longName", ticker)
-            price    = info.get("currentPrice") or info.get("regularMarketPrice", 0)
-            prev     = info.get("regularMarketPreviousClose", price)
-            chg      = (price - prev) / prev * 100 if prev else 0
-            mktcap   = info.get("marketCap", 0)
-            sector   = info.get("sector", "N/A")
-            industry = info.get("industry", "N/A")
-
-            col1, col2 = st.columns([2, 1])
-            with col1:
-                arrow = "▲" if chg >= 0 else "▼"
-                color = "green" if chg >= 0 else "red"
-                st.markdown(f"### {name} &nbsp; `{ticker}`")
-                st.markdown(
-                    f"<b>&#36;{price:.2f}</b> &nbsp; "
-                    f"<span style='color:{color}'>{arrow} {chg:+.2f}%</span> &nbsp;|&nbsp; "
-                    f"{t('mktcap')} <b>{fmt_large(mktcap).replace('$', '&#36;')}</b>"
-                    f" &nbsp;|&nbsp; {sector} / {industry}",
-                    unsafe_allow_html=True,
-                )
-            with col2:
-                st.markdown(f"#### {t('quick_nav')}")
-                st.page_link("pages/1_Overview.py",    label=t("nav_overview"),    icon="1️⃣")
-                st.page_link("pages/5_Financial.py",   label=t("nav_financial"),   icon="5️⃣")
-                st.page_link("pages/6_PriceVolume.py", label=t("nav_pricevolume"), icon="6️⃣")
-
-        except Exception:
-            st.warning(t("loading_failed"))
-else:
-    st.info(t("input_prompt"))
+st.info(t("input_prompt"))
 
 st.divider()
 

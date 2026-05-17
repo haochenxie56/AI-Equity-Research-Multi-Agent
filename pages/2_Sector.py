@@ -319,6 +319,13 @@ with st.expander(t("p2_heatmap"), expanded=True):
 sector_names = scores_df["sector"].tolist()
 _is_zh = (_lang == "zh")
 
+# Pre-fill from workflow state on first visit (only if user hasn't already selected)
+_wf_sector = st.session_state.get("research_state", {}).get("sector")
+if _wf_sector and _wf_sector in sector_names and "p2_sector_key" not in st.session_state:
+    st.session_state["p2_sector_key"] = _wf_sector
+    st.session_state["p2_sector_sel"] = SECTOR_CONFIG[_wf_sector]["zh"] if _is_zh else _wf_sector
+    st.session_state["_p2_sector_lang"] = _lang
+
 # On language switch: rewrite the stored display string to the new language
 # equivalent BEFORE the selectbox renders.
 if st.session_state.get("_p2_sector_lang") != _lang:
@@ -586,7 +593,7 @@ font-weight:normal;border-bottom:1px solid {bd}'>Ticker</th>{hdr}</tr></thead>
     st.markdown(html, unsafe_allow_html=True)
 
 
-with st.expander(t("p2_subsector_drill")):
+with st.expander(t("p2_subsector_drill"), expanded=True):
 
     # ── Collect sub-sectors for the selected GICS sector ─────────────────────
     sub_options: dict[str, dict] = {}

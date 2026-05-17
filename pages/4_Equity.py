@@ -45,11 +45,20 @@ def _get_default_peers(ticker: str, info: dict) -> str:
 
 st.set_page_config(page_title="Equity Research", page_icon="🏢", layout="wide")
 apply_theme()
-ticker = render_sidebar()
+render_sidebar()
 
 st.title(t("p4_title"))
 page_header()
 render_workflow_bar()
+
+# In-page ticker input — defaults to workflow state ticker if set
+_wf_ticker = st.session_state.get("research_state", {}).get("ticker", "")
+ticker = st.text_input(
+    t("p1_wf_ticker_lbl"),
+    value=_wf_ticker,
+    placeholder="e.g. NVDA",
+    key="p4_ticker_input",
+).upper().strip()
 
 if not ticker:
     st.info(t("no_ticker"))
