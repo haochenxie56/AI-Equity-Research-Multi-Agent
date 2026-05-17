@@ -457,3 +457,75 @@ def analyze_pv(snap: dict, equity_ctx: dict, lang: str = "en") -> dict:
 
     except Exception as e:
         return _fallback("pv", e)
+
+
+# ── Synthesis: Comprehensive Conclusion ───────────────────────────────────────
+
+def synthesize_report(state: dict, lang: str = "en") -> dict:
+    """Generate a comprehensive conclusion synthesising all 5 step results.
+
+    Returns JSON: {recommendation, conclusion, risks (list)}
+    """
+    try:
+        client = _get_client()
+
+        sector  = state.get("sector", "N/A")
+        ticker  = state.get("ticker", "N/A")
+        results = state.get("results", {})
+
+        def _ctx(step: str) -> str:
+            llm = (results.get(step) or {}).get("llm", {})
+            dec = llm.get("decision", "N/A")
+            rea = llm.get("reasoning", "")
+            return f"{dec}: {rea}" if rea else dec
+
+        context = (
+            f"Sector Analysis — {_ctx('sector')}\n"
+            f"Stock Selection — {_ctx('scan')}\n"
+            f"Equity Research — {_ctx('equity')}\n"
+            f"Financial Analysis — {_ctx('financial')}\n"
+            f"Price & Volume — {_ctx('pv')}"
+        )
+
+        if lang == "zh":
+            system = (
+                "你是资深投资研究报告撰写专家。根据五步分析结论，撰写综合投资结论段落。\n"
+                "要求：覆盖板块逻辑、个股选择理由、财务健康度和技术面；"
+                "给出明确整体建议；列出2-3个主要风险。约150-200字，专业易读。\n"
+                "输出纯JSON，字段：\n"
+                '  "recommendation": "积极配置"|"观察等待"|"谨慎回避",\n'
+                '  "conclusion": 综合结论段落（中文），\n'
+                '  "risks": ["风险1","风险2",...]'
+            )
+            user = (
+                f"研究标的：{sector} / {ticker}\n\n"
+                f"五步分析结论：\n{context}\n\n"
+                "请生成综合投资结论，输出JSON。"
+            )
+        else:
+            system = (
+                "You are a senior investment research writer. Synthesise five-step analysis "
+                "into a comprehensive investment conclusion.\n"
+                "Requirements: cover sector logic, stock selection, financial health, technicals; "
+                "give a clear recommendation; list 2-3 key risks. ~150-200 words, professional.\n"
+                "Output pure JSON, fields:\n"
+                '  "recommendation": "Buy"|"Hold"|"Watch"|"Avoid",\n'
+                '  "conclusion": comprehensive conclusion paragraph,\n'
+                '  "risks": ["risk 1","risk 2",...]'
+            )
+            user = (
+                f"Research target: {sector} / {ticker}\n\n"
+                f"Five-step analysis:\n{context}\n\n"
+                "Generate comprehensive investment conclusion and output JSON."
+            )
+
+        resp = client.messages.create(
+            model=_MODEL,
+            max_tokens=900,
+            system=system,
+            messages=[{"role": "user", "content": user}],
+        )
+        return _parse_json(resp.content[0].text)
+
+    except Exception as e:
+        return _fallback("synthesis", e)

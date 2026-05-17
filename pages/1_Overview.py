@@ -372,65 +372,302 @@ elif status == "running":
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# COMPLETED
+# COMPLETED — report-style layout
 # ══════════════════════════════════════════════════════════════════════════════
 elif status == "completed":
+    from datetime import datetime
     sector   = state.get("sector", "")
     ticker   = state.get("ticker", "")
     results  = state.get("results", {})
     steps    = state.get("steps", {})
 
-    # ── Header ────────────────────────────────────────────────────────────────
-    sec_res  = results.get("sector") or {}
-    scan_res = results.get("scan")   or {}
-    eq_res   = results.get("equity") or {}
+    sec_res  = results.get("sector")    or {}
+    scan_res = results.get("scan")      or {}
+    eq_res   = results.get("equity")    or {}
     fin_res  = results.get("financial") or {}
-    pv_res   = results.get("pv")     or {}
+    pv_res   = results.get("pv")        or {}
 
-    subsector  = sec_res.get("subsector") or ""
-    runner_up  = scan_res.get("runner_up") or ""
-    eq_llm     = eq_res.get("llm") or {}
-    fin_llm    = fin_res.get("llm") or {}
-    pv_llm     = pv_res.get("llm") or {}
+    subsector = sec_res.get("subsector") or ""
+    runner_up = scan_res.get("runner_up") or ""
+    sec_llm  = sec_res.get("llm")  or {}
+    scan_llm = scan_res.get("llm") or {}
+    eq_llm   = eq_res.get("llm")   or {}
+    fin_llm  = fin_res.get("llm")  or {}
+    pv_llm   = pv_res.get("llm")   or {}
 
-    done_lbl = "✅ AI 研究完成" if _lang == "zh" else "✅ AI Research Complete"
-    header_parts = [f"**{sector}**"]
-    if subsector:
-        header_parts.append(f"**{subsector}**")
-    header_parts.append(f"**{ticker}**")
-    if runner_up:
-        runner_lbl = "次选" if _lang == "zh" else "Runner-up"
-        header_parts.append(f"{runner_lbl}: {runner_up}")
-    st.success(f"{done_lbl} — " + " / ".join(header_parts))
+    # ── Lazy-generate comprehensive conclusion (cached in session) ─────────────
+    _cache_key = f"wf_conclusion_{ticker}_{sector}"
+    if st.session_state.get("_wf_conclusion_key") != _cache_key:
+        st.session_state["_wf_conclusion"] = None
+        st.session_state["_wf_conclusion_key"] = _cache_key
+    if st.session_state.get("_wf_conclusion") is None:
+        with st.spinner("✍️ " + ("生成综合结论..." if _lang == "zh" else "Generating conclusion...")):
+            from llm_orchestrator import synthesize_report
+            st.session_state["_wf_conclusion"] = synthesize_report(state, _lang)
+    conclusion_data = st.session_state["_wf_conclusion"] or {}
 
-    col_new, _ = st.columns([1, 5])
-    with col_new:
-        new_lbl = t("p1_wf_new")
-        if st.button(new_lbl, use_container_width=True):
+    rec       = conclusion_data.get("recommendation", "")
+    conc_text = conclusion_data.get("conclusion", "")
+    risks     = conclusion_data.get("risks") or []
+
+    # ── Recommendation color ───────────────────────────────────────────────────
+    _REC_COLORS = {
+        "Buy": "#3fb950", "积极配置": "#3fb950",
+        "Hold": "#d29922", "Watch": "#d29922", "观察等待": "#d29922",
+        "Avoid": "#f85149", "谨慎回避": "#f85149",
+    }
+    rec_color = _REC_COLORS.get(rec, "#58a6ff")
+
+    # ── Top bar: title + New Workflow button (right-aligned) ────────────────────
+    title_col, btn_col = st.columns([6, 1])
+    with title_col:
+        report_title = ("📋 AI 研究报告" if _lang == "zh" else "📋 AI Research Report")
+        st.markdown(f"## {report_title}")
+    with btn_col:
+        st.markdown("<div style='padding-top:10px'>", unsafe_allow_html=True)
+        if st.button(t("p1_wf_new"), use_container_width=True, key="rpt_new"):
+            st.session_state.pop("_wf_conclusion", None)
+            st.session_state.pop("_wf_conclusion_key", None)
             reset_state()
             st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
 
-    # ── Key metrics banner ────────────────────────────────────────────────────
-    fin_gm   = fin_res.get("gross_margin_pct")
-    pv_snap  = eq_res.get("snap") or {}
+    # ── Report header block ─────────────────────────────────────────────────────
+    now_str   = datetime.now().strftime("%Y-%m-%d %H:%M")
+    path_str  = sector + (" › " + subsector if subsector else "") + " › **" + ticker + "**"
+    runner_str = (f"  &nbsp;|&nbsp;  {'次选' if _lang == 'zh' else 'Runner-up'}: {runner_up}"
+                  if runner_up else "")
+    rec_badge = (
+        f'<span style="background:{rec_color};color:#fff;padding:2px 10px;'
+        f'border-radius:12px;font-size:0.82rem;font-weight:600">{rec}</span>'
+        if rec else ""
+    )
+    gen_lbl = "生成时间" if _lang == "zh" else "Generated"
+    path_lbl = "研究路径" if _lang == "zh" else "Research Path"
+    rec_lbl  = "整体建议" if _lang == "zh" else "Recommendation"
+
+    st.markdown(
+        f'<div style="background:{_card_bg};border:1px solid {_card_bd};'
+        f'border-radius:10px;padding:18px 24px;margin-bottom:4px;">'
+        f'<div style="font-size:0.75rem;color:#8b949e;margin-bottom:8px">'
+        f'{gen_lbl}: {now_str}</div>'
+        f'<div style="margin-bottom:6px"><span style="font-size:0.75rem;color:#8b949e">'
+        f'{path_lbl}:&nbsp;</span>{path_str}{runner_str}</div>'
+        f'<div><span style="font-size:0.75rem;color:#8b949e">{rec_lbl}:&nbsp;</span>'
+        f'{rec_badge}</div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+    # ── Helper: render one report section ──────────────────────────────────────
+    def _section(num: str, title: str, step_key: str,
+                 llm_data: dict, metrics_fallback: dict,
+                 page: str, view_lbl: str) -> None:
+        st_status = (steps.get(step_key) or {}).get("status", "pending")
+        icon = "✅" if st_status == "done" else ("❌" if st_status == "failed" else "⬜")
+
+        st.markdown(f"#### {icon}&nbsp; {num}&nbsp; {title}")
+
+        # Reasoning as body paragraph
+        reasoning = llm_data.get("reasoning", "")
+        if reasoning and "unavailable" not in reasoning.lower():
+            st.markdown(
+                f'<p style="font-size:0.95rem;line-height:1.75;color:var(--t0,'
+                f'{"#e6edf3" if _dark else "#1f2328"});margin:8px 0 14px">'
+                f'{reasoning}</p>',
+                unsafe_allow_html=True,
+            )
+        elif st_status == "failed":
+            st.caption("⚠️ " + (steps.get(step_key) or {}).get("summary", "Step failed"))
+
+        # Key metrics (LLM key_metrics preferred, else fallback)
+        km = llm_data.get("key_metrics") or {}
+        display = km if km else metrics_fallback
+        if display:
+            items = [(str(k), str(v)) for k, v in list(display.items())[:4] if v]
+            if items:
+                cols = st.columns(len(items))
+                for i, (k, v) in enumerate(items):
+                    cols[i].metric(k[:22], v[:22])
+
+        # View Details button — right-aligned
+        _, _btn = st.columns([5, 1])
+        with _btn:
+            if st.button(view_lbl, key=f"rpt_{step_key}", use_container_width=True):
+                st.switch_page(page)
+
+        st.divider()
+
+    # ── Determine section number labels ────────────────────────────────────────
+    _nums = ["①", "②", "③", "④", "⑤"]
+    _sec_titles = [t(k) for k in _STEP_KEYS]
+
+    # ── Section 1: Sector Analysis ─────────────────────────────────────────────
+    sec_fallback = {
+        "Score":    f"{sec_res.get('score', '—')}",
+        "Phase":    sec_res.get("phase", "—"),
+        "Top3":     ", ".join((sec_res.get("top3") or [])[:2]),
+        "Subsector":subsector or "—",
+    }
+    _section(_nums[0], _sec_titles[0], "sector",
+             sec_llm, sec_fallback,
+             _STEP_PAGES[0], t("p1_view_sector"))
+
+    # ── Section 2: Stock Scanner ───────────────────────────────────────────────
+    leaders = scan_res.get("leaders") or []
+    scan_fallback = {
+        "Constituents": str(scan_res.get("total", "—")),
+        "Leaders":      ", ".join(leaders[:3]) or "—",
+        "Selected":     ticker,
+        "Runner-up":    runner_up or "—",
+    }
+    _section(_nums[1], _sec_titles[1], "scan",
+             scan_llm, scan_fallback,
+             _STEP_PAGES[1], t("p1_view_scanner"))
+
+    # ── Section 3: Equity Research ─────────────────────────────────────────────
+    eq_snap = eq_res.get("snap") or {}
+    eq_fallback = {
+        "Decision":  eq_llm.get("decision", "—"),
+        "RSI(14)":   f"{eq_snap.get('RSI_14', '—')}",
+        "ADX":       f"{eq_snap.get('ADX', '—')}",
+        "SMA200":    "Above ✓" if eq_snap.get("above_SMA200") else "Below ✗",
+    }
+    _section(_nums[2], _sec_titles[2], "equity",
+             eq_llm, eq_fallback,
+             _STEP_PAGES[2], t("p1_view_equity"))
+
+    # ── Section 4: Financial Analysis ──────────────────────────────────────────
+    from ui_utils import fmt_large
+    fin_fallback = {
+        "Revenue":     fmt_large(fin_res.get("revenue")),
+        "Gross Margin":f"{fin_res.get('gross_margin_pct', 0):.1f}%" if fin_res.get("gross_margin_pct") else "—",
+        "Net Income":  fmt_large(fin_res.get("net_income")),
+        "FCF":         fmt_large(fin_res.get("fcf")),
+    }
+    _section(_nums[3], _sec_titles[3], "financial",
+             fin_llm, fin_fallback,
+             _STEP_PAGES[3], t("p1_view_equity"))
+
+    # ── Section 5: Price & Volume ──────────────────────────────────────────────
+    pv_fallback = {
+        "RSI(14)":      f"{pv_res.get('rsi', '—')}",
+        "ADX":          f"{pv_res.get('adx', '—')}",
+        "SMA200":       "Above ✓" if pv_res.get("above_sma200") else "Below ✗",
+        "Vol Ratio":    f"{pv_res.get('vol_ratio', '—')}x",
+    }
+    _section(_nums[4], _sec_titles[4], "pv",
+             pv_llm, pv_fallback,
+             _STEP_PAGES[4], t("p1_view_equity"))
+
+    # ── Comprehensive Conclusion ────────────────────────────────────────────────
+    conc_title = "综合结论" if _lang == "zh" else "Comprehensive Conclusion"
+    st.markdown(f"#### 🔍&nbsp; {conc_title}")
+
+    if conc_text and "unavailable" not in conc_text.lower():
+        if rec:
+            st.markdown(
+                f'<span style="background:{rec_color};color:#fff;padding:3px 12px;'
+                f'border-radius:14px;font-size:0.85rem;font-weight:600;'
+                f'margin-bottom:12px;display:inline-block">{rec}</span>',
+                unsafe_allow_html=True,
+            )
+        st.markdown(
+            f'<p style="font-size:0.95rem;line-height:1.85;color:var(--t0,'
+            f'{"#e6edf3" if _dark else "#1f2328"});margin:10px 0 16px">'
+            f'{conc_text}</p>',
+            unsafe_allow_html=True,
+        )
+    else:
+        st.caption("⚠️ " + (conc_text or "Conclusion generation failed"))
+
+    if risks:
+        risk_title = "主要风险" if _lang == "zh" else "Key Risks"
+        st.markdown(f"**{risk_title}:**")
+        for r in risks:
+            st.markdown(f"- {r}")
+
     st.divider()
-    mc1, mc2, mc3, mc4, mc5 = st.columns(5)
-    mc1.metric("Sector", sector)
-    mc2.metric("Ticker", ticker)
-    mc3.metric("Equity",    eq_llm.get("decision", "—"))
-    mc4.metric("Financials",fin_llm.get("decision", "—"))
-    mc5.metric("Technical", pv_llm.get("decision", "—"))
 
-    st.divider()
+    # ── Download report as Markdown ─────────────────────────────────────────────
+    today = datetime.now().strftime("%Y-%m-%d")
+    date_pfx = datetime.now().strftime("%Y%m%d")
 
-    # ── Step cards ────────────────────────────────────────────────────────────
-    _step_names = [t(k) for k in _STEP_KEYS]
+    if _lang == "zh":
+        md_parts = [
+            f"# AI 研究报告：{sector} / {ticker}",
+            f"",
+            f"**生成时间**：{today}  |  **整体建议**：{rec or 'N/A'}",
+            f"**研究路径**：{sector}" + (f" › {subsector}" if subsector else "") + f" › {ticker}",
+            f"",
+            f"---",
+        ]
+    else:
+        md_parts = [
+            f"# AI Research Report: {sector} / {ticker}",
+            f"",
+            f"**Generated**: {today}  |  **Recommendation**: {rec or 'N/A'}",
+            f"**Research Path**: {sector}" + (f" › {subsector}" if subsector else "") + f" › {ticker}",
+            f"",
+            f"---",
+        ]
 
-    r1c1, r1c2, r1c3 = st.columns(3)
-    _step_card(r1c1, "sector",    _step_names[0], _STEP_PAGES[0], t("p1_view_sector"))
-    _step_card(r1c2, "scan",      _step_names[1], _STEP_PAGES[1], t("p1_view_scanner"))
-    _step_card(r1c3, "equity",    _step_names[2], _STEP_PAGES[2], t("p1_view_equity"))
+    _sec_md_titles = [
+        ("一、板块分析" if _lang == "zh" else "I. Sector Analysis"),
+        ("二、选股扫描" if _lang == "zh" else "II. Stock Scanner"),
+        ("三、个股研究" if _lang == "zh" else "III. Equity Research"),
+        ("四、财务分析" if _lang == "zh" else "IV. Financial Analysis"),
+        ("五、量价分析" if _lang == "zh" else "V. Price & Volume"),
+    ]
+    _sec_llms     = [sec_llm, scan_llm, eq_llm, fin_llm, pv_llm]
+    _sec_fallbacks = [sec_fallback, scan_fallback, eq_fallback, fin_fallback, pv_fallback]
 
-    r2c1, r2c2, _ = st.columns(3)
-    _step_card(r2c1, "financial", _step_names[3], _STEP_PAGES[3], t("p1_view_equity"))
-    _step_card(r2c2, "pv",        _step_names[4], _STEP_PAGES[4], t("p1_view_equity"))
+    for sec_t, llm_d, fb_d in zip(_sec_md_titles, _sec_llms, _sec_fallbacks):
+        rea = llm_d.get("reasoning", "")
+        km  = llm_d.get("key_metrics") or fb_d
+        md_parts += [f"## {sec_t}", ""]
+        if rea:
+            md_parts += [rea, ""]
+        if km:
+            md_parts.append("| " + (" | ".join("Metric Value".split())) + " |")
+            md_parts.append("|---|---|")
+            for k, v in list(km.items())[:6]:
+                md_parts.append(f"| {k} | {v} |")
+            md_parts.append("")
+        md_parts.append("---")
+
+    conc_h = "## 综合结论" if _lang == "zh" else "## Comprehensive Conclusion"
+    md_parts += ["", conc_h, ""]
+    if conc_text:
+        md_parts.append(conc_text)
+    if risks:
+        risk_h = "### 主要风险" if _lang == "zh" else "### Key Risks"
+        md_parts += ["", risk_h]
+        for r in risks:
+            md_parts.append(f"- {r}")
+    disclaimer = (
+        "\n\n---\n> **风险提示**：本报告由 AI 自动生成，仅供研究参考，不构成投资建议。"
+        if _lang == "zh" else
+        "\n\n---\n> **Disclaimer**: This report is AI-generated for research purposes only. Not investment advice."
+    )
+    md_parts.append(disclaimer)
+    report_md = "\n".join(md_parts)
+
+    # Save to research/stock/
+    try:
+        from pathlib import Path as _Path
+        rpt_dir = _Path(__file__).parent.parent / "research" / "stock"
+        rpt_dir.mkdir(parents=True, exist_ok=True)
+        rpt_file = rpt_dir / f"{date_pfx}_{ticker}_ai_report.md"
+        rpt_file.write_text(report_md, encoding="utf-8")
+    except Exception:
+        pass
+
+    dl_lbl = "⬇ 下载研究报告 (.md)" if _lang == "zh" else "⬇ Download Report (.md)"
+    st.download_button(
+        dl_lbl,
+        report_md,
+        file_name=f"{date_pfx}_{ticker}_ai_report.md",
+        mime="text/markdown",
+        use_container_width=False,
+    )
