@@ -45,23 +45,29 @@ def make_header(
     ticker_or_sector: str,
     agent_name: str,
     extra_fields: dict = None,
+    lang: str = "en",
 ) -> str:
+    _date_lbl    = "Date"           if lang == "en" else "日期"
+    _ticker_lbl  = "Ticker / Sector" if lang == "en" else "代码 / 板块"
+    _analyst_lbl = "Analyst Agent"  if lang == "en" else "分析师 Agent"
     lines = [
         f"# {title}",
         "",
-        f"**Date**: {_today()}",
-        f"**Ticker / Sector**: {ticker_or_sector}",
-        f"**Analyst Agent**: {agent_name}",
+        f"**{_date_lbl}**: {_today()}",
+        f"**{_ticker_lbl}**: {ticker_or_sector}",
+        f"**{_analyst_lbl}**: {agent_name}",
     ]
     if extra_fields:
         for k, v in extra_fields.items():
-            lines.append(f"**{k}**：{v}")
+            lines.append(f"**{k}**: {v}")
     lines += ["", "---", ""]
     return "\n".join(lines)
 
 
-def make_risk_footer() -> str:
-    return "\n\n---\n\n> **Disclaimer**: This report is for research purposes only and does not constitute investment advice. Markets involve risk; invest with caution.\n"
+def make_risk_footer(lang: str = "en") -> str:
+    if lang == "en":
+        return "\n\n---\n\n> **Disclaimer**: This report is for research purposes only and does not constitute investment advice. Markets involve risk; invest with caution.\n"
+    return "\n\n---\n\n> **风险提示**：本报告仅供研究参考，不构成投资建议。市场有风险，投资须谨慎。\n"
 
 
 # ---------------------------------------------------------------------------
@@ -81,17 +87,31 @@ def write_equity_report(
     report_type: str = "equity",
     agent_name: str = "equity-research",
     extra_fields: dict = None,
+    lang: str = "en",
 ) -> Path:
     """
     Build and write a standard equity report.
 
     sections: ordered dict of {section_title: section_body}
+    lang: "en" or "zh" — controls report title and header labels
     Returns the written file path.
     """
-    company_name = sections.pop("company_name", ticker)
-    title = f"{report_type.replace('_', ' ').title()}: {ticker.upper()} — {company_name}"
+    # Language-aware report type labels
+    _type_labels = {
+        "equity":         ("Equity Research",    "个股研究报告"),
+        "financial":      ("Financial Analysis",  "财务分析报告"),
+        "sector":         ("Sector Research",     "行业研究报告"),
+        "price_volume":   ("Price & Volume",      "量价分析报告"),
+        "overview":       ("Research Overview",   "综合研究报告"),
+        "scan":           ("Stock Scan",          "选股扫描"),
+    }
+    _en_lbl, _zh_lbl = _type_labels.get(report_type, (report_type.replace("_", " ").title(), report_type))
+    type_label = _en_lbl if lang == "en" else _zh_lbl
 
-    parts = [make_header(title, ticker.upper(), agent_name, extra_fields)]
+    company_name = sections.pop("company_name", ticker)
+    title = f"{type_label}: {ticker.upper()} — {company_name}"
+
+    parts = [make_header(title, ticker.upper(), agent_name, extra_fields, lang=lang)]
     for heading, body in sections.items():
         parts.append(f"## {heading}\n\n{body}\n")
     parts.append(make_risk_footer())
