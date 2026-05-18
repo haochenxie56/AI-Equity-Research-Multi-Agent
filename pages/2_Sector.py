@@ -851,7 +851,7 @@ if not _has_llm:
     _ai_hint()
 else:
     # Lazy synthesis: generated once per workflow run, cached in session_state
-    _syn_key = f"sector_synthesis_{_wf_sector_name}"
+    _syn_key = f"sector_synthesis_{_wf_sector_name}_{_lang}"
     if st.session_state.get("_sector_syn_key") != _syn_key:
         st.session_state["_sector_synthesis"] = None
         st.session_state["_sector_syn_key"] = _syn_key

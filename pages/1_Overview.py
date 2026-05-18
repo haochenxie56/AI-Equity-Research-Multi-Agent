@@ -149,6 +149,7 @@ elif status == "running":
     for s, key in zip(_STEPS, _STEP_KEYS):
         containers[s].markdown(f"⬜ **{t(key)}** — {t('p1_step_pending')}")
     progress = st.progress(0)
+    update_state(lang=_lang)   # record language used for this run
 
     # ── Step 1: Sector Analysis ────────────────────────────────────────────────
     containers["sector"].markdown(f"🔵 **{t('p1_step1_name')}** — {t('p1_step_running')}")
@@ -365,7 +366,32 @@ elif status == "running":
 
         # ── LLM layer: cross-strategy evaluation ──────────────────────────────
         sector_ctx = state.get("results", {}).get("sector", {})
-        llm_result = analyze_scanner_multi(strategy_results, sector_ctx, _lang)
+        total_hits = sum(len(v) for v in strategy_results.values())
+
+        if total_hits > 0:
+            llm_result = analyze_scanner_multi(strategy_results, sector_ctx, _lang)
+        else:
+            # Zero strategy hits (common in English mode with stricter pool):
+            # fall back to ranking-based selection, then normalize to multi format
+            from rotation import rank_sector_stocks
+            from llm_orchestrator import analyze_scanner
+            ranked_fb  = rank_sector_stocks(tuple(pool_top), top_n=30)
+            fb_result  = analyze_scanner(ranked_fb, sector_ctx, _lang)
+            fb_ticker  = (fb_result.get("decision") or "").upper().strip()
+            llm_result = {
+                "decision":  fb_ticker,
+                "runner_up": fb_result.get("runner_up", ""),
+                "reasoning": fb_result.get("reasoning", ""),
+                "summary":   fb_result.get("summary", ""),
+                "selected":  [
+                    {
+                        "ticker":     fb_ticker,
+                        "strategy":   "Ranking",
+                        "confidence": "Medium",
+                        "reasoning":  fb_result.get("reasoning", ""),
+                    }
+                ] if fb_ticker else [],
+            }
 
         # Extract top pick with fallback
         ticker = (llm_result.get("decision") or "").upper().strip()
@@ -379,7 +405,6 @@ elif status == "running":
 
         runner_up  = llm_result.get("runner_up", "")
         selected   = llm_result.get("selected") or []
-        total_hits = sum(len(v) for v in strategy_results.values())
         pool_str   = ", ".join(pool_top[:30])
         llm_summary = llm_result.get("summary", f"{total_hits} hits → {ticker}")
 
@@ -557,8 +582,20 @@ elif status == "completed":
     fin_llm  = fin_res.get("llm")  or {}
     pv_llm   = pv_res.get("llm")   or {}
 
+    # ── Language mismatch warning ──────────────────────────────────────────────
+    _wf_lang = state.get("lang", "")
+    if _wf_lang and _wf_lang != _lang:
+        _mismatch_msg = (
+            "⚠️ 当前语言与工作流执行时的语言不同，AI 分析内容为原语言版本。"
+            "如需切换语言，请重新运行工作流。"
+            if _lang == "zh" else
+            "⚠️ Current display language differs from the language used when the workflow ran. "
+            "AI analysis is shown in its original language. Re-run the workflow to switch languages."
+        )
+        st.info(_mismatch_msg)
+
     # ── Lazy-generate comprehensive conclusion (cached in session) ─────────────
-    _cache_key = f"wf_conclusion_{ticker}_{sector}"
+    _cache_key = f"wf_conclusion_{ticker}_{sector}_{_lang}"
     if st.session_state.get("_wf_conclusion_key") != _cache_key:
         st.session_state["_wf_conclusion"] = None
         st.session_state["_wf_conclusion_key"] = _cache_key
