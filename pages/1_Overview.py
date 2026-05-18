@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 sys.path.insert(0, str(Path(__file__).parent.parent / "lib"))
 
 import streamlit as st
+import pandas as pd
 from ui_utils import (
     apply_theme, render_sidebar, load_info, load_ohlcv,
     load_financials, load_cashflow, load_earnings,
@@ -140,33 +141,95 @@ elif status == "running":
     # ── Step 1: Sector Analysis ────────────────────────────────────────────────
     containers["sector"].markdown(f"🔵 **{t('p1_step1_name')}** — {t('p1_step_running')}")
     try:
-        from rotation import compute_sector_scores, classify_rotation_phase, get_macro_indicators
-        from llm_orchestrator import analyze_sector
+        from rotation import (compute_sector_scores, classify_rotation_phase,
+                              get_macro_indicators, compute_volume_flow,
+                              compute_subsector_scores)
+        from sectors import SECTOR_CONFIG
+        from llm_orchestrator import analyze_sector_full
 
-        scores_df  = compute_sector_scores(period_days=63)
-        phase_info = classify_rotation_phase(scores_df)
+        # ── Code layer: gather all 6 dimensions ───────────────────────────────
+        scores_3m  = compute_sector_scores(period_days=63)
+        phase_info = classify_rotation_phase(scores_3m)
         macro_data = get_macro_indicators()
 
-        llm_result = analyze_sector(scores_df, macro_data, _lang)
+        try:
+            scores_1m = compute_sector_scores(period_days=21)
+        except Exception:
+            scores_1m = pd.DataFrame()
+        try:
+            scores_6m = compute_sector_scores(period_days=126)
+        except Exception:
+            scores_6m = pd.DataFrame()
 
-        # LLM picks sector; fallback to top-scoring sector
+        # Volume flow: last 5 trading-day average vol_ratio per sector
+        volume_recent = {}
+        try:
+            vol_df = compute_volume_flow()
+            if not vol_df.empty:
+                recent_dates = sorted(vol_df["date"].unique())[-5:]
+                vol_5d = vol_df[vol_df["date"].isin(recent_dates)]
+                for sec, grp in vol_5d.groupby("sector"):
+                    volume_recent[str(sec)] = round(float(grp["vol_ratio"].mean()), 2)
+        except Exception:
+            pass
+
+        # Tentative sector = top-scoring by 3M
+        tentative_sector = (scores_3m.iloc[0]["sector"]
+                            if not scores_3m.empty else "Information Technology")
+        sector_etf = SECTOR_CONFIG.get(tentative_sector, {}).get("etf", "XLK")
+
+        # ETF returns vs SPY for tentative sector
+        etf_returns = {}
+        try:
+            etf_df = load_ohlcv(sector_etf, "1y")
+            spy_df = load_ohlcv("SPY", "1y")
+            if etf_df is not None and spy_df is not None:
+                for lbl, days in [("1M", 21), ("3M", 63), ("6M", 126)]:
+                    if len(etf_df) >= days and len(spy_df) >= days:
+                        er = (etf_df["Close"].iloc[-1] / etf_df["Close"].iloc[-days] - 1) * 100
+                        sr = (spy_df["Close"].iloc[-1] / spy_df["Close"].iloc[-days] - 1) * 100
+                        etf_returns[lbl] = {
+                            "etf": round(float(er), 1),
+                            "spy": round(float(sr), 1),
+                            "excess": round(float(er - sr), 1),
+                        }
+        except Exception:
+            pass
+
+        # Subsector scores for tentative sector
+        subsector_df = pd.DataFrame()
+        try:
+            subsector_df = compute_subsector_scores(tentative_sector)
+        except Exception:
+            pass
+
+        # ── LLM layer: one comprehensive call for all 6 dimensions ────────────
+        llm_result = analyze_sector_full({
+            "macro":            macro_data,
+            "phase":            phase_info,
+            "scores_3m":        scores_3m,
+            "scores_1m":        scores_1m,
+            "scores_6m":        scores_6m,
+            "volume_recent":    volume_recent,
+            "etf_returns":      etf_returns,
+            "subsector_scores": subsector_df,
+            "sector_etf":       sector_etf,
+            "tentative_sector": tentative_sector,
+        }, _lang)
+
+        # Sector decision with fallback to top-scoring
         sector = llm_result.get("decision", "")
-        if not scores_df.empty:
-            valid_sectors = scores_df["sector"].tolist()
-            if sector not in valid_sectors:
-                sector = valid_sectors[0]   # fallback to top-scoring
-        subsector = llm_result.get("subsector") or None
+        valid_sectors = scores_3m["sector"].tolist() if not scores_3m.empty else []
+        if sector not in valid_sectors:
+            sector = tentative_sector
+        subsector = llm_result.get("subsector_decision") or None
 
-        phase    = phase_info.get("phase", "neutral")
-        top3     = phase_info.get("top3_sectors", [])
-        top_row  = scores_df.iloc[0] if not scores_df.empty else {}
+        phase     = phase_info.get("phase", "neutral")
+        top3      = phase_info.get("top3_sectors", [])
+        top_row   = scores_3m.iloc[0] if not scores_3m.empty else {}
         top_score = float(top_row.get("score", 0)) if hasattr(top_row, "get") else 0.0
 
-        code_summary = (
-            f"phase={phase} | top3={', '.join(top3)} | "
-            f"selected={sector} score={top_score:.1f}"
-        )
-        llm_summary = llm_result.get("summary", code_summary)
+        llm_summary = llm_result.get("summary", f"selected={sector} score={top_score:.1f}")
 
         update_step("sector", "done", llm_summary)
         update_state(
@@ -175,6 +238,8 @@ elif status == "running":
                 "phase": phase, "top_sector": sector, "score": top_score,
                 "top3": top3, "subsector": subsector,
                 "accelerating": phase_info.get("accelerating", []),
+                "etf_returns":  etf_returns,
+                "sector_etf":   sector_etf,
                 "llm": llm_result,
             }},
         )
@@ -459,7 +524,9 @@ elif status == "completed":
         unsafe_allow_html=True,
     )
 
-    # ── Helper: render one report section ──────────────────────────────────────
+    _sep = "：" if _lang == "zh" else ": "
+
+    # ── Helper: render one report section (non-sector steps) ───────────────────
     def _section(title: str, step_key: str,
                  llm_data: dict, metrics_fallback: dict,
                  page: str, view_lbl: str) -> None:
@@ -473,27 +540,84 @@ elif status == "completed":
         if reasoning and "unavailable" not in reasoning.lower():
             st.markdown(
                 f'<p style="font-size:0.95rem;line-height:1.75;color:var(--t0,'
-                f'{"#e6edf3" if _dark else "#1f2328"});margin:8px 0 14px">'
+                f'{"#e6edf3" if _dark else "#1f2328"});margin:8px 0 12px">'
                 f'{reasoning}</p>',
                 unsafe_allow_html=True,
             )
         elif st_status == "failed":
             st.caption("⚠️ " + (steps.get(step_key) or {}).get("summary", "Step failed"))
 
-        # Key metrics (LLM key_metrics preferred, else fallback)
+        # Key metrics as key-value text (LLM key_metrics preferred, else fallback)
         km = llm_data.get("key_metrics") or {}
         display = km if km else metrics_fallback
         if display:
-            items = [(str(k), str(v)) for k, v in list(display.items())[:4] if v]
+            items = [(fmt_metric_key(k, _lang), str(v))
+                     for k, v in list(display.items())[:6] if v]
             if items:
-                cols = st.columns(len(items))
-                for i, (k, v) in enumerate(items):
-                    cols[i].metric(fmt_metric_key(k, _lang), v)
+                st.markdown(
+                    "\n\n".join(f"**{k}**{_sep}{v}" for k, v in items)
+                )
 
         # View Details button — right-aligned
         _, _btn = st.columns([5, 1])
         with _btn:
             if st.button(view_lbl, key=f"rpt_{step_key}", use_container_width=True):
+                st.switch_page(page)
+
+        st.divider()
+
+    # ── Helper: render sector section with 6 sub-sections ──────────────────────
+    def _sector_section(title: str, llm_data: dict, code_data: dict,
+                        page: str, view_lbl: str) -> None:
+        st_status = (steps.get("sector") or {}).get("status", "pending")
+        icon = "✅" if st_status == "done" else ("❌" if st_status == "failed" else "⬜")
+
+        st.markdown(f"#### {icon}&nbsp; {title}")
+
+        if st_status == "failed":
+            st.caption("⚠️ " + (steps.get("sector") or {}).get("summary", "Step failed"))
+
+        _sub_titles = {
+            "macro":       ("① 宏观环境"     if _lang == "zh" else "① Macro Environment"),
+            "rotation":    ("② 轮动信号"     if _lang == "zh" else "② Rotation Signal"),
+            "momentum":    ("③ 板块动量对比" if _lang == "zh" else "③ Sector Momentum"),
+            "etf_trend":   ("④ ETF 走势对比" if _lang == "zh" else "④ ETF Trend vs SPY"),
+            "volume_flow": ("⑤ 资金流入信号" if _lang == "zh" else "⑤ Volume Flow"),
+            "subsector":   ("⑥ 子板块分析"  if _lang == "zh" else "⑥ Subsector Analysis"),
+        }
+
+        has_any = any(llm_data.get(k) for k in _sub_titles)
+        if has_any:
+            for key, sub_title in _sub_titles.items():
+                text = llm_data.get(key, "")
+                if text and "unavailable" not in text.lower():
+                    st.markdown(f"**{sub_title}**")
+                    st.markdown(
+                        f'<p style="font-size:0.92rem;line-height:1.72;'
+                        f'color:var(--t0,{"#e6edf3" if _dark else "#1f2328"});'
+                        f'margin:4px 0 14px;padding-left:4px">'
+                        f'{text}</p>',
+                        unsafe_allow_html=True,
+                    )
+        else:
+            # Fallback: reasoning paragraph + code-layer key-value data
+            reasoning = llm_data.get("reasoning", "")
+            if reasoning and "unavailable" not in reasoning.lower():
+                st.markdown(
+                    f'<p style="font-size:0.95rem;line-height:1.75;'
+                    f'color:var(--t0,{"#e6edf3" if _dark else "#1f2328"});'
+                    f'margin:8px 0 12px">{reasoning}</p>',
+                    unsafe_allow_html=True,
+                )
+            if code_data:
+                items = [(fmt_metric_key(k, _lang), str(v))
+                         for k, v in list(code_data.items())[:6] if v]
+                if items:
+                    st.markdown("\n\n".join(f"**{k}**{_sep}{v}" for k, v in items))
+
+        _, _btn = st.columns([5, 1])
+        with _btn:
+            if st.button(view_lbl, key="rpt_sector", use_container_width=True):
                 st.switch_page(page)
 
         st.divider()
@@ -507,9 +631,8 @@ elif status == "completed":
         "Top3":     ", ".join((sec_res.get("top3") or [])[:2]),
         "Subsector":subsector or "—",
     }
-    _section(_sec_titles[0], "sector",
-             sec_llm, sec_fallback,
-             _STEP_PAGES[0], t("p1_view_sector"))
+    _sector_section(_sec_titles[0], sec_llm, sec_fallback,
+                    _STEP_PAGES[0], t("p1_view_sector"))
 
     # ── Section 2: Stock Scanner ───────────────────────────────────────────────
     leaders = scan_res.get("leaders") or []

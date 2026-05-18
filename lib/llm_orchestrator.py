@@ -95,7 +95,189 @@ def _fallback(step: str, err: Exception) -> dict:
     }
 
 
-# ── Step 1: Sector Analysis ────────────────────────────────────────────────────
+# ── Step 1: Sector Analysis (comprehensive 6-dimension version) ──────────────
+
+def analyze_sector_full(data: dict, lang: str = "en") -> dict:
+    """
+    One-call comprehensive sector analysis across 6 dimensions.
+
+    data keys:
+      macro, phase, scores_3m, scores_1m, scores_6m,
+      volume_recent, etf_returns, subsector_scores,
+      sector_etf, tentative_sector
+
+    Returns dict with keys:
+      macro, rotation, momentum, etf_trend, volume_flow, subsector,
+      decision, subsector_decision, reasoning, summary
+    """
+    try:
+        client = _get_client()
+
+        macro_data       = data.get("macro") or {}
+        phase            = data.get("phase") or {}
+        scores_3m        = data.get("scores_3m")
+        scores_1m        = data.get("scores_1m")
+        scores_6m        = data.get("scores_6m")
+        volume_recent    = data.get("volume_recent") or {}
+        etf_returns      = data.get("etf_returns") or {}
+        sub_df           = data.get("subsector_scores")
+        sector_etf       = data.get("sector_etf", "")
+        tentative_sector = data.get("tentative_sector", "")
+
+        # ── Macro ─────────────────────────────────────────────────────────────
+        macro_lines = []
+        for key, d in macro_data.items():
+            if d.get("current") is not None:
+                macro_lines.append(
+                    f"  {key}: {d['current']:.2f}  (5D: {d.get('change5d', 0):+.2f})"
+                )
+        macro_text = "\n".join(macro_lines) or "  N/A"
+
+        # ── Rotation phase ────────────────────────────────────────────────────
+        phase_text = (
+            f"  phase: {phase.get('phase', 'N/A')}\n"
+            f"  offensive_score: {phase.get('offensive_score', 'N/A')}\n"
+            f"  defensive_score: {phase.get('defensive_score', 'N/A')}\n"
+            f"  top3: {', '.join(phase.get('top3_sectors', []))}\n"
+            f"  accelerating: {', '.join(phase.get('accelerating', []) or ['none'])}"
+        )
+
+        # ── Momentum comparison (3 windows) ───────────────────────────────────
+        def _fmt_scores(df, label):
+            try:
+                if df is None or df.empty:
+                    return f"  {label}: N/A"
+            except Exception:
+                return f"  {label}: N/A"
+            lines = [f"  {label}:"]
+            for _, r in df.head(6).iterrows():
+                lines.append(
+                    f"    {r.get('sector','?')}: score={r.get('score',0):.1f}  "
+                    f"excess={r.get('primary_excess', r.get('1m_excess', 0)):+.1f}%  "
+                    f"accel={r.get('momentum_accel', 0):+.1f}"
+                )
+            return "\n".join(lines)
+
+        momentum_text = (
+            _fmt_scores(scores_1m, "1M window") + "\n" +
+            _fmt_scores(scores_3m, "3M window") + "\n" +
+            _fmt_scores(scores_6m, "6M window")
+        )
+
+        # ── ETF trend vs SPY ──────────────────────────────────────────────────
+        if etf_returns:
+            etf_lines = [f"  Sector ETF: {sector_etf} ({tentative_sector})"]
+            for period, vals in etf_returns.items():
+                etf_lines.append(
+                    f"  {period}: ETF={vals.get('etf','N/A'):+.1f}%  "
+                    f"SPY={vals.get('spy','N/A'):+.1f}%  "
+                    f"Excess={vals.get('excess','N/A'):+.1f}%"
+                )
+            etf_text = "\n".join(etf_lines)
+        else:
+            etf_text = "  N/A"
+
+        # ── Volume flow ───────────────────────────────────────────────────────
+        if volume_recent:
+            vol_sorted  = sorted(volume_recent.items(), key=lambda x: x[1], reverse=True)
+            vol_lines   = [f"  {s}: {v:.2f}x" for s, v in vol_sorted[:8]]
+            volume_text = "  Last-5D avg vol ratio:\n" + "\n".join(vol_lines)
+        else:
+            volume_text = "  N/A"
+
+        # ── Subsector scores ──────────────────────────────────────────────────
+        try:
+            sub_empty = sub_df is None or sub_df.empty
+        except Exception:
+            sub_empty = True
+
+        if not sub_empty:
+            sub_lines = [f"  Subsectors of {tentative_sector}:"]
+            for _, r in sub_df.head(6).iterrows():
+                sub_lines.append(
+                    f"    {r.get('name','?')} ({r.get('etf','?')}): "
+                    f"score={r.get('score',0):.1f}  "
+                    f"3m_ret={r.get('3m_ret',0):+.1f}%  "
+                    f"3m_excess={r.get('3m_excess',0):+.1f}%  "
+                    f"rsi={r.get('rsi',0):.1f}"
+                )
+            subsector_text = "\n".join(sub_lines)
+        else:
+            subsector_text = f"  No subsector data for {tentative_sector}"
+
+        sub_hint = "; ".join(
+            f"{s}: [{', '.join(v)}]" for s, v in _SUBSECTORS_BY_SECTOR.items() if v
+        )
+
+        if lang == "zh":
+            system = (
+                "你是美股行业配置专家。以下是六个维度的量化数据，"
+                "请按六个子章节结构输出深度分析，每个子章节2-3句，最后给出板块选择决策。\n"
+                "输出纯JSON（不含markdown），字段：\n"
+                '  "macro":              宏观环境分析（2-3句中文），\n'
+                '  "rotation":           轮动信号分析（2-3句中文），\n'
+                '  "momentum":           板块动量对比（2-3句中文），\n'
+                '  "etf_trend":          ETF走势对比（2-3句中文），\n'
+                '  "volume_flow":        资金流入信号（2-3句中文），\n'
+                '  "subsector":          子板块分析（2-3句中文），\n'
+                '  "decision":           选定GICS板块（必须在有效列表中），\n'
+                '  "subsector_decision": 选定子板块（从提示列表选；无则null），\n'
+                '  "reasoning":          综合决策逻辑（1句），\n'
+                '  "summary":            一句话摘要'
+            )
+            user = (
+                f"【宏观指标】\n{macro_text}\n\n"
+                f"【轮动阶段】\n{phase_text}\n\n"
+                f"【板块动量对比（三窗口）】\n{momentum_text}\n\n"
+                f"【ETF走势 vs SPY】\n{etf_text}\n\n"
+                f"【近5日资金量比】\n{volume_text}\n\n"
+                f"【子板块评分】\n{subsector_text}\n\n"
+                f"有效GICS板块：{_GICS_SECTORS}\n"
+                f"可选子板块：{sub_hint}\n\n"
+                "请生成六维度分析报告并输出JSON。"
+            )
+        else:
+            system = (
+                "You are a US equity sector rotation expert. Below are 6 dimensions of "
+                "quantitative data. Produce a structured analysis with 6 sub-sections "
+                "(2-3 sentences each), then give a sector selection decision.\n"
+                "Output pure JSON (no markdown), fields:\n"
+                '  "macro":              macro environment (2-3 sentences),\n'
+                '  "rotation":           rotation signal (2-3 sentences),\n'
+                '  "momentum":           sector momentum comparison (2-3 sentences),\n'
+                '  "etf_trend":          ETF trend vs SPY (2-3 sentences),\n'
+                '  "volume_flow":        volume flow signal (2-3 sentences),\n'
+                '  "subsector":          subsector analysis (2-3 sentences),\n'
+                '  "decision":           selected GICS sector (must be from valid list),\n'
+                '  "subsector_decision": selected subsector (from hint list; null if none),\n'
+                '  "reasoning":          one-sentence combined rationale,\n'
+                '  "summary":            one-line summary'
+            )
+            user = (
+                f"[Macro indicators]\n{macro_text}\n\n"
+                f"[Rotation phase]\n{phase_text}\n\n"
+                f"[Sector momentum — 3 windows]\n{momentum_text}\n\n"
+                f"[ETF returns vs SPY]\n{etf_text}\n\n"
+                f"[Volume flow — last 5D avg vol ratio]\n{volume_text}\n\n"
+                f"[Subsector scores]\n{subsector_text}\n\n"
+                f"Valid GICS sectors: {_GICS_SECTORS}\n"
+                f"Available subsectors: {sub_hint}\n\n"
+                "Generate the 6-dimension analysis report and output JSON."
+            )
+
+        resp = client.messages.create(
+            model=_MODEL,
+            max_tokens=2000,
+            system=system,
+            messages=[{"role": "user", "content": user}],
+        )
+        return _parse_json(resp.content[0].text)
+
+    except Exception as e:
+        return _fallback("sector_full", e)
+
+
+# ── Step 1: Sector Analysis (legacy fallback version) ────────────────────────
 
 def analyze_sector(scores_df, macro_data: dict, lang: str = "en") -> dict:
     """Pick the most promising GICS sector + subsector from quantitative data."""
