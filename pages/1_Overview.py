@@ -267,49 +267,134 @@ elif status == "running":
         containers["sector"].markdown(f"❌ **{t('p1_step1_name')}** — {e}")
     progress.progress(20)
 
-    # ── Step 2: Stock Scanner ──────────────────────────────────────────────────
+    # ── Step 2: Stock Scanner (4-strategy multi-scan) ─────────────────────────
     containers["scan"].markdown(f"🔵 **{t('p1_step2_name')}** — {t('p1_step_running')}")
     try:
         from sectors import get_theme_constituents
-        from rotation import rank_sector_stocks
-        from llm_orchestrator import analyze_scanner
+        from technical import snapshot as _snap_fn
+        from llm_orchestrator import analyze_scanner_multi
 
-        # Try subsector first; fall back to parent sector
-        pool = []
+        # ── Build ticker pool from subsector → sector → fallback ──────────────
+        pool: list[str] = []
         if subsector:
             pool = get_theme_constituents(subsector)
         if len(pool) < 5:
             pool = get_theme_constituents(sector)
         if not pool:
             pool = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA"]
-
         pool_top = pool[:40]
-        ranked   = rank_sector_stocks(tuple(pool_top), top_n=30)
 
+        # ── Code layer: run all 4 strategies in one pass over the pool ────────
+        _strats     = ["Momentum", "Value", "Quality Growth", "Oversold Bounce"]
+        _period     = "1y"
+        _info_cache: dict = {}
+
+        def _cached_info(tk: str) -> dict:
+            if tk not in _info_cache:
+                try:
+                    _info_cache[tk] = load_info(tk)
+                except Exception:
+                    _info_cache[tk] = {}
+            return _info_cache[tk]
+
+        strategy_results: dict[str, list] = {s: [] for s in _strats}
+
+        for tk in pool_top:
+            try:
+                df = load_ohlcv(tk, _period)
+                if df is None or len(df) < 60:
+                    continue
+                snap    = _snap_fn(df)
+                ret_1m  = (df["Close"].iloc[-1]/df["Close"].iloc[-21]-1)*100 if len(df)>=21 else None
+                ret_3m  = (df["Close"].iloc[-1]/df["Close"].iloc[-63]-1)*100 if len(df)>=63 else None
+
+                strat_flags: dict[str, bool] = {}
+                # Value: needs info for PE filter
+                try:
+                    _pe = _cached_info(tk).get("trailingPE")
+                    strat_flags["Value"] = _pe is not None and _pe < 20 and snap.get("RSI_14", 50) < 55
+                except Exception:
+                    strat_flags["Value"] = snap.get("RSI_14", 50) < 45
+
+                strat_flags["Momentum"] = (
+                    bool(snap.get("above_SMA200")) and
+                    50 <= (snap.get("RSI_14") or 0) <= 72 and
+                    (snap.get("Vol_ratio_20d") or 0) >= 1.1 and
+                    (ret_3m or 0) > 0
+                )
+                strat_flags["Quality Growth"] = (
+                    bool(snap.get("above_SMA200")) and
+                    (snap.get("ADX") or 0) > 20 and
+                    (ret_3m or 0) > 5
+                )
+                strat_flags["Oversold Bounce"] = (
+                    (snap.get("RSI_14") or 50) < 38 and
+                    bool(snap.get("above_SMA200"))
+                )
+
+                if any(strat_flags.values()):
+                    info_r   = _cached_info(tk)
+                    name     = info_r.get("shortName", tk)
+                    mktcap   = info_r.get("marketCap") or 0
+                    fwd_pe   = info_r.get("forwardPE")
+                    hit_data = {
+                        "ticker":      tk,
+                        "name":        name,
+                        "rsi":         snap.get("RSI_14"),
+                        "adx":         snap.get("ADX"),
+                        "3m_ret":      round(ret_3m, 1) if ret_3m is not None else None,
+                        "1m_ret":      round(ret_1m, 1) if ret_1m is not None else None,
+                        "vol_ratio":   snap.get("Vol_ratio_20d"),
+                        "above_sma200":snap.get("above_SMA200"),
+                        "mkt_cap_b":   round(mktcap/1e9, 1) if mktcap else None,
+                        "fwd_pe":      round(fwd_pe, 1) if fwd_pe else None,
+                    }
+                    for strat, passed in strat_flags.items():
+                        if passed:
+                            strategy_results[strat].append(hit_data)
+            except Exception:
+                continue
+
+        # Sort each strategy's hits (Momentum/QG by 3M ret desc; others by RSI asc)
+        for strat in _strats:
+            reverse = strat in ("Momentum", "Quality Growth")
+            key_col = "3m_ret" if strat in ("Momentum", "Quality Growth") else "rsi"
+            strategy_results[strat].sort(
+                key=lambda x, k=key_col: (x.get(k) or -9999), reverse=reverse
+            )
+
+        # ── LLM layer: cross-strategy evaluation ──────────────────────────────
         sector_ctx = state.get("results", {}).get("sector", {})
-        llm_result = analyze_scanner(ranked, sector_ctx, _lang)
+        llm_result = analyze_scanner_multi(strategy_results, sector_ctx, _lang)
 
-        # LLM picks ticker; fallback to top-ranked Leader or first stock
-        ticker = llm_result.get("decision", "").upper().strip()
+        # Extract top pick with fallback
+        ticker = (llm_result.get("decision") or "").upper().strip()
         if not ticker or ticker == "N/A":
-            if not ranked.empty:
-                leaders = ranked[ranked["tier"] == "Leader"]["ticker"].tolist()
-                ticker = leaders[0] if leaders else ranked.iloc[0]["ticker"]
-            else:
+            for strat in _strats:
+                if strategy_results[strat]:
+                    ticker = strategy_results[strat][0]["ticker"]
+                    break
+            if not ticker:
                 ticker = pool_top[0] if pool_top else "AAPL"
 
-        runner_up = llm_result.get("runner_up", "")
-        leaders   = ranked[ranked["tier"] == "Leader"]["ticker"].tolist() if not ranked.empty and "tier" in ranked.columns else []
-        pool_str  = ", ".join(pool_top[:30])
-        llm_summary = llm_result.get("summary", f"{len(pool)} constituents → {ticker}")
+        runner_up  = llm_result.get("runner_up", "")
+        selected   = llm_result.get("selected") or []
+        total_hits = sum(len(v) for v in strategy_results.values())
+        pool_str   = ", ".join(pool_top[:30])
+        llm_summary = llm_result.get("summary", f"{total_hits} hits → {ticker}")
 
         update_step("scan", "done", llm_summary)
         update_state(
             ticker=ticker,
             results={"scan": {
-                "pool": pool_str, "total": len(pool),
-                "leaders": leaders, "ticker": ticker, "runner_up": runner_up,
-                "llm": llm_result,
+                "pool":             pool_str,
+                "total":            len(pool),
+                "strategy_results": strategy_results,
+                "selected":         selected,
+                "ticker":           ticker,
+                "runner_up":        runner_up,
+                "total_hits":       total_hits,
+                "llm":              llm_result,
             }},
         )
         containers["scan"].markdown(

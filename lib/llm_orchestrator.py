@@ -363,7 +363,109 @@ def analyze_sector(scores_df, macro_data: dict, lang: str = "en") -> dict:
         return _fallback("sector", e)
 
 
-# ── Step 2: Stock Scanner ──────────────────────────────────────────────────────
+# ── Step 2: Multi-strategy scanner selection ──────────────────────────────────
+
+def analyze_scanner_multi(strategy_results: dict, sector_ctx: dict,
+                           lang: str = "en") -> dict:
+    """
+    Cross-strategy stock selection from multi-strategy scan results.
+
+    strategy_results: {strategy_name: [hit_dict, ...], ...}
+    Each hit_dict has: ticker, name, rsi, adx, 3m_ret, 1m_ret,
+                       vol_ratio, above_sma200, mkt_cap_b, fwd_pe
+
+    Returns dict with keys:
+      selected  — list of {ticker, strategy, confidence, reasoning}
+      decision  — top-pick ticker
+      runner_up — second-pick ticker
+      reasoning — one-paragraph rationale
+      summary   — one-line summary
+    """
+    try:
+        client = _get_client()
+
+        sector_name   = sector_ctx.get("decision", "")
+        sector_reason = sector_ctx.get("reasoning", "")
+
+        # Format each strategy's hits
+        strat_sections = []
+        total_hits = 0
+        for strat, hits in strategy_results.items():
+            if not hits:
+                strat_sections.append(f"  [{strat}]: no hits")
+                continue
+            total_hits += len(hits)
+            lines = [f"  [{strat}] ({len(hits)} hits):"]
+            for h in hits[:8]:
+                lines.append(
+                    f"    {h.get('ticker','?')} ({h.get('name','?')[:20]}): "
+                    f"RSI={h.get('rsi') or 'N/A'}  "
+                    f"ADX={h.get('adx') or 'N/A'}  "
+                    f"3M={h.get('3m_ret') or 'N/A'}%  "
+                    f"VolR={h.get('vol_ratio') or 'N/A'}x  "
+                    f"Cap={h.get('mkt_cap_b') or 'N/A'}B  "
+                    f"FwdPE={h.get('fwd_pe') or 'N/A'}"
+                )
+            strat_sections.append("\n".join(lines))
+        scan_text = "\n".join(strat_sections) or "  No hits across all strategies"
+
+        if lang == "zh":
+            system = (
+                "你是美股选股专家。以下是四种策略各自筛出的候选股，"
+                "请跨策略综合评估，选出1-5支最优标的。\n"
+                "评估维度：技术面强度、基本面质量、策略确认度（多策略同时命中加分）、"
+                "市值流动性、板块匹配度。\n"
+                "输出纯JSON，字段：\n"
+                '  "selected": [\n'
+                '    {"ticker":"NVDA","strategy":"Momentum","confidence":"High","reasoning":"..."}\n'
+                '    ... (最多5支)\n'
+                '  ],\n'
+                '  "decision":  最强1支ticker（大写，作为下一步深度研究输入），\n'
+                '  "runner_up": 次选ticker（可为空字符串），\n'
+                '  "reasoning": 综合选股逻辑（1-2句，中文），\n'
+                '  "summary":   一句话摘要（含入选股数量和最强标的，中文）'
+            )
+            user = (
+                f"板块背景：{sector_name} — {sector_reason}\n\n"
+                f"四策略扫描结果：\n{scan_text}\n\n"
+                f"总命中：{total_hits}支。请选出最优1-5支，输出JSON。"
+            )
+        else:
+            system = (
+                "You are a US equity stock selection expert. Below are candidates from "
+                "four different strategies. Select 1-5 best stocks across strategies.\n"
+                "Evaluation criteria: technical strength, fundamental quality, "
+                "strategy confirmation (bonus for multi-strategy hits), market cap / "
+                "liquidity, sector fit.\n"
+                "Output pure JSON, fields:\n"
+                '  "selected": [\n'
+                '    {"ticker":"NVDA","strategy":"Momentum","confidence":"High","reasoning":"..."}\n'
+                '    ... (up to 5 stocks)\n'
+                '  ],\n'
+                '  "decision":  top pick ticker (uppercase, used as deep-dive input),\n'
+                '  "runner_up": second-choice ticker (empty string if none),\n'
+                '  "reasoning": one-paragraph cross-strategy rationale,\n'
+                '  "summary":   one-line summary (include count and top pick)'
+            )
+            user = (
+                f"Sector context: {sector_name} — {sector_reason}\n\n"
+                f"Four-strategy scan results:\n{scan_text}\n\n"
+                f"Total hits: {total_hits}. Select best 1-5 stocks and output JSON."
+            )
+
+        resp = client.messages.create(
+            model=_MODEL,
+            max_tokens=900,
+            system=system,
+            messages=[{"role": "user", "content": user}],
+        )
+        return _parse_json(resp.content[0].text)
+
+    except Exception as e:
+        return _fallback("scanner_multi", e)
+
+
+# ── Step 2: Stock Scanner (legacy single-strategy version) ────────────────────
 
 def analyze_scanner(ranked_df, sector_ctx: dict, lang: str = "en") -> dict:
     """Pick the best ticker from ranked sector constituents."""

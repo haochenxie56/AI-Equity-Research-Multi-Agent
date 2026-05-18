@@ -19,10 +19,150 @@ st.set_page_config(page_title="Stock Scanner", page_icon="🔍", layout="wide")
 apply_theme()
 render_sidebar()
 
+_lang = st.session_state.get("language", "en")
+_dark = st.session_state.get("dark_mode", True)
+
 st.title(t("p3_title"))
 page_header()
 render_workflow_bar()
 st.caption(t("p3_subtitle"))
+st.divider()
+
+# ══════════════════════════════════════════════════════════════════════════════
+# AI WORKFLOW RESULTS — read from research_state
+# ══════════════════════════════════════════════════════════════════════════════
+_wf_scan_res = (
+    st.session_state.get("research_state", {})
+    .get("results", {})
+    .get("scan") or {}
+)
+_scan_llm    = _wf_scan_res.get("llm") or {}
+_selected    = _scan_llm.get("selected") or []
+_top_pick    = _scan_llm.get("decision", "")
+_runner_up   = _scan_llm.get("runner_up", "")
+_scan_reason = _scan_llm.get("reasoning", "")
+_has_scan_llm = bool(_top_pick and _top_pick not in ("N/A", ""))
+
+_ai_bg  = "#161b22" if _dark else "#f6f8fa"
+_ai_bd  = "#30363d" if _dark else "#d0d7de"
+_ai_txt = "#e6edf3" if _dark else "#1f2328"
+
+_CONF_COLOR = {
+    "High": "#3fb950", "高": "#3fb950",
+    "Medium": "#d29922", "中": "#d29922",
+    "Low": "#f85149", "低": "#f85149",
+}
+_STRAT_COLOR = {
+    "Momentum": "#388bfd",       "质量成长": "#388bfd",
+    "Quality Growth": "#3fb950", "动量": "#3fb950",
+    "Value": "#d29922",          "价值": "#d29922",
+    "Oversold Bounce": "#a371f7","超卖反弹": "#a371f7",
+}
+
+_ai_title = "🤖 AI 工作流选股结果" if _lang == "zh" else "🤖 AI Workflow Scan Results"
+st.subheader(_ai_title)
+
+if not _has_scan_llm:
+    # ── No workflow results: show hint ────────────────────────────────────────
+    _hint = (
+        "尚无 AI 选股结果。请先在 **[总览页](/Overview)** 运行 AI 研究工作流，"
+        "完成后此处将自动显示跨策略选股分析。"
+        if _lang == "zh" else
+        "No AI scan results yet. Run the **[AI Research Workflow](/Overview)** on the "
+        "Overview page first — cross-strategy stock selections will appear here automatically."
+    )
+    st.markdown(
+        f'<div style="background:{_ai_bg};border:1px dashed {_ai_bd};'
+        f'border-radius:6px;padding:10px 16px;font-size:0.85rem;color:#8b949e">'
+        f'🤖 {_hint}</div>',
+        unsafe_allow_html=True,
+    )
+else:
+    # ── Top-pick highlight card ───────────────────────────────────────────────
+    _top_conf   = next((s.get("confidence","") for s in _selected if s.get("ticker")==_top_pick), "")
+    _top_strat  = next((s.get("strategy","")   for s in _selected if s.get("ticker")==_top_pick), "")
+    _top_reason = next((s.get("reasoning","")  for s in _selected if s.get("ticker")==_top_pick), "")
+    _conf_c  = _CONF_COLOR.get(_top_conf, "#58a6ff")
+    _strat_c = _STRAT_COLOR.get(_top_strat, "#58a6ff")
+    _lbl_top = "最强推荐" if _lang == "zh" else "Top Pick"
+    _lbl_str = "策略" if _lang == "zh" else "Strategy"
+    _lbl_con = "置信度" if _lang == "zh" else "Confidence"
+
+    st.markdown(
+        f'<div style="background:{_ai_bg};border:2px solid {_conf_c};'
+        f'border-radius:10px;padding:16px 22px;margin-bottom:14px">'
+        f'<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">'
+        f'<span style="font-size:1.5rem;font-weight:700;color:{_conf_c}">{_top_pick}</span>'
+        f'<span style="background:{_ai_bd};padding:2px 10px;border-radius:12px;'
+        f'font-size:0.75rem;color:#8b949e">{_lbl_top}</span>'
+        + (f'<span style="background:{_strat_c}22;border:1px solid {_strat_c};'
+           f'padding:2px 10px;border-radius:12px;font-size:0.75rem;color:{_strat_c}">'
+           f'{_lbl_str}: {_top_strat}</span>' if _top_strat else "")
+        + (f'<span style="background:{_conf_c}22;border:1px solid {_conf_c};'
+           f'padding:2px 10px;border-radius:12px;font-size:0.75rem;color:{_conf_c}">'
+           f'{_lbl_con}: {_top_conf}</span>' if _top_conf else "")
+        + f'</div>'
+        + (f'<p style="font-size:0.88rem;line-height:1.65;color:{_ai_txt};margin:0">'
+           f'{_top_reason}</p>' if _top_reason else "")
+        + f'</div>',
+        unsafe_allow_html=True,
+    )
+
+    # ── Other selected stocks ─────────────────────────────────────────────────
+    others = [s for s in _selected if s.get("ticker") != _top_pick]
+    if others or _runner_up:
+        _lbl_others = "其他入选标的" if _lang == "zh" else "Other Selected Stocks"
+        st.markdown(f"**{_lbl_others}**")
+
+        # Runner-up not already in selected list
+        if _runner_up and not any(s.get("ticker") == _runner_up for s in _selected):
+            others = [{"ticker": _runner_up, "strategy": "", "confidence": "", "reasoning": ""}] + others
+
+        for s in others[:4]:
+            tk    = s.get("ticker", "")
+            strat = s.get("strategy", "")
+            conf  = s.get("confidence", "")
+            rsn   = s.get("reasoning", "")
+            sc    = _STRAT_COLOR.get(strat, "#58a6ff")
+            cc    = _CONF_COLOR.get(conf, "#8b949e")
+            st.markdown(
+                f'<div style="background:{_ai_bg};border-left:3px solid {sc};'
+                f'border-radius:0 6px 6px 0;padding:8px 14px;margin:5px 0">'
+                f'<span style="font-weight:700;color:{sc};font-size:0.95rem">{tk}</span>'
+                + (f'&nbsp;<span style="background:{sc}22;border:1px solid {sc};'
+                   f'padding:1px 8px;border-radius:10px;font-size:0.72rem;color:{sc};'
+                   f'margin-left:6px">{strat}</span>' if strat else "")
+                + (f'&nbsp;<span style="color:{cc};font-size:0.72rem;margin-left:6px">'
+                   f'{conf}</span>' if conf else "")
+                + (f'<p style="font-size:0.84rem;color:{_ai_txt};margin:4px 0 0;'
+                   f'line-height:1.55">{rsn}</p>' if rsn else "")
+                + f'</div>',
+                unsafe_allow_html=True,
+            )
+
+    # ── Overall reasoning ─────────────────────────────────────────────────────
+    if _scan_reason and "unavailable" not in _scan_reason.lower():
+        _lbl_rsn = "综合选股逻辑" if _lang == "zh" else "Overall Rationale"
+        st.markdown(
+            f'<div style="background:{_ai_bg};border:1px solid {_ai_bd};'
+            f'border-radius:6px;padding:10px 16px;margin-top:8px">'
+            f'<div style="font-size:0.75rem;color:#8b949e;margin-bottom:4px">'
+            f'{_lbl_rsn}</div>'
+            f'<p style="font-size:0.88rem;line-height:1.65;color:{_ai_txt};margin:0">'
+            f'{_scan_reason}</p></div>',
+            unsafe_allow_html=True,
+        )
+
+    # ── Strategy hit counts ───────────────────────────────────────────────────
+    _sr = _wf_scan_res.get("strategy_results") or {}
+    if _sr:
+        _lbl_hits = "各策略命中" if _lang == "zh" else "Strategy Hit Counts"
+        st.caption(
+            f"{_lbl_hits}: " + "  ·  ".join(
+                f"**{s}** {len(v)}" for s, v in _sr.items()
+            )
+        )
+
 st.divider()
 
 # ── Default tech pool (S&P 500 top 20 tech) ───────────────────────────────────
@@ -279,7 +419,6 @@ with col_dl1:
     st.download_button(t("p3_dl_csv"), csv_data,
                        f"{datetime.now().strftime('%Y%m%d')}_scan_{strategy[:10].replace(' ','_')}.csv", "text/csv")
 with col_dl2:
-    _lang = st.session_state.get("language", "en")
     today = datetime.now().strftime("%Y-%m-%d")
     md_lines = [
         f"# {'Stock Scan' if _lang == 'en' else '选股扫描'}: {_strat_display_choice}",
