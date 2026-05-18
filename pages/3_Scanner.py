@@ -11,7 +11,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from ui_utils import (
     apply_theme, render_sidebar, load_info, load_ohlcv,
-    apply_layout, apply_legend, fmt_large, download_report_button, page_header, render_table, t,
+    apply_layout, apply_legend, fmt_large, download_report_button, page_header, render_table, t, bi,
     render_workflow_bar,
 )
 
@@ -40,7 +40,7 @@ _scan_llm    = _wf_scan_res.get("llm") or {}
 _selected    = _scan_llm.get("selected") or []
 _top_pick    = (_scan_llm.get("decision") or "").upper().strip()
 _runner_up   = (_scan_llm.get("runner_up") or "").upper().strip()
-_scan_reason = _scan_llm.get("reasoning", "")
+_scan_reason = bi(_scan_llm, "reasoning", _lang)
 
 # Resolve top pick: prefer decision field, fall back to first valid selected entry
 if not _top_pick or _top_pick == "N/A":
@@ -88,9 +88,10 @@ if not _has_scan_llm:
     )
 else:
     # ── Top-pick highlight card ───────────────────────────────────────────────
-    _top_conf   = next((s.get("confidence","") for s in _selected if s.get("ticker")==_top_pick), "")
-    _top_strat  = next((s.get("strategy","")   for s in _selected if s.get("ticker")==_top_pick), "")
-    _top_reason = next((s.get("reasoning","")  for s in _selected if s.get("ticker")==_top_pick), "")
+    _top_entry  = next((s for s in _selected if s.get("ticker") == _top_pick), {})
+    _top_conf   = _top_entry.get("confidence", "")
+    _top_strat  = _top_entry.get("strategy", "")
+    _top_reason = bi(_top_entry, "reasoning", _lang)
     _conf_c  = _CONF_COLOR.get(_top_conf, "#58a6ff")
     _strat_c = _STRAT_COLOR.get(_top_strat, "#58a6ff")
     _lbl_top = "最强推荐" if _lang == "zh" else "Top Pick"
@@ -131,7 +132,7 @@ else:
             tk    = s.get("ticker", "")
             strat = s.get("strategy", "")
             conf  = s.get("confidence", "")
-            rsn   = s.get("reasoning", "")
+            rsn   = bi(s, "reasoning", _lang)
             sc    = _STRAT_COLOR.get(strat, "#58a6ff")
             cc    = _CONF_COLOR.get(conf, "#8b949e")
             st.markdown(

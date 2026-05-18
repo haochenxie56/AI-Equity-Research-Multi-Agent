@@ -501,6 +501,27 @@ def load_ohlcv_multi(tickers: tuple, period: str = "1y") -> dict[str, pd.DataFra
     return result
 
 
+# ── Bilingual field reader ─────────────────────────────────────────────────────
+
+def bi(llm: dict, field: str, lang: str | None = None) -> str:
+    """
+    Read the language-appropriate version of a bilingual LLM field.
+
+    LLM results store both versions as {field}_en and {field}_zh after
+    translator.add_bilingual() is applied at generation time.
+
+    Falls back to the undecorated {field} key for backwards compatibility
+    with any result that was generated before the bilingual system was added.
+
+    Usage:
+        from ui_utils import bi
+        text = bi(sec_llm, "macro", _lang)   # reads "macro_zh" or "macro_en"
+    """
+    if lang is None:
+        lang = st.session_state.get("language", "en")
+    return llm.get(f"{field}_{lang}") or llm.get(field) or ""
+
+
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 
 def init_session():
@@ -511,112 +532,6 @@ def init_session():
     for k, v in defaults.items():
         if k not in st.session_state:
             st.session_state[k] = v
-
-
-def translate_research_state(target_lang: str) -> bool:
-    """
-    Batch-translate all AI text fields in research_state to target_lang.
-
-    Reads completed workflow results from session_state, calls translate_research_fields()
-    with one LLM API call, writes translated values back into research_state, and
-    persists the updated state.
-
-    Returns True if translation was performed, False if skipped (not completed,
-    already in target language, or no translatable fields).
-    """
-    from workflow_state import get_state, save_state
-
-    state = get_state()
-    if state.get("status") != "completed":
-        return False
-    if state.get("lang") == target_lang:
-        return False  # already in target language
-
-    results = state.get("results") or {}
-
-    sec_llm  = (results.get("sector")    or {}).get("llm") or {}
-    scan_llm = (results.get("scan")      or {}).get("llm") or {}
-    eq_llm   = (results.get("equity")    or {}).get("llm") or {}
-    fin_llm  = (results.get("financial") or {}).get("llm") or {}
-    pv_llm   = (results.get("pv")        or {}).get("llm") or {}
-
-    # ── Collect translatable text fields into flat dict ───────────────────────
-    fields: dict = {}
-
-    def _col(prefix: str, llm: dict, keys: list) -> None:
-        for k in keys:
-            v = llm.get(k, "")
-            if isinstance(v, str) and len(v.strip()) > 3:
-                fields[f"{prefix}__{k}"] = v
-
-    _col("sector", sec_llm, ["macro", "rotation", "momentum", "etf_trend",
-                              "volume_flow", "subsector", "reasoning", "summary",
-                              "decision", "subsector_decision"])
-    _col("scan",   scan_llm, ["reasoning", "summary"])
-    for i, sel in enumerate((scan_llm.get("selected") or [])[:5]):
-        rsn = sel.get("reasoning", "")
-        if isinstance(rsn, str) and len(rsn.strip()) > 3:
-            fields[f"scan__sel_{i}_rsn"] = rsn
-
-    _col("equity",    eq_llm,  ["reasoning", "summary", "decision"])
-    _col("financial", fin_llm, ["reasoning", "summary", "decision"])
-    _col("pv",        pv_llm,  ["reasoning", "summary", "decision"])
-
-    if not fields:
-        return False
-
-    # ── Call LLM once to translate all fields ─────────────────────────────────
-    from llm_orchestrator import translate_research_fields
-    translated = translate_research_fields(fields, target_lang)
-    if translated is fields:  # Unchanged (error path)
-        return False
-
-    # ── Apply translations back into the nested state structure ───────────────
-    def _apply(llm: dict, prefix: str, keys: list) -> dict:
-        updated = dict(llm)
-        for k in keys:
-            fk = f"{prefix}__{k}"
-            if fk in translated and isinstance(translated[fk], str):
-                updated[k] = translated[fk]
-        return updated
-
-    new_sec  = _apply(sec_llm, "sector", ["macro", "rotation", "momentum", "etf_trend",
-                                           "volume_flow", "subsector", "reasoning", "summary",
-                                           "decision", "subsector_decision"])
-    new_scan = _apply(scan_llm, "scan", ["reasoning", "summary"])
-    # Rebuild selected list with translated reasoning
-    new_selected = list(scan_llm.get("selected") or [])
-    for i, sel in enumerate(new_selected[:5]):
-        fk = f"scan__sel_{i}_rsn"
-        if fk in translated:
-            new_selected[i] = dict(sel, reasoning=translated[fk])
-    if new_selected:
-        new_scan["selected"] = new_selected
-
-    new_eq  = _apply(eq_llm,  "equity",    ["reasoning", "summary", "decision"])
-    new_fin = _apply(fin_llm, "financial", ["reasoning", "summary", "decision"])
-    new_pv  = _apply(pv_llm,  "pv",        ["reasoning", "summary", "decision"])
-
-    # Write back (deep update — only llm sub-dict)
-    if results.get("sector")    and sec_llm:  results["sector"]["llm"]    = new_sec
-    if results.get("scan")      and scan_llm: results["scan"]["llm"]      = new_scan
-    if results.get("equity")    and eq_llm:   results["equity"]["llm"]    = new_eq
-    if results.get("financial") and fin_llm:  results["financial"]["llm"] = new_fin
-    if results.get("pv")        and pv_llm:   results["pv"]["llm"]        = new_pv
-
-    # Record translated language in state and persist
-    state["lang"] = target_lang
-    save_state()
-
-    # Clear session-cached synthesis so it regenerates from translated content
-    st.session_state.pop("_wf_conclusion",   None)
-    st.session_state.pop("_wf_conclusion_key", None)
-    st.session_state.pop("_sector_synthesis",  None)
-    st.session_state.pop("_sector_syn_key",    None)
-
-    # Signal UI to show a brief notification on next render
-    st.session_state["_wf_translation_done"] = True
-    return True
 
 
 def render_sidebar() -> None:
@@ -638,17 +553,11 @@ def render_sidebar() -> None:
         _ll, _lr = st.columns(2)
         if _ll.button("🇺🇸 EN", type="primary" if _lang == "en" else "secondary",
                       use_container_width=True, key="_lang_en"):
-            if _lang != "en":
-                st.session_state.language = "en"
-                with st.spinner("🌐 Translating AI analysis…"):
-                    translate_research_state("en")
+            st.session_state.language = "en"
             st.rerun()
         if _lr.button("🇨🇳 中文", type="primary" if _lang == "zh" else "secondary",
                       use_container_width=True, key="_lang_zh"):
-            if _lang != "zh":
-                st.session_state.language = "zh"
-                with st.spinner("🌐 正在翻译 AI 分析…"):
-                    translate_research_state("zh")
+            st.session_state.language = "zh"
             st.rerun()
 
         # ── Dark / light mode toggle ──

@@ -26,7 +26,7 @@ import plotly.graph_objects as go
 
 from ui_utils import (
     apply_theme, render_sidebar, load_ohlcv,
-    apply_layout, apply_legend, fmt_large, page_header, render_table, t,
+    apply_layout, apply_legend, fmt_large, page_header, render_table, t, bi,
     render_workflow_bar,
 )
 from sectors import (
@@ -53,7 +53,7 @@ _wf_sector_res = (
     .get("sector") or {}
 )
 _sec_llm  = _wf_sector_res.get("llm") or {}
-_has_llm  = bool(_sec_llm.get("macro") or _sec_llm.get("rotation"))
+_has_llm  = bool(bi(_sec_llm, "macro", _lang) or bi(_sec_llm, "rotation", _lang))
 _wf_sector_name = st.session_state.get("research_state", {}).get("sector", "")
 
 _ai_bg = "#161b22" if _dark else "#f6f8fa"
@@ -159,7 +159,7 @@ _macro_card(_m4, "SPX", "p2_macro_spx", "{:,.0f}", _spx_interp)
 # ── AI: Macro Environment analysis ────────────────────────────────────────────
 _macro_lbl = "① 宏观环境" if _lang == "zh" else "① Macro Environment"
 if _has_llm:
-    _ai_block(_sec_llm.get("macro", ""), _macro_lbl)
+    _ai_block(bi(_sec_llm, "macro", _lang), _macro_lbl)
 else:
     _ai_hint()
 
@@ -249,7 +249,7 @@ with st.expander(t("p2_rotation_signal"), expanded=True):
     # ── AI: Rotation Signal analysis ─────────────────────────────────────────
     _rot_lbl = "② 轮动信号" if _lang == "zh" else "② Rotation Signal"
     if _has_llm:
-        _ai_block(_sec_llm.get("rotation", ""), _rot_lbl)
+        _ai_block(bi(_sec_llm, "rotation", _lang), _rot_lbl)
     else:
         _ai_hint()
 
@@ -371,7 +371,7 @@ with st.expander(t("p2_heatmap"), expanded=True):
     # ── AI: Sector Momentum analysis ─────────────────────────────────────────
     _mom_lbl = "③ 板块动量对比" if _lang == "zh" else "③ Sector Momentum"
     if _has_llm:
-        _ai_block(_sec_llm.get("momentum", ""), _mom_lbl)
+        _ai_block(bi(_sec_llm, "momentum", _lang), _mom_lbl)
     else:
         _ai_hint()
 
@@ -457,7 +457,7 @@ with st.expander(t("p2_etf_trend"), expanded=True):
     # ── AI: ETF Trend analysis ────────────────────────────────────────────────
     _etf_lbl = "④ ETF 走势对比" if _lang == "zh" else "④ ETF Trend vs SPY"
     if _has_llm:
-        _ai_block(_sec_llm.get("etf_trend", ""), _etf_lbl)
+        _ai_block(bi(_sec_llm, "etf_trend", _lang), _etf_lbl)
     else:
         _ai_hint()
 
@@ -539,7 +539,7 @@ with st.expander(t("p2_etf_trend"), expanded=True):
     # ── AI: Volume Flow analysis ──────────────────────────────────────────────
     _vf_lbl = "⑤ 资金流入信号" if _lang == "zh" else "⑤ Volume Flow"
     if _has_llm:
-        _ai_block(_sec_llm.get("volume_flow", ""), _vf_lbl)
+        _ai_block(bi(_sec_llm, "volume_flow", _lang), _vf_lbl)
     else:
         _ai_hint()
 
@@ -835,7 +835,7 @@ with st.expander(t("p2_subsector_drill"), expanded=True):
     # ── AI: Subsector analysis ────────────────────────────────────────────────
     _sub_lbl = "⑥ 子板块分析" if _lang == "zh" else "⑥ Subsector Analysis"
     if _has_llm:
-        _ai_block(_sec_llm.get("subsector", ""), _sub_lbl)
+        _ai_block(bi(_sec_llm, "subsector", _lang), _sub_lbl)
     else:
         _ai_hint()
 
@@ -850,8 +850,8 @@ st.subheader(_conc_title)
 if not _has_llm:
     _ai_hint()
 else:
-    # Lazy synthesis: generated once per workflow run, cached in session_state
-    _syn_key = f"sector_synthesis_{_wf_sector_name}_{_lang}"
+    # Lazy synthesis — cache key without _lang since synthesis stores bilingual
+    _syn_key = f"sector_synthesis_{_wf_sector_name}"
     if st.session_state.get("_sector_syn_key") != _syn_key:
         st.session_state["_sector_synthesis"] = None
         st.session_state["_sector_syn_key"] = _syn_key
@@ -864,7 +864,7 @@ else:
             st.session_state["_sector_synthesis"] = synthesize_sector_analysis(_sec_llm, _lang)
 
     _syn_data   = st.session_state["_sector_synthesis"] or {}
-    _syn_conc   = _syn_data.get("conclusion", "") or _syn_data.get("reasoning", "")
+    _syn_conc   = bi(_syn_data, "conclusion", _lang) or _syn_data.get("reasoning", "")
 
     if _syn_conc and "unavailable" not in _syn_conc.lower():
         st.markdown(

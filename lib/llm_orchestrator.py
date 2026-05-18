@@ -55,32 +55,44 @@ def _get_client():
 
 # ── JSON parser ────────────────────────────────────────────────────────────────
 
+def _strip_fences(text: str) -> str:
+    """Remove markdown code fences (```json ... ```) from LLM output."""
+    # Remove opening fence (with optional language tag)
+    text = re.sub(r"```(?:json)?\s*", "", text)
+    # Remove closing fence
+    text = re.sub(r"```", "", text)
+    return text.strip()
+
+
 def _parse_json(text: str) -> dict:
     """Extract JSON from LLM response with multiple fallback strategies."""
-    # Strategy 1: code-fenced JSON block
-    m = re.search(r"```(?:json)?\s*([\s\S]+?)```", text)
+    # Pre-process: strip code fences so subsequent strategies work on clean text
+    clean = _strip_fences(text)
+
+    # Strategy 1: direct parse of cleaned text
+    try:
+        return json.loads(clean)
+    except Exception:
+        pass
+    # Strategy 2: first {...} block in cleaned text
+    m = re.search(r"\{[\s\S]+\}", clean)
     if m:
         try:
-            return json.loads(m.group(1).strip())
+            return json.loads(m.group(0))
         except Exception:
             pass
-    # Strategy 2: first {...} block
+    # Strategy 3: original text, first {...} block (in case fence stripping broke it)
     m = re.search(r"\{[\s\S]+\}", text)
     if m:
         try:
             return json.loads(m.group(0))
         except Exception:
             pass
-    # Strategy 3: raw parse
-    try:
-        return json.loads(text.strip())
-    except Exception:
-        pass
-    # Fallback: wrap raw text
+    # Fallback: return structured error (never expose raw JSON/text in reasoning)
     return {
         "decision": "N/A",
-        "reasoning": text[:400],
-        "summary": text[:150],
+        "reasoning": "AI analysis result could not be parsed.",
+        "summary":   "AI analysis unavailable.",
         "key_metrics": {},
     }
 
@@ -271,7 +283,16 @@ def analyze_sector_full(data: dict, lang: str = "en") -> dict:
             system=system,
             messages=[{"role": "user", "content": user}],
         )
-        return _parse_json(resp.content[0].text)
+        result = _parse_json(resp.content[0].text)
+        try:
+            from translator import add_bilingual
+            result = add_bilingual(result, lang, [
+                "macro", "rotation", "momentum", "etf_trend",
+                "volume_flow", "subsector", "reasoning", "summary",
+            ])
+        except Exception:
+            pass
+        return result
 
     except Exception as e:
         return _fallback("sector_full", e)
@@ -459,7 +480,16 @@ def analyze_scanner_multi(strategy_results: dict, sector_ctx: dict,
             system=system,
             messages=[{"role": "user", "content": user}],
         )
-        return _parse_json(resp.content[0].text)
+        result = _parse_json(resp.content[0].text)
+        try:
+            from translator import add_bilingual, add_bilingual_list
+            result = add_bilingual(result, lang, ["reasoning", "summary"])
+            selected = result.get("selected") or []
+            if selected:
+                result["selected"] = add_bilingual_list(selected, lang, ["reasoning"])
+        except Exception:
+            pass
+        return result
 
     except Exception as e:
         return _fallback("scanner_multi", e)
@@ -530,7 +560,13 @@ def analyze_scanner(ranked_df, sector_ctx: dict, lang: str = "en") -> dict:
             system=system,
             messages=[{"role": "user", "content": user}],
         )
-        return _parse_json(resp.content[0].text)
+        result = _parse_json(resp.content[0].text)
+        try:
+            from translator import add_bilingual
+            result = add_bilingual(result, lang, ["reasoning", "summary"])
+        except Exception:
+            pass
+        return result
 
     except Exception as e:
         return _fallback("scanner", e)
@@ -618,7 +654,13 @@ def analyze_equity(info: dict, snap: dict, earnings: dict,
             system=system,
             messages=[{"role": "user", "content": user}],
         )
-        return _parse_json(resp.content[0].text)
+        result = _parse_json(resp.content[0].text)
+        try:
+            from translator import add_bilingual
+            result = add_bilingual(result, lang, ["reasoning", "summary", "decision"])
+        except Exception:
+            pass
+        return result
 
     except Exception as e:
         return _fallback("equity", e)
@@ -671,7 +713,13 @@ def analyze_financials(fin_data: dict, equity_ctx: dict, lang: str = "en") -> di
             system=system,
             messages=[{"role": "user", "content": user}],
         )
-        return _parse_json(resp.content[0].text)
+        result = _parse_json(resp.content[0].text)
+        try:
+            from translator import add_bilingual
+            result = add_bilingual(result, lang, ["reasoning", "summary", "decision"])
+        except Exception:
+            pass
+        return result
 
     except Exception as e:
         return _fallback("financial", e)
@@ -737,7 +785,13 @@ def analyze_pv(snap: dict, equity_ctx: dict, lang: str = "en") -> dict:
             system=system,
             messages=[{"role": "user", "content": user}],
         )
-        return _parse_json(resp.content[0].text)
+        result = _parse_json(resp.content[0].text)
+        try:
+            from translator import add_bilingual
+            result = add_bilingual(result, lang, ["reasoning", "summary", "decision"])
+        except Exception:
+            pass
+        return result
 
     except Exception as e:
         return _fallback("pv", e)
@@ -795,7 +849,13 @@ def synthesize_sector_analysis(sec_llm: dict, lang: str = "en") -> dict:
             system=system,
             messages=[{"role": "user", "content": user}],
         )
-        return _parse_json(resp.content[0].text)
+        result = _parse_json(resp.content[0].text)
+        try:
+            from translator import add_bilingual
+            result = add_bilingual(result, lang, ["conclusion"])
+        except Exception:
+            pass
+        return result
 
     except Exception as e:
         return _fallback("sector_synthesis", e)
@@ -867,69 +927,27 @@ def synthesize_report(state: dict, lang: str = "en") -> dict:
             system=system,
             messages=[{"role": "user", "content": user}],
         )
-        return _parse_json(resp.content[0].text)
+        result = _parse_json(resp.content[0].text)
+        try:
+            from translator import add_bilingual, translate_str_list
+            result = add_bilingual(result, lang, ["recommendation", "conclusion"])
+            risks = result.get("risks")
+            if isinstance(risks, list) and risks:
+                both = translate_str_list(risks, lang)
+                result["risks_en"] = both.get("en", risks)
+                result["risks_zh"] = both.get("zh", risks)
+        except Exception:
+            pass
+        return result
 
     except Exception as e:
         return _fallback("synthesis", e)
 
 
-# ── Utility: batch translate all AI text fields ────────────────────────────────
+# ── REMOVED: translate_research_fields() ─────────────────────────────────────
+# Bilingual support is now handled at generation time by translator.py.
+# Each LLM analysis function calls add_bilingual() immediately after parsing.
+# Rendering reads {field}_{lang} via the bi() helper in ui_utils.py.
 
-def translate_research_fields(fields: dict, target_lang: str) -> dict:
-    """
-    Batch-translate a flat {key: text} dict to target_lang.
-
-    Keys are arbitrary descriptive identifiers; values are the text to translate.
-    Non-string or empty values are passed through unchanged.
-
-    Returns the translated flat dict (same keys, translated values).
-    On any failure returns the original dict unchanged.
-    """
-    translatable = {k: v for k, v in fields.items()
-                    if isinstance(v, str) and v.strip()}
-    if not translatable:
-        return fields
-
-    input_json = json.dumps(translatable, ensure_ascii=False, indent=2)
-
-    if target_lang == "zh":
-        system = (
-            "你是专业的金融分析翻译专家。将以下JSON中所有字符串值翻译为流畅的中文金融分析语言。\n"
-            "翻译规则：\n"
-            "1. 仅翻译字符串值，不修改key名；\n"
-            "2. 保留股票代码（全大写字母组合，如NVDA/AAPL）、公司名称、数字、百分比不变；\n"
-            "3. 翻译结果需符合中文金融报告风格；\n"
-            "4. 输出纯JSON，结构与输入完全一致，不添加任何额外说明。"
-        )
-        user = f"请将以下JSON中的所有值翻译为中文：\n\n{input_json}"
-    else:
-        system = (
-            "You are a professional financial analysis translator. "
-            "Translate all string values in the following JSON to fluent English "
-            "financial analysis language.\n"
-            "Rules:\n"
-            "1. Translate string values only — do not modify keys;\n"
-            "2. Keep ticker symbols (all-caps letter combinations like NVDA/AAPL), "
-            "company names, numbers, and percentages unchanged;\n"
-            "3. Use formal financial report English style;\n"
-            "4. Output pure JSON with identical structure — no extra commentary."
-        )
-        user = f"Translate all values in the following JSON to English:\n\n{input_json}"
-
-    try:
-        client = _get_client()
-        resp = client.messages.create(
-            model=_MODEL,
-            max_tokens=8000,
-            system=system,
-            messages=[{"role": "user", "content": user}],
-        )
-        result = _parse_json(resp.content[0].text)
-        if isinstance(result, dict):
-            # Merge: use translated values where available, keep originals otherwise
-            merged = dict(fields)
-            merged.update({k: v for k, v in result.items() if isinstance(v, str) and v.strip()})
-            return merged
-    except Exception:
-        pass
-    return fields  # Return original on any failure
+# translate_research_fields() has been removed.
+# Use translator.add_bilingual() / translator.add_bilingual_list() instead.

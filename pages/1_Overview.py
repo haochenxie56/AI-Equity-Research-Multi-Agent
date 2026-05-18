@@ -16,7 +16,7 @@ import pandas as pd
 from ui_utils import (
     apply_theme, render_sidebar, load_info, load_ohlcv,
     load_financials, load_cashflow, load_earnings,
-    fmt_large, page_header, t, fmt_metric_key,
+    fmt_large, page_header, t, fmt_metric_key, bi,
 )
 from workflow_state import (
     init_research_state, get_state, update_state, update_step, reset_state,
@@ -35,10 +35,8 @@ init_research_state()
 if "_wf_session_init" not in st.session_state:
     st.session_state["_wf_session_init"] = True
     if get_state().get("status") != "idle":
-        st.session_state.pop("_wf_conclusion",      None)
-        st.session_state.pop("_wf_conclusion_key",  None)
-        st.session_state.pop("_wf_translated_lang", None)
-        st.session_state.pop("_wf_translation_done",None)
+        st.session_state.pop("_wf_conclusion",     None)
+        st.session_state.pop("_wf_conclusion_key", None)
         reset_state()
 
 state = get_state()
@@ -598,26 +596,12 @@ elif status == "completed":
     fin_llm  = fin_res.get("llm")  or {}
     pv_llm   = pv_res.get("llm")   or {}
 
-    # ── Translation notification / language mismatch hint ─────────────────────
-    if st.session_state.pop("_wf_translation_done", False):
-        _done_msg = (
-            "✅ AI 分析内容已翻译为中文。"
-            if _lang == "zh" else
-            "✅ AI analysis has been translated to English."
-        )
-        st.success(_done_msg)
-    else:
-        _wf_lang = state.get("lang", "")
-        if _wf_lang and _wf_lang != _lang:
-            _hint_msg = (
-                "💡 AI 分析内容为英文版本。点击左侧 **🇨🇳 中文** 按钮可自动翻译所有 AI 文字字段。"
-                if _lang == "zh" else
-                "💡 AI analysis is in Chinese. Click **🇺🇸 EN** in the sidebar to auto-translate all AI text fields."
-            )
-            st.info(_hint_msg)
+    # Language switching is instant — both EN and ZH versions are stored at
+    # generation time via translator.add_bilingual(). No migration banner needed.
 
     # ── Lazy-generate comprehensive conclusion (cached in session) ─────────────
-    _cache_key = f"wf_conclusion_{ticker}_{sector}_{_lang}"
+    # Cache key omits _lang: synthesis now stores bilingual {field_en, field_zh}
+    _cache_key = f"wf_conclusion_{ticker}_{sector}"
     if st.session_state.get("_wf_conclusion_key") != _cache_key:
         st.session_state["_wf_conclusion"] = None
         st.session_state["_wf_conclusion_key"] = _cache_key
@@ -627,9 +611,9 @@ elif status == "completed":
             st.session_state["_wf_conclusion"] = synthesize_report(state, _lang)
     conclusion_data = st.session_state["_wf_conclusion"] or {}
 
-    rec       = conclusion_data.get("recommendation", "")
-    conc_text = conclusion_data.get("conclusion", "")
-    risks     = conclusion_data.get("risks") or []
+    rec       = bi(conclusion_data, "recommendation", _lang) or conclusion_data.get("recommendation", "")
+    conc_text = bi(conclusion_data, "conclusion", _lang)
+    risks     = conclusion_data.get(f"risks_{_lang}") or conclusion_data.get("risks") or []
 
     # ── Recommendation color ───────────────────────────────────────────────────
     _REC_COLORS = {
@@ -647,10 +631,8 @@ elif status == "completed":
     with btn_col:
         st.markdown("<div style='padding-top:10px'>", unsafe_allow_html=True)
         if st.button(t("p1_wf_new"), use_container_width=True, key="rpt_new"):
-            st.session_state.pop("_wf_conclusion",       None)
-            st.session_state.pop("_wf_conclusion_key",   None)
-            st.session_state.pop("_wf_translated_lang",  None)
-            st.session_state.pop("_wf_translation_done", None)
+            st.session_state.pop("_wf_conclusion",     None)
+            st.session_state.pop("_wf_conclusion_key", None)
             reset_state()
             st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
@@ -709,7 +691,7 @@ elif status == "completed":
         _selected  = scan_llm.get("selected") or []
         _top_pick  = (scan_llm.get("decision") or "").upper().strip()
         _runner_up = (scan_llm.get("runner_up") or "").upper().strip()
-        _s_reason  = scan_llm.get("reasoning", "")
+        _s_reason  = bi(scan_llm, "reasoning", _lang)
 
         if not _top_pick or _top_pick == "N/A":
             # Fallback: show legacy key-value data
@@ -726,7 +708,7 @@ elif status == "completed":
             _top_data   = next((s for s in _selected if s.get("ticker") == _top_pick), {})
             _top_conf   = _top_data.get("confidence", "")
             _top_strat  = _top_data.get("strategy", "")
-            _top_reason = _top_data.get("reasoning", "")
+            _top_reason = bi(_top_data, "reasoning", _lang)
             _conf_c  = _CONF_COLOR.get(_top_conf, "#58a6ff")
             _strat_c = _STRAT_COLOR.get(_top_strat, "#58a6ff")
             _lbl_top = "最强推荐" if _lang == "zh" else "Top Pick"
@@ -760,7 +742,7 @@ elif status == "completed":
                 tk_o   = s.get("ticker", "")
                 strat  = s.get("strategy", "")
                 conf   = s.get("confidence", "")
-                rsn    = s.get("reasoning", "")
+                rsn    = bi(s, "reasoning", _lang)
                 sc     = _STRAT_COLOR.get(strat, "#58a6ff")
                 cc     = _CONF_COLOR.get(conf, "#8b949e")
                 st.markdown(
@@ -817,7 +799,7 @@ elif status == "completed":
         st.markdown(f"#### {icon}&nbsp; {title}")
 
         # Reasoning as body paragraph
-        reasoning = llm_data.get("reasoning", "")
+        reasoning = bi(llm_data, "reasoning", _lang)
         if reasoning and "unavailable" not in reasoning.lower():
             st.markdown(
                 f'<p style="font-size:0.95rem;line-height:1.75;color:var(--t0,'
@@ -867,10 +849,10 @@ elif status == "completed":
             "subsector":   ("⑥ 子板块分析"  if _lang == "zh" else "⑥ Subsector Analysis"),
         }
 
-        has_any = any(llm_data.get(k) for k in _sub_titles)
+        has_any = any(bi(llm_data, k, _lang) for k in _sub_titles)
         if has_any:
             for key, sub_title in _sub_titles.items():
-                text = llm_data.get(key, "")
+                text = bi(llm_data, key, _lang)
                 if text and "unavailable" not in text.lower():
                     st.markdown(f"**{sub_title}**")
                     st.markdown(
@@ -882,7 +864,7 @@ elif status == "completed":
                     )
         else:
             # Fallback: reasoning paragraph + code-layer key-value data
-            reasoning = llm_data.get("reasoning", "")
+            reasoning = bi(llm_data, "reasoning", _lang)
             if reasoning and "unavailable" not in reasoning.lower():
                 st.markdown(
                     f'<p style="font-size:0.95rem;line-height:1.75;'
