@@ -15,7 +15,7 @@ import streamlit as st
 from ui_utils import (
     apply_theme, render_sidebar, load_info, load_ohlcv,
     load_financials, load_cashflow, load_earnings,
-    fmt_large, page_header, t,
+    fmt_large, page_header, t, fmt_metric_key,
 )
 from workflow_state import (
     init_research_state, get_state, update_state, update_step, reset_state,
@@ -460,13 +460,13 @@ elif status == "completed":
     )
 
     # ── Helper: render one report section ──────────────────────────────────────
-    def _section(num: str, title: str, step_key: str,
+    def _section(title: str, step_key: str,
                  llm_data: dict, metrics_fallback: dict,
                  page: str, view_lbl: str) -> None:
         st_status = (steps.get(step_key) or {}).get("status", "pending")
         icon = "✅" if st_status == "done" else ("❌" if st_status == "failed" else "⬜")
 
-        st.markdown(f"#### {icon}&nbsp; {num}&nbsp; {title}")
+        st.markdown(f"#### {icon}&nbsp; {title}")
 
         # Reasoning as body paragraph
         reasoning = llm_data.get("reasoning", "")
@@ -488,7 +488,7 @@ elif status == "completed":
             if items:
                 cols = st.columns(len(items))
                 for i, (k, v) in enumerate(items):
-                    cols[i].metric(k[:22], v[:22])
+                    cols[i].metric(fmt_metric_key(k, _lang), v)
 
         # View Details button — right-aligned
         _, _btn = st.columns([5, 1])
@@ -498,8 +498,6 @@ elif status == "completed":
 
         st.divider()
 
-    # ── Determine section number labels ────────────────────────────────────────
-    _nums = ["①", "②", "③", "④", "⑤"]
     _sec_titles = [t(k) for k in _STEP_KEYS]
 
     # ── Section 1: Sector Analysis ─────────────────────────────────────────────
@@ -509,7 +507,7 @@ elif status == "completed":
         "Top3":     ", ".join((sec_res.get("top3") or [])[:2]),
         "Subsector":subsector or "—",
     }
-    _section(_nums[0], _sec_titles[0], "sector",
+    _section(_sec_titles[0], "sector",
              sec_llm, sec_fallback,
              _STEP_PAGES[0], t("p1_view_sector"))
 
@@ -521,7 +519,7 @@ elif status == "completed":
         "Selected":     ticker,
         "Runner-up":    runner_up or "—",
     }
-    _section(_nums[1], _sec_titles[1], "scan",
+    _section(_sec_titles[1], "scan",
              scan_llm, scan_fallback,
              _STEP_PAGES[1], t("p1_view_scanner"))
 
@@ -533,19 +531,18 @@ elif status == "completed":
         "ADX":       f"{eq_snap.get('ADX', '—')}",
         "SMA200":    "Above ✓" if eq_snap.get("above_SMA200") else "Below ✗",
     }
-    _section(_nums[2], _sec_titles[2], "equity",
+    _section(_sec_titles[2], "equity",
              eq_llm, eq_fallback,
              _STEP_PAGES[2], t("p1_view_equity"))
 
     # ── Section 4: Financial Analysis ──────────────────────────────────────────
-    from ui_utils import fmt_large
     fin_fallback = {
         "Revenue":     fmt_large(fin_res.get("revenue")),
         "Gross Margin":f"{fin_res.get('gross_margin_pct', 0):.1f}%" if fin_res.get("gross_margin_pct") else "—",
         "Net Income":  fmt_large(fin_res.get("net_income")),
         "FCF":         fmt_large(fin_res.get("fcf")),
     }
-    _section(_nums[3], _sec_titles[3], "financial",
+    _section(_sec_titles[3], "financial",
              fin_llm, fin_fallback,
              _STEP_PAGES[3], t("p1_view_equity"))
 
@@ -556,7 +553,7 @@ elif status == "completed":
         "SMA200":       "Above ✓" if pv_res.get("above_sma200") else "Below ✗",
         "Vol Ratio":    f"{pv_res.get('vol_ratio', '—')}x",
     }
-    _section(_nums[4], _sec_titles[4], "pv",
+    _section(_sec_titles[4], "pv",
              pv_llm, pv_fallback,
              _STEP_PAGES[4], t("p1_view_equity"))
 

@@ -141,10 +141,11 @@ h1, h2, h3, h4 { color: var(--t0) !important; font-weight: 600 !important; }
     font-weight: 500; margin-bottom: 6px !important;
 }
 [data-testid="stMetricValue"] > div {
-    font-size: 1.4rem !important; font-weight: 700 !important;
+    font-size: 1.1rem !important; font-weight: 700 !important;
     color: var(--t0) !important;
     font-family: 'SF Mono', 'Fira Code', 'Courier New', monospace !important;
     letter-spacing: -0.01em;
+    white-space: normal !important; word-break: break-word !important;
 }
 [data-testid="stMetricDelta"] svg { display: none !important; }
 [data-testid="stMetricDelta"] > div { font-size: 0.78rem !important; font-weight: 600; margin-top: 4px; }
@@ -589,6 +590,36 @@ def fmt_val(v, prefix: str = "", suffix: str = "", decimals: int = 2) -> str:
     if v is None or (isinstance(v, float) and pd.isna(v)):
         return "N/A"
     return f"{prefix}{float(v):.{decimals}f}{suffix}"
+
+
+# ── Metric key → human-readable label ─────────────────────────────────────────
+# Tuples are (en_label, zh_label)
+KEY_LABELS: dict[str, tuple[str, str]] = {
+    "quantitative_score":    ("Score",          "综合评分"),
+    "3m_excess_return":      ("3M Excess",       "3月超额收益"),
+    "1m_excess_return":      ("1M Excess",       "1月超额收益"),
+    "momentum_acceleration": ("Momentum",        "动量加速"),
+    "fwd_pe":                ("Fwd P/E",         "预期市盈率"),
+    "mkt_cap_b":             ("Mkt Cap (B)",     "市值（十亿）"),
+    "3m_ret":                ("3M Return",       "3月涨幅"),
+    "rsi":                   ("RSI",             "RSI"),
+    "gross_margin":          ("Gross Margin",    "毛利率"),
+    "net_margin":            ("Net Margin",      "净利润率"),
+    "fcf_quality":           ("FCF Quality",     "现金流质量"),
+    "valuation":             ("Valuation",       "估值对比"),
+    "trend":                 ("Trend",           "趋势"),
+    "momentum":              ("Momentum",        "动量"),
+    "support":               ("Support",         "支撑位"),
+    "resistance":            ("Resistance",      "压力位"),
+}
+
+
+def fmt_metric_key(k: str, lang: str = "en") -> str:
+    """Map a raw JSON key to a human-readable label. Falls back to title-case."""
+    entry = KEY_LABELS.get(k.lower())
+    if entry:
+        return entry[1] if lang == "zh" else entry[0]
+    return k.replace("_", " ").title()
 
 
 # ── Financial table formatter ─────────────────────────────────────────────────
