@@ -623,6 +623,129 @@ elif status == "completed":
 
     _sep = "：" if _lang == "zh" else ": "
 
+    # ── Shared color maps (reused by _scan_section and _section) ───────────────
+    _CONF_COLOR = {
+        "High": "#3fb950", "高": "#3fb950",
+        "Medium": "#d29922", "中": "#d29922",
+        "Low": "#f85149", "低": "#f85149",
+    }
+    _STRAT_COLOR = {
+        "Momentum":       "#388bfd",
+        "Quality Growth": "#3fb950",
+        "Value":          "#d29922",
+        "Oversold Bounce":"#a371f7",
+    }
+
+    # ── Helper: render scan section with top-pick card + selected list ──────────
+    def _scan_section(title: str, page: str, view_lbl: str) -> None:
+        st_status = (steps.get("scan") or {}).get("status", "pending")
+        icon = "✅" if st_status == "done" else ("❌" if st_status == "failed" else "⬜")
+        st.markdown(f"#### {icon}&nbsp; {title}")
+
+        if st_status == "failed":
+            st.caption("⚠️ " + (steps.get("scan") or {}).get("summary", "Step failed"))
+
+        _selected  = scan_llm.get("selected") or []
+        _top_pick  = (scan_llm.get("decision") or "").upper().strip()
+        _runner_up = (scan_llm.get("runner_up") or "").upper().strip()
+        _s_reason  = scan_llm.get("reasoning", "")
+
+        if not _top_pick or _top_pick == "N/A":
+            # Fallback: show legacy key-value data
+            legacy = {
+                ("已选标的" if _lang == "zh" else "Selected"): ticker,
+                ("次选" if _lang == "zh" else "Runner-up"):    runner_up or "—",
+                ("股票池" if _lang == "zh" else "Pool"):       str(scan_res.get("total", "—")),
+            }
+            items = [(k, str(v)) for k, v in legacy.items() if v]
+            if items:
+                st.markdown("\n\n".join(f"**{k}**{_sep}{v}" for k, v in items))
+        else:
+            # ── Top-pick highlight card ──────────────────────────────────────
+            _top_data   = next((s for s in _selected if s.get("ticker") == _top_pick), {})
+            _top_conf   = _top_data.get("confidence", "")
+            _top_strat  = _top_data.get("strategy", "")
+            _top_reason = _top_data.get("reasoning", "")
+            _conf_c  = _CONF_COLOR.get(_top_conf, "#58a6ff")
+            _strat_c = _STRAT_COLOR.get(_top_strat, "#58a6ff")
+            _lbl_top = "最强推荐" if _lang == "zh" else "Top Pick"
+            _lbl_str = "策略" if _lang == "zh" else "Strategy"
+            _lbl_con = "置信度" if _lang == "zh" else "Confidence"
+            st.markdown(
+                f'<div style="background:{_card_bg};border:2px solid {_conf_c};'
+                f'border-radius:10px;padding:14px 18px;margin:8px 0 12px">'
+                f'<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">'
+                f'<span style="font-size:1.3rem;font-weight:700;color:{_conf_c}">{_top_pick}</span>'
+                f'<span style="background:{_card_bd};padding:1px 8px;border-radius:10px;'
+                f'font-size:0.72rem;color:#8b949e">{_lbl_top}</span>'
+                + (f'<span style="background:{_strat_c}22;border:1px solid {_strat_c};'
+                   f'padding:1px 8px;border-radius:10px;font-size:0.72rem;color:{_strat_c}">'
+                   f'{_lbl_str}: {_top_strat}</span>' if _top_strat else "")
+                + (f'<span style="background:{_conf_c}22;border:1px solid {_conf_c};'
+                   f'padding:1px 8px;border-radius:10px;font-size:0.72rem;color:{_conf_c}">'
+                   f'{_lbl_con}: {_top_conf}</span>' if _top_conf else "")
+                + f'</div>'
+                + (f'<p style="font-size:0.87rem;line-height:1.6;color:{"#e6edf3" if _dark else "#1f2328"};'
+                   f'margin:0">{_top_reason}</p>' if _top_reason else "")
+                + f'</div>',
+                unsafe_allow_html=True,
+            )
+
+            # ── Other selected stocks ────────────────────────────────────────
+            others = [s for s in _selected if s.get("ticker") != _top_pick]
+            if _runner_up and not any(s.get("ticker") == _runner_up for s in _selected):
+                others = [{"ticker": _runner_up, "strategy": "", "confidence": "", "reasoning": ""}] + others
+            for s in others[:4]:
+                tk_o   = s.get("ticker", "")
+                strat  = s.get("strategy", "")
+                conf   = s.get("confidence", "")
+                rsn    = s.get("reasoning", "")
+                sc     = _STRAT_COLOR.get(strat, "#58a6ff")
+                cc     = _CONF_COLOR.get(conf, "#8b949e")
+                st.markdown(
+                    f'<div style="background:{_card_bg};border-left:3px solid {sc};'
+                    f'border-radius:0 6px 6px 0;padding:7px 12px;margin:4px 0">'
+                    f'<span style="font-weight:700;color:{sc};font-size:0.92rem">{tk_o}</span>'
+                    + (f'&nbsp;<span style="background:{sc}22;border:1px solid {sc};'
+                       f'padding:1px 7px;border-radius:10px;font-size:0.70rem;color:{sc};'
+                       f'margin-left:5px">{strat}</span>' if strat else "")
+                    + (f'&nbsp;<span style="color:{cc};font-size:0.70rem;margin-left:5px">'
+                       f'{conf}</span>' if conf else "")
+                    + (f'<p style="font-size:0.82rem;color:{"#e6edf3" if _dark else "#1f2328"};'
+                       f'margin:3px 0 0;line-height:1.5">{rsn}</p>' if rsn else "")
+                    + f'</div>',
+                    unsafe_allow_html=True,
+                )
+
+            # ── Overall reasoning ────────────────────────────────────────────
+            if _s_reason and "unavailable" not in _s_reason.lower():
+                _lbl_rsn = "综合选股逻辑" if _lang == "zh" else "Overall Rationale"
+                st.markdown(
+                    f'<div style="background:{_card_bg};border:1px solid {_card_bd};'
+                    f'border-radius:6px;padding:9px 14px;margin-top:8px">'
+                    f'<div style="font-size:0.72rem;color:#8b949e;margin-bottom:3px">'
+                    f'{_lbl_rsn}</div>'
+                    f'<p style="font-size:0.86rem;line-height:1.6;color:{"#e6edf3" if _dark else "#1f2328"};'
+                    f'margin:0">{_s_reason}</p></div>',
+                    unsafe_allow_html=True,
+                )
+
+            # ── Strategy hit counts ──────────────────────────────────────────
+            _sr = scan_res.get("strategy_results") or {}
+            if _sr:
+                _lbl_hits = "各策略命中" if _lang == "zh" else "Strategy Hits"
+                st.caption(
+                    f"{_lbl_hits}: " + "  ·  ".join(
+                        f"**{s}** {len(v)}" for s, v in _sr.items()
+                    )
+                )
+
+        _, _btn = st.columns([5, 1])
+        with _btn:
+            if st.button(view_lbl, key="rpt_scan", use_container_width=True):
+                st.switch_page(page)
+        st.divider()
+
     # ── Helper: render one report section (non-sector steps) ───────────────────
     def _section(title: str, step_key: str,
                  llm_data: dict, metrics_fallback: dict,
@@ -732,16 +855,7 @@ elif status == "completed":
                     _STEP_PAGES[0], t("p1_view_sector"))
 
     # ── Section 2: Stock Scanner ───────────────────────────────────────────────
-    leaders = scan_res.get("leaders") or []
-    scan_fallback = {
-        "Constituents": str(scan_res.get("total", "—")),
-        "Leaders":      ", ".join(leaders[:3]) or "—",
-        "Selected":     ticker,
-        "Runner-up":    runner_up or "—",
-    }
-    _section(_sec_titles[1], "scan",
-             scan_llm, scan_fallback,
-             _STEP_PAGES[1], t("p1_view_scanner"))
+    _scan_section(_sec_titles[1], _STEP_PAGES[1], t("p1_view_scanner"))
 
     # ── Section 3: Equity Research ─────────────────────────────────────────────
     eq_snap = eq_res.get("snap") or {}
@@ -836,10 +950,49 @@ elif status == "completed":
         ("四、财务分析" if _lang == "zh" else "IV. Financial Analysis"),
         ("五、量价分析" if _lang == "zh" else "V. Price & Volume"),
     ]
-    _sec_llms     = [sec_llm, scan_llm, eq_llm, fin_llm, pv_llm]
-    _sec_fallbacks = [sec_fallback, scan_fallback, eq_fallback, fin_fallback, pv_fallback]
+    # Build fallbacks for non-scan sections (scan gets special markdown below)
+    _sec_others = [
+        (sec_llm,  sec_fallback,  _sec_md_titles[0]),
+        (eq_llm,   eq_fallback,   _sec_md_titles[2]),
+        (fin_llm,  fin_fallback,  _sec_md_titles[3]),
+        (pv_llm,   pv_fallback,   _sec_md_titles[4]),
+    ]
 
-    for sec_t, llm_d, fb_d in zip(_sec_md_titles, _sec_llms, _sec_fallbacks):
+    # ── Sector section markdown ────────────────────────────────────────────────
+    _sector_sub_keys = ["macro","rotation","momentum","etf_trend","volume_flow","subsector"]
+    _sector_sub_lbl_zh = ["宏观环境","轮动信号","板块动量","ETF走势","资金流入","子板块"]
+    _sector_sub_lbl_en = ["Macro","Rotation","Momentum","ETF Trend","Volume Flow","Subsector"]
+    md_parts += [f"## {_sec_md_titles[0]}", ""]
+    for fk, lzh, len_ in zip(_sector_sub_keys, _sector_sub_lbl_zh, _sector_sub_lbl_en):
+        txt = sec_llm.get(fk, "")
+        if txt:
+            lbl = lzh if _lang == "zh" else len_
+            md_parts += [f"**{lbl}**", txt, ""]
+    md_parts.append("---")
+
+    # ── Scan section markdown ──────────────────────────────────────────────────
+    md_parts += [f"## {_sec_md_titles[1]}", ""]
+    _md_selected  = scan_llm.get("selected") or []
+    _md_top_pick  = scan_llm.get("decision", "")
+    _md_reasoning = scan_llm.get("reasoning", "")
+    if _md_top_pick:
+        md_parts.append(f"**{'最强推荐' if _lang == 'zh' else 'Top Pick'}**: {_md_top_pick}")
+        md_parts.append("")
+    if _md_selected:
+        md_parts.append(f"| Ticker | {'策略' if _lang == 'zh' else 'Strategy'} | {'置信度' if _lang == 'zh' else 'Confidence'} | {'理由' if _lang == 'zh' else 'Reasoning'} |")
+        md_parts.append("|---|---|---|---|")
+        for s in _md_selected[:5]:
+            md_parts.append(
+                f"| {s.get('ticker','')} | {s.get('strategy','')} "
+                f"| {s.get('confidence','')} | {s.get('reasoning','')[:80]} |"
+            )
+        md_parts.append("")
+    if _md_reasoning:
+        md_parts += [_md_reasoning, ""]
+    md_parts.append("---")
+
+    # ── Remaining sections (equity, financial, pv) ───────────────────────────
+    for llm_d, fb_d, sec_t in _sec_others[1:]:   # skip index 0 (sector done above)
         rea = llm_d.get("reasoning", "")
         km  = llm_d.get("key_metrics") or fb_d
         md_parts += [f"## {sec_t}", ""]
