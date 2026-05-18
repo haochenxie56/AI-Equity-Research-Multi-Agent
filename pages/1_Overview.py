@@ -27,6 +27,18 @@ apply_theme()
 render_sidebar()
 
 init_research_state()
+
+# On every new Streamlit session (cold start / browser refresh), reset workflow
+# to idle so the page always opens in "waiting to start" state.
+# The flag _wf_session_init is session-scoped: absent on first run, present
+# on subsequent reruns within the same session (e.g. intra-page navigation).
+if "_wf_session_init" not in st.session_state:
+    st.session_state["_wf_session_init"] = True
+    if get_state().get("status") != "idle":
+        st.session_state.pop("_wf_conclusion", None)
+        st.session_state.pop("_wf_conclusion_key", None)
+        reset_state()
+
 state = get_state()
 
 _lang = st.session_state.get("language", "en")
