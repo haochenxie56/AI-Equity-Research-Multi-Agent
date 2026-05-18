@@ -46,6 +46,52 @@ render_sidebar()
 _lang = st.session_state.get("language", "en")
 _dark = st.session_state.get("dark_mode", True)
 
+# ── AI analysis results from workflow state ───────────────────────────────────
+_wf_sector_res = (
+    st.session_state.get("research_state", {})
+    .get("results", {})
+    .get("sector") or {}
+)
+_sec_llm  = _wf_sector_res.get("llm") or {}
+_has_llm  = bool(_sec_llm.get("macro") or _sec_llm.get("rotation"))
+_wf_sector_name = st.session_state.get("research_state", {}).get("sector", "")
+
+_ai_bg = "#161b22" if _dark else "#f6f8fa"
+_ai_bd = "#30363d" if _dark else "#d0d7de"
+_ai_txt = "#e6edf3" if _dark else "#1f2328"
+
+
+def _ai_block(text: str, title: str) -> None:
+    """Render one LLM analysis paragraph with a numbered sub-title."""
+    if not text or "unavailable" in text.lower():
+        return
+    st.markdown(
+        f'<div style="background:{_ai_bg};border-left:3px solid #388bfd;'
+        f'border-radius:0 6px 6px 0;padding:10px 16px;margin:8px 0 18px">'
+        f'<div style="font-size:0.78rem;font-weight:600;color:#58a6ff;'
+        f'margin-bottom:6px">{title}</div>'
+        f'<p style="font-size:0.92rem;line-height:1.72;color:{_ai_txt};margin:0">'
+        f'{text}</p></div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _ai_hint() -> None:
+    """Compact prompt shown when no workflow LLM results are available."""
+    lbl = (
+        "尚无 AI 分析 · 请先在 [总览页](/Overview) 运行 AI 研究工作流"
+        if _lang == "zh" else
+        "No AI analysis yet · Run the AI Research Workflow on the [Overview](/Overview) page first"
+    )
+    st.markdown(
+        f'<div style="background:{_ai_bg};border:1px dashed {_ai_bd};'
+        f'border-radius:6px;padding:8px 14px;margin:6px 0 18px;'
+        f'font-size:0.82rem;color:#8b949e">'
+        f'🤖 {lbl}</div>',
+        unsafe_allow_html=True,
+    )
+
+
 st.title(t("p2_title"))
 page_header()
 render_workflow_bar()
@@ -109,6 +155,13 @@ _macro_card(_m1, "VIX", "p2_macro_vix", "{:.1f}", _vix_interp)
 _macro_card(_m2, "TNX", "p2_macro_tnx", "{:.2f}%", _tnx_interp)
 _macro_card(_m3, "DXY", "p2_macro_dxy", "{:.1f}", _dxy_interp)
 _macro_card(_m4, "SPX", "p2_macro_spx", "{:,.0f}", _spx_interp)
+
+# ── AI: Macro Environment analysis ────────────────────────────────────────────
+_macro_lbl = "① 宏观环境" if _lang == "zh" else "① Macro Environment"
+if _has_llm:
+    _ai_block(_sec_llm.get("macro", ""), _macro_lbl)
+else:
+    _ai_hint()
 
 st.divider()
 
@@ -192,6 +245,13 @@ with st.expander(t("p2_rotation_signal"), expanded=True):
                     )
         else:
             st.caption("—")
+
+    # ── AI: Rotation Signal analysis ─────────────────────────────────────────
+    _rot_lbl = "② 轮动信号" if _lang == "zh" else "② Rotation Signal"
+    if _has_llm:
+        _ai_block(_sec_llm.get("rotation", ""), _rot_lbl)
+    else:
+        _ai_hint()
 
     # ── Sector valuation (Fwd P/E median) ────────────────────────────────────
     st.markdown("---")
@@ -308,6 +368,13 @@ with st.expander(t("p2_heatmap"), expanded=True):
     )
     st.plotly_chart(fig_heat, use_container_width=True)
 
+    # ── AI: Sector Momentum analysis ─────────────────────────────────────────
+    _mom_lbl = "③ 板块动量对比" if _lang == "zh" else "③ Sector Momentum"
+    if _has_llm:
+        _ai_block(_sec_llm.get("momentum", ""), _mom_lbl)
+    else:
+        _ai_hint()
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SECTION 3 — ETF Trend vs SPY
@@ -387,6 +454,13 @@ with st.expander(t("p2_etf_trend"), expanded=True):
     else:
         st.warning(t("p2_insufficient"))
 
+    # ── AI: ETF Trend analysis ────────────────────────────────────────────────
+    _etf_lbl = "④ ETF 走势对比" if _lang == "zh" else "④ ETF Trend vs SPY"
+    if _has_llm:
+        _ai_block(_sec_llm.get("etf_trend", ""), _etf_lbl)
+    else:
+        _ai_hint()
+
     # ── Volume Flow: 3-month relative volume for all 11 sector ETFs ──────────
     st.markdown("---")
     st.markdown(f"**{t('p2_vol_flow')}**")
@@ -461,6 +535,13 @@ with st.expander(t("p2_etf_trend"), expanded=True):
                 for _, r in breakouts.iterrows()
             ]
             st.caption(f"{t('p2_vol_breakout')}: " + "  ·  ".join(_blabels))
+
+    # ── AI: Volume Flow analysis ──────────────────────────────────────────────
+    _vf_lbl = "⑤ 资金流入信号" if _lang == "zh" else "⑤ Volume Flow"
+    if _has_llm:
+        _ai_block(_sec_llm.get("volume_flow", ""), _vf_lbl)
+    else:
+        _ai_hint()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -750,3 +831,48 @@ with st.expander(t("p2_subsector_drill"), expanded=True):
                     st.session_state["scanner_pool"]    = ", ".join(sub_ranked["ticker"].tolist())
                     st.session_state["scanner_trigger"] = True
                     st.switch_page("pages/3_Scanner.py")
+
+    # ── AI: Subsector analysis ────────────────────────────────────────────────
+    _sub_lbl = "⑥ 子板块分析" if _lang == "zh" else "⑥ Subsector Analysis"
+    if _has_llm:
+        _ai_block(_sec_llm.get("subsector", ""), _sub_lbl)
+    else:
+        _ai_hint()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# AI 综合研究结论
+# ══════════════════════════════════════════════════════════════════════════════
+st.divider()
+_conc_title = "🔍 AI 综合研究结论" if _lang == "zh" else "🔍 AI Comprehensive Sector Analysis"
+st.subheader(_conc_title)
+
+if not _has_llm:
+    _ai_hint()
+else:
+    # Lazy synthesis: generated once per workflow run, cached in session_state
+    _syn_key = f"sector_synthesis_{_wf_sector_name}"
+    if st.session_state.get("_sector_syn_key") != _syn_key:
+        st.session_state["_sector_synthesis"] = None
+        st.session_state["_sector_syn_key"] = _syn_key
+
+    if st.session_state.get("_sector_synthesis") is None:
+        _spin_txt = "生成综合结论..." if _lang == "zh" else "Generating comprehensive analysis..."
+        with st.spinner(_spin_txt):
+            sys.path.insert(0, str(Path(__file__).parent.parent / "lib"))
+            from llm_orchestrator import synthesize_sector_analysis
+            st.session_state["_sector_synthesis"] = synthesize_sector_analysis(_sec_llm, _lang)
+
+    _syn_data   = st.session_state["_sector_synthesis"] or {}
+    _syn_conc   = _syn_data.get("conclusion", "") or _syn_data.get("reasoning", "")
+
+    if _syn_conc and "unavailable" not in _syn_conc.lower():
+        st.markdown(
+            f'<div style="background:{_ai_bg};border:1px solid {_ai_bd};'
+            f'border-radius:8px;padding:18px 22px;margin-top:4px">'
+            f'<p style="font-size:0.95rem;line-height:1.82;color:{_ai_txt};margin:0">'
+            f'{_syn_conc}</p></div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        st.caption("⚠️ " + (_syn_conc or ("综合结论生成失败" if _lang == "zh" else "Synthesis failed")))

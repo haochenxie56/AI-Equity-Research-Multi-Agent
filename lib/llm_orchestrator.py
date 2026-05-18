@@ -641,6 +641,64 @@ def analyze_pv(snap: dict, equity_ctx: dict, lang: str = "en") -> dict:
         return _fallback("pv", e)
 
 
+# ── Sector Page: Synthesis of 6 sub-sections ─────────────────────────────────
+
+def synthesize_sector_analysis(sec_llm: dict, lang: str = "en") -> dict:
+    """
+    Synthesise the 6 sector sub-section paragraphs into one comprehensive
+    conclusion paragraph.  Returns {"conclusion": "..."}
+    """
+    try:
+        client = _get_client()
+
+        fields = ["macro", "rotation", "momentum", "etf_trend", "volume_flow", "subsector"]
+        labels_zh = ["宏观环境", "轮动信号", "板块动量", "ETF走势", "资金流入", "子板块"]
+        labels_en = ["Macro", "Rotation", "Momentum", "ETF Trend", "Volume Flow", "Subsector"]
+
+        parts = []
+        for field, lbl_zh, lbl_en in zip(fields, labels_zh, labels_en):
+            text = sec_llm.get(field, "")
+            if text and "unavailable" not in text.lower():
+                lbl = lbl_zh if lang == "zh" else lbl_en
+                parts.append(f"[{lbl}] {text}")
+
+        if not parts:
+            return {"conclusion": ""}
+
+        context = "\n".join(parts)
+
+        if lang == "zh":
+            system = (
+                "你是资深美股行业研究分析师。根据以下六个维度的板块分析，"
+                "撰写一段150字左右的综合研究结论，要求：\n"
+                "- 覆盖宏观背景、轮动信号、动量对比、资金流向和子板块选择\n"
+                "- 语言流畅、专业，给出明确的配置建议方向\n"
+                "- 输出纯JSON：{\"conclusion\": \"...\"}"
+            )
+            user = f"六维度分析：\n{context}\n\n请生成综合研究结论，输出JSON。"
+        else:
+            system = (
+                "You are a senior US equity sector analyst. Synthesise the following "
+                "six-dimension sector analysis into a ~150-word comprehensive conclusion.\n"
+                "Requirements:\n"
+                "- Cover macro backdrop, rotation signal, momentum, volume flow, subsector\n"
+                "- Professional tone with a clear allocation direction\n"
+                "- Output pure JSON: {\"conclusion\": \"...\"}"
+            )
+            user = f"Six-dimension analysis:\n{context}\n\nGenerate the comprehensive conclusion as JSON."
+
+        resp = client.messages.create(
+            model=_MODEL,
+            max_tokens=600,
+            system=system,
+            messages=[{"role": "user", "content": user}],
+        )
+        return _parse_json(resp.content[0].text)
+
+    except Exception as e:
+        return _fallback("sector_synthesis", e)
+
+
 # ── Synthesis: Comprehensive Conclusion ───────────────────────────────────────
 
 def synthesize_report(state: dict, lang: str = "en") -> dict:
