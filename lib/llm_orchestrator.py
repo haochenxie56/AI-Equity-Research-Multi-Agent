@@ -871,3 +871,65 @@ def synthesize_report(state: dict, lang: str = "en") -> dict:
 
     except Exception as e:
         return _fallback("synthesis", e)
+
+
+# ── Utility: batch translate all AI text fields ────────────────────────────────
+
+def translate_research_fields(fields: dict, target_lang: str) -> dict:
+    """
+    Batch-translate a flat {key: text} dict to target_lang.
+
+    Keys are arbitrary descriptive identifiers; values are the text to translate.
+    Non-string or empty values are passed through unchanged.
+
+    Returns the translated flat dict (same keys, translated values).
+    On any failure returns the original dict unchanged.
+    """
+    translatable = {k: v for k, v in fields.items()
+                    if isinstance(v, str) and v.strip()}
+    if not translatable:
+        return fields
+
+    input_json = json.dumps(translatable, ensure_ascii=False, indent=2)
+
+    if target_lang == "zh":
+        system = (
+            "你是专业的金融分析翻译专家。将以下JSON中所有字符串值翻译为流畅的中文金融分析语言。\n"
+            "翻译规则：\n"
+            "1. 仅翻译字符串值，不修改key名；\n"
+            "2. 保留股票代码（全大写字母组合，如NVDA/AAPL）、公司名称、数字、百分比不变；\n"
+            "3. 翻译结果需符合中文金融报告风格；\n"
+            "4. 输出纯JSON，结构与输入完全一致，不添加任何额外说明。"
+        )
+        user = f"请将以下JSON中的所有值翻译为中文：\n\n{input_json}"
+    else:
+        system = (
+            "You are a professional financial analysis translator. "
+            "Translate all string values in the following JSON to fluent English "
+            "financial analysis language.\n"
+            "Rules:\n"
+            "1. Translate string values only — do not modify keys;\n"
+            "2. Keep ticker symbols (all-caps letter combinations like NVDA/AAPL), "
+            "company names, numbers, and percentages unchanged;\n"
+            "3. Use formal financial report English style;\n"
+            "4. Output pure JSON with identical structure — no extra commentary."
+        )
+        user = f"Translate all values in the following JSON to English:\n\n{input_json}"
+
+    try:
+        client = _get_client()
+        resp = client.messages.create(
+            model=_MODEL,
+            max_tokens=8000,
+            system=system,
+            messages=[{"role": "user", "content": user}],
+        )
+        result = _parse_json(resp.content[0].text)
+        if isinstance(result, dict):
+            # Merge: use translated values where available, keep originals otherwise
+            merged = dict(fields)
+            merged.update({k: v for k, v in result.items() if isinstance(v, str) and v.strip()})
+            return merged
+    except Exception:
+        pass
+    return fields  # Return original on any failure

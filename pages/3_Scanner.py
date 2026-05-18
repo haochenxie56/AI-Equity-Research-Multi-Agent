@@ -38,9 +38,18 @@ _wf_scan_res = (
 )
 _scan_llm    = _wf_scan_res.get("llm") or {}
 _selected    = _scan_llm.get("selected") or []
-_top_pick    = _scan_llm.get("decision", "")
-_runner_up   = _scan_llm.get("runner_up", "")
+_top_pick    = (_scan_llm.get("decision") or "").upper().strip()
+_runner_up   = (_scan_llm.get("runner_up") or "").upper().strip()
 _scan_reason = _scan_llm.get("reasoning", "")
+
+# Resolve top pick: prefer decision field, fall back to first valid selected entry
+if not _top_pick or _top_pick == "N/A":
+    for _s in _selected:
+        _tk = (_s.get("ticker") or "").upper().strip()
+        if _tk and _tk != "N/A":
+            _top_pick = _tk
+            break
+
 _has_scan_llm = bool(_top_pick and _top_pick not in ("N/A", ""))
 
 _ai_bg  = "#161b22" if _dark else "#f6f8fa"

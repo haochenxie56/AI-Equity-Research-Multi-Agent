@@ -35,8 +35,10 @@ init_research_state()
 if "_wf_session_init" not in st.session_state:
     st.session_state["_wf_session_init"] = True
     if get_state().get("status") != "idle":
-        st.session_state.pop("_wf_conclusion", None)
-        st.session_state.pop("_wf_conclusion_key", None)
+        st.session_state.pop("_wf_conclusion",      None)
+        st.session_state.pop("_wf_conclusion_key",  None)
+        st.session_state.pop("_wf_translated_lang", None)
+        st.session_state.pop("_wf_translation_done",None)
         reset_state()
 
 state = get_state()
@@ -403,6 +405,20 @@ elif status == "running":
             if not ticker:
                 ticker = pool_top[0] if pool_top else "AAPL"
 
+        # Normalize llm_result so stored decision/selected never carry "N/A"
+        if (llm_result.get("decision") or "").upper() in ("N/A", ""):
+            llm_result = dict(llm_result, decision=ticker)
+        raw_selected = llm_result.get("selected") or []
+        fixed_selected = []
+        for s in raw_selected:
+            s_tk = (s.get("ticker") or "").upper()
+            fixed_selected.append(dict(s, ticker=ticker) if s_tk in ("N/A", "") else s)
+        if not fixed_selected:
+            # Build a minimal entry from pool ranking so scan section always has content
+            fixed_selected = [{"ticker": ticker, "strategy": "Ranking",
+                                "confidence": "Medium", "reasoning": ""}]
+        llm_result = dict(llm_result, decision=ticker, selected=fixed_selected)
+
         runner_up  = llm_result.get("runner_up", "")
         selected   = llm_result.get("selected") or []
         pool_str   = ", ".join(pool_top[:30])
@@ -582,17 +598,23 @@ elif status == "completed":
     fin_llm  = fin_res.get("llm")  or {}
     pv_llm   = pv_res.get("llm")   or {}
 
-    # ── Language mismatch warning ──────────────────────────────────────────────
-    _wf_lang = state.get("lang", "")
-    if _wf_lang and _wf_lang != _lang:
-        _mismatch_msg = (
-            "⚠️ 当前语言与工作流执行时的语言不同，AI 分析内容为原语言版本。"
-            "如需切换语言，请重新运行工作流。"
+    # ── Translation notification / language mismatch hint ─────────────────────
+    if st.session_state.pop("_wf_translation_done", False):
+        _done_msg = (
+            "✅ AI 分析内容已翻译为中文。"
             if _lang == "zh" else
-            "⚠️ Current display language differs from the language used when the workflow ran. "
-            "AI analysis is shown in its original language. Re-run the workflow to switch languages."
+            "✅ AI analysis has been translated to English."
         )
-        st.info(_mismatch_msg)
+        st.success(_done_msg)
+    else:
+        _wf_lang = state.get("lang", "")
+        if _wf_lang and _wf_lang != _lang:
+            _hint_msg = (
+                "💡 AI 分析内容为英文版本。点击左侧 **🇨🇳 中文** 按钮可自动翻译所有 AI 文字字段。"
+                if _lang == "zh" else
+                "💡 AI analysis is in Chinese. Click **🇺🇸 EN** in the sidebar to auto-translate all AI text fields."
+            )
+            st.info(_hint_msg)
 
     # ── Lazy-generate comprehensive conclusion (cached in session) ─────────────
     _cache_key = f"wf_conclusion_{ticker}_{sector}_{_lang}"
@@ -625,8 +647,10 @@ elif status == "completed":
     with btn_col:
         st.markdown("<div style='padding-top:10px'>", unsafe_allow_html=True)
         if st.button(t("p1_wf_new"), use_container_width=True, key="rpt_new"):
-            st.session_state.pop("_wf_conclusion", None)
-            st.session_state.pop("_wf_conclusion_key", None)
+            st.session_state.pop("_wf_conclusion",       None)
+            st.session_state.pop("_wf_conclusion_key",   None)
+            st.session_state.pop("_wf_translated_lang",  None)
+            st.session_state.pop("_wf_translation_done", None)
             reset_state()
             st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
