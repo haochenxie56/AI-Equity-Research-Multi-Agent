@@ -91,7 +91,7 @@ def _parse_json(text: str) -> dict:
     # Fallback: return structured error (never expose raw JSON/text in reasoning)
     return {
         "decision": "N/A",
-        "reasoning": "AI analysis result could not be parsed.",
+        "reasoning": "AI analysis unavailable (response could not be parsed).",
         "summary":   "AI analysis unavailable.",
         "key_metrics": {},
     }
@@ -405,8 +405,14 @@ def analyze_scanner_multi(strategy_results: dict, sector_ctx: dict,
     try:
         client = _get_client()
 
-        sector_name   = sector_ctx.get("decision", "")
-        sector_reason = sector_ctx.get("reasoning", "")
+        # sector_ctx is results["sector"] — actual LLM text lives inside "llm"
+        _sec_llm      = sector_ctx.get("llm") or {}
+        sector_name   = (_sec_llm.get("decision")
+                         or sector_ctx.get("top_sector")
+                         or sector_ctx.get("decision", ""))
+        # Use English reasoning regardless of workflow run language
+        sector_reason = (_sec_llm.get("reasoning_en")
+                         or _sec_llm.get("reasoning", ""))
 
         # Format each strategy's hits
         strat_sections = []
@@ -476,7 +482,7 @@ def analyze_scanner_multi(strategy_results: dict, sector_ctx: dict,
 
         resp = client.messages.create(
             model=_MODEL,
-            max_tokens=900,
+            max_tokens=2000,   # increased: English reasoning is verbose
             system=system,
             messages=[{"role": "user", "content": user}],
         )

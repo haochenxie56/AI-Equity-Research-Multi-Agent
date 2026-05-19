@@ -235,7 +235,29 @@ elif status == "running":
         valid_sectors = scores_3m["sector"].tolist() if not scores_3m.empty else []
         if sector not in valid_sectors:
             sector = tentative_sector
-        subsector = llm_result.get("subsector_decision") or None
+        # Validate subsector: LLM may return Chinese name when lang="zh".
+        # Build reverse-map {zh → english} from all three config dicts.
+        _raw_subsector = llm_result.get("subsector_decision") or None
+        if _raw_subsector:
+            from sectors import SECTOR_CONFIG, THEME_ETF_CONFIG, CUSTOM_THEME_CONFIG
+            _all_known = (
+                dict(THEME_ETF_CONFIG)
+                | dict(CUSTOM_THEME_CONFIG)
+                | dict(SECTOR_CONFIG)
+            )
+            if _raw_subsector in _all_known:
+                # Already an English key — keep as-is
+                subsector = _raw_subsector
+            else:
+                # Try reverse-lookup via zh field
+                _zh_map = {
+                    cfg["zh"]: name
+                    for name, cfg in _all_known.items()
+                    if "zh" in cfg
+                }
+                subsector = _zh_map.get(_raw_subsector) or None
+        else:
+            subsector = None
 
         phase     = phase_info.get("phase", "neutral")
         top3      = phase_info.get("top3_sectors", [])
