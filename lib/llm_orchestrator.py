@@ -65,29 +65,41 @@ def _strip_fences(text: str) -> str:
 
 
 def _parse_json(text: str) -> dict:
-    """Extract JSON from LLM response with multiple fallback strategies."""
-    # Pre-process: strip code fences so subsequent strategies work on clean text
-    clean = _strip_fences(text)
+    """Extract a JSON object from an LLM response with multiple fallback strategies.
 
-    # Strategy 1: direct parse of cleaned text
-    try:
-        return json.loads(clean)
-    except Exception:
-        pass
-    # Strategy 2: first {...} block in cleaned text
-    m = re.search(r"\{[\s\S]+\}", clean)
-    if m:
-        try:
-            return json.loads(m.group(0))
-        except Exception:
-            pass
-    # Strategy 3: original text, first {...} block (in case fence stripping broke it)
-    m = re.search(r"\{[\s\S]+\}", text)
-    if m:
-        try:
-            return json.loads(m.group(0))
-        except Exception:
-            pass
+    Uses json.JSONDecoder.raw_decode() which correctly handles:
+    - Preamble prose before the JSON object
+    - Trailing text / notes after the closing brace
+    - Markdown code fences (stripped first)
+
+    The old greedy-regex approach (r"\\{[\\s\\S]+\\}") was unreliable when the
+    text after the JSON also contained curly braces.
+    """
+    decoder = json.JSONDecoder()
+
+    def _first_obj(src: str) -> dict | None:
+        """Scan src left-to-right for the first decodable JSON object."""
+        for i, ch in enumerate(src):
+            if ch == "{":
+                try:
+                    obj, _ = decoder.raw_decode(src, i)
+                    if isinstance(obj, dict):
+                        return obj
+                except Exception:
+                    pass
+        return None
+
+    # Strategy 1: strip code fences, then find first JSON object
+    clean = _strip_fences(text)
+    result = _first_obj(clean)
+    if result is not None:
+        return result
+
+    # Strategy 2: try on the original text (in case fence stripping corrupted it)
+    result = _first_obj(text)
+    if result is not None:
+        return result
+
     # Fallback: return structured error (never expose raw JSON/text in reasoning)
     return {
         "decision": "N/A",
@@ -108,23 +120,20 @@ def _fallback(step: str, err: Exception) -> dict:
 
 
 def _llm_json_call(client, max_tokens: int, system: str, user: str) -> dict:
-    """
-    Call the LLM and parse a JSON object response.
+    """Call the LLM and parse the JSON object from the response.
 
-    Uses assistant-turn prefill ``{`` so Claude is forced to output raw JSON
-    immediately, without any preamble text, markdown code fences, or
-    explanatory prose.  The opening brace is prepended back before parsing.
+    Centralises all API calls so _parse_json is always used consistently.
+    _parse_json uses JSONDecoder.raw_decode() to find the first valid JSON
+    object in the response, handling any preamble prose or markdown fences
+    Claude may add around the JSON.
     """
     resp = client.messages.create(
         model=_MODEL,
         max_tokens=max_tokens,
         system=system,
-        messages=[
-            {"role": "user",      "content": user},
-            {"role": "assistant", "content": "{"},   # prefill — forces JSON start
-        ],
+        messages=[{"role": "user", "content": user}],
     )
-    return _parse_json("{" + resp.content[0].text)
+    return _parse_json(resp.content[0].text)
 
 
 # ── Step 1: Sector Analysis (comprehensive 6-dimension version) ──────────────
