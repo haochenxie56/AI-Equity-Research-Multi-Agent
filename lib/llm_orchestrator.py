@@ -107,6 +107,26 @@ def _fallback(step: str, err: Exception) -> dict:
     }
 
 
+def _llm_json_call(client, max_tokens: int, system: str, user: str) -> dict:
+    """
+    Call the LLM and parse a JSON object response.
+
+    Uses assistant-turn prefill ``{`` so Claude is forced to output raw JSON
+    immediately, without any preamble text, markdown code fences, or
+    explanatory prose.  The opening brace is prepended back before parsing.
+    """
+    resp = client.messages.create(
+        model=_MODEL,
+        max_tokens=max_tokens,
+        system=system,
+        messages=[
+            {"role": "user",      "content": user},
+            {"role": "assistant", "content": "{"},   # prefill — forces JSON start
+        ],
+    )
+    return _parse_json("{" + resp.content[0].text)
+
+
 # ── Step 1: Sector Analysis (comprehensive 6-dimension version) ──────────────
 
 def analyze_sector_full(data: dict, lang: str = "en") -> dict:
@@ -277,13 +297,7 @@ def analyze_sector_full(data: dict, lang: str = "en") -> dict:
                 "Generate the 6-dimension analysis report and output JSON."
             )
 
-        resp = client.messages.create(
-            model=_MODEL,
-            max_tokens=2000,
-            system=system,
-            messages=[{"role": "user", "content": user}],
-        )
-        result = _parse_json(resp.content[0].text)
+        result = _llm_json_call(client, 2000, system, user)
         try:
             from translator import add_bilingual
             result = add_bilingual(result, lang, [
@@ -372,13 +386,7 @@ def analyze_sector(scores_df, macro_data: dict, lang: str = "en") -> dict:
                 "Select the most promising sector and output JSON."
             )
 
-        resp = client.messages.create(
-            model=_MODEL,
-            max_tokens=600,
-            system=system,
-            messages=[{"role": "user", "content": user}],
-        )
-        return _parse_json(resp.content[0].text)
+        return _llm_json_call(client, 600, system, user)
 
     except Exception as e:
         return _fallback("sector", e)
@@ -480,13 +488,7 @@ def analyze_scanner_multi(strategy_results: dict, sector_ctx: dict,
                 f"Total hits: {total_hits}. Select best 1-5 stocks and output JSON."
             )
 
-        resp = client.messages.create(
-            model=_MODEL,
-            max_tokens=2000,   # increased: English reasoning is verbose
-            system=system,
-            messages=[{"role": "user", "content": user}],
-        )
-        result = _parse_json(resp.content[0].text)
+        result = _llm_json_call(client, 2000, system, user)
         try:
             from translator import add_bilingual, add_bilingual_list
             result = add_bilingual(result, lang, ["reasoning", "summary"])
@@ -560,13 +562,7 @@ def analyze_scanner(ranked_df, sector_ctx: dict, lang: str = "en") -> dict:
                 "Select the best candidate for deep-dive research and output JSON."
             )
 
-        resp = client.messages.create(
-            model=_MODEL,
-            max_tokens=600,
-            system=system,
-            messages=[{"role": "user", "content": user}],
-        )
-        result = _parse_json(resp.content[0].text)
+        result = _llm_json_call(client, 600, system, user)
         try:
             from translator import add_bilingual
             result = add_bilingual(result, lang, ["reasoning", "summary"])
@@ -654,13 +650,7 @@ def analyze_equity(info: dict, snap: dict, earnings: dict,
                 "Provide equity research conclusions and output JSON."
             )
 
-        resp = client.messages.create(
-            model=_MODEL,
-            max_tokens=700,
-            system=system,
-            messages=[{"role": "user", "content": user}],
-        )
-        result = _parse_json(resp.content[0].text)
+        result = _llm_json_call(client, 700, system, user)
         try:
             from translator import add_bilingual
             result = add_bilingual(result, lang, ["reasoning", "summary", "decision"])
@@ -713,13 +703,7 @@ def analyze_financials(fin_data: dict, equity_ctx: dict, lang: str = "en") -> di
                 "Assess financial health and output JSON."
             )
 
-        resp = client.messages.create(
-            model=_MODEL,
-            max_tokens=600,
-            system=system,
-            messages=[{"role": "user", "content": user}],
-        )
-        result = _parse_json(resp.content[0].text)
+        result = _llm_json_call(client, 600, system, user)
         try:
             from translator import add_bilingual
             result = add_bilingual(result, lang, ["reasoning", "summary", "decision"])
@@ -785,13 +769,7 @@ def analyze_pv(snap: dict, equity_ctx: dict, lang: str = "en") -> dict:
                 "Provide technical analysis conclusions and output JSON."
             )
 
-        resp = client.messages.create(
-            model=_MODEL,
-            max_tokens=600,
-            system=system,
-            messages=[{"role": "user", "content": user}],
-        )
-        result = _parse_json(resp.content[0].text)
+        result = _llm_json_call(client, 600, system, user)
         try:
             from translator import add_bilingual
             result = add_bilingual(result, lang, ["reasoning", "summary", "decision"])
@@ -849,13 +827,7 @@ def synthesize_sector_analysis(sec_llm: dict, lang: str = "en") -> dict:
             )
             user = f"Six-dimension analysis:\n{context}\n\nGenerate the comprehensive conclusion as JSON."
 
-        resp = client.messages.create(
-            model=_MODEL,
-            max_tokens=600,
-            system=system,
-            messages=[{"role": "user", "content": user}],
-        )
-        result = _parse_json(resp.content[0].text)
+        result = _llm_json_call(client, 600, system, user)
         try:
             from translator import add_bilingual
             result = add_bilingual(result, lang, ["conclusion"])
@@ -927,13 +899,7 @@ def synthesize_report(state: dict, lang: str = "en") -> dict:
                 "Generate comprehensive investment conclusion and output JSON."
             )
 
-        resp = client.messages.create(
-            model=_MODEL,
-            max_tokens=900,
-            system=system,
-            messages=[{"role": "user", "content": user}],
-        )
-        result = _parse_json(resp.content[0].text)
+        result = _llm_json_call(client, 900, system, user)
         try:
             from translator import add_bilingual, translate_str_list
             result = add_bilingual(result, lang, ["recommendation", "conclusion"])

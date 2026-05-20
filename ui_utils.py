@@ -503,6 +503,13 @@ def load_ohlcv_multi(tickers: tuple, period: str = "1y") -> dict[str, pd.DataFra
 
 # ── Bilingual field reader ─────────────────────────────────────────────────────
 
+# Substrings that identify LLM error/fallback messages.
+# All text matching any of these is suppressed at the bi() level so callers
+# never need to check individually.  Covers both the current fallback format
+# ("unavailable") and the legacy format ("could not be parsed").
+_BI_ERROR_PHRASES: tuple[str, ...] = ("unavailable", "could not be parsed")
+
+
 def bi(llm: dict, field: str, lang: str | None = None) -> str:
     """
     Read the language-appropriate version of a bilingual LLM field.
@@ -513,13 +520,21 @@ def bi(llm: dict, field: str, lang: str | None = None) -> str:
     Falls back to the undecorated {field} key for backwards compatibility
     with any result that was generated before the bilingual system was added.
 
+    Returns "" (empty string) for any LLM error/fallback message so callers
+    can use the simple ``if text:`` pattern without further inspection.
+
     Usage:
         from ui_utils import bi
         text = bi(sec_llm, "macro", _lang)   # reads "macro_zh" or "macro_en"
     """
     if lang is None:
         lang = st.session_state.get("language", "en")
-    return llm.get(f"{field}_{lang}") or llm.get(field) or ""
+    text = llm.get(f"{field}_{lang}") or llm.get(field) or ""
+    if text:
+        lower = text.lower()
+        if any(p in lower for p in _BI_ERROR_PHRASES):
+            return ""
+    return text
 
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
