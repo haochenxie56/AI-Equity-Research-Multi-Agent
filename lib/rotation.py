@@ -314,6 +314,168 @@ def classify_rotation_phase(scores_df: pd.DataFrame) -> dict:
     }
 
 
+# ── Offense / Defense reading (Phase 7B Task 2 — outer ring) ──────────────────
+# A multi-window relative-strength differential between an OFFENSE basket and a
+# DEFENSE basket (vs SPY). The reading is the GICS-layer "market character"
+# input that the Cockpit takes as a conclusion and that the Market-Internals
+# fragility layer (Task 3) consumes as component (e). All windows/thresholds are
+# in this visible config block for later calibration.
+
+# Baskets keyed on SECTOR_CONFIG names (GICS sectors + the semis theme ETF).
+OFFENSE_SECTORS = ("Information Technology", "Consumer Discretionary",
+                   "Communication Services", "Semiconductors")
+DEFENSE_SECTORS = ("Utilities", "Consumer Staples", "Health Care")
+
+# Same window set as lib/relative_strength (mirrored locally to keep rotation.py
+# importable both as a page module and as ``lib.rotation``).
+OD_WINDOW_DAYS = {"5d": 5, "10d": 10, "1m": 21, "3m": 63, "6m": 126, "12m": 252}
+
+# A window confirms the reading when the offense−defense differential exceeds
+# this magnitude (percentage points) in the reading's direction.
+OD_CONFIRM_THRESHOLD_PP = 1.0
+# Average-differential bands (pp) → magnitude label.
+OD_MAGNITUDE_BANDS = (("strong", 5.0), ("moderate", 2.0))
+# |avg differential| below this is "balanced" (no offense/defense lean).
+OD_BALANCED_PP = 1.0
+
+
+def _basket_avg(sector_excess: dict, sectors, window: str):
+    """Mean excess (pp) over the basket members that have data for ``window``."""
+    vals = []
+    for s in sectors:
+        rec = sector_excess.get(s)
+        if not rec:
+            continue
+        v = rec.get(window)
+        if v is None:
+            continue
+        try:
+            fv = float(v)
+        except (TypeError, ValueError):
+            continue
+        if fv == fv:  # not NaN
+            vals.append(fv)
+    if not vals:
+        return None
+    return sum(vals) / len(vals)
+
+
+def _od_magnitude_label(avg_diff: float) -> str:
+    mag = abs(avg_diff)
+    for label, lo in OD_MAGNITUDE_BANDS:
+        if mag >= lo:
+            return label
+    return "mild"
+
+
+def offense_defense_reading(sector_excess: dict) -> dict:
+    """Pure offense/defense reading from a precomputed sector-excess map.
+
+    ``sector_excess`` is ``{sector_name: {window: excess_vs_spy_pp}}`` (percentage
+    points). Deterministic, no I/O — the Sector page wrapper and the network-free
+    Market-Internals layer both feed it. Returns:
+
+    * ``direction`` — "offense" | "defense" | "balanced" (which basket leads).
+    * ``magnitude`` — label ("strong"/"moderate"/"mild") of the avg differential.
+    * ``avg_diff`` — mean offense−defense differential (pp) across usable windows.
+    * ``by_window`` — ``{window: {"offense","defense","diff"}}`` (pp).
+    * ``confirming_windows`` — windows confirming the direction beyond threshold.
+    * ``n_windows`` — count of windows with a computable differential.
+    """
+    by_window: dict = {}
+    diffs: list = []
+    for window in OD_WINDOW_DAYS:
+        off = _basket_avg(sector_excess, OFFENSE_SECTORS, window)
+        deff = _basket_avg(sector_excess, DEFENSE_SECTORS, window)
+        if off is None or deff is None:
+            continue
+        diff = round(off - deff, 2)
+        by_window[window] = {"offense": round(off, 2),
+                             "defense": round(deff, 2), "diff": diff}
+        diffs.append(diff)
+
+    if not diffs:
+        return {"direction": "balanced", "magnitude": "mild", "avg_diff": 0.0,
+                "by_window": {}, "confirming_windows": [], "n_windows": 0}
+
+    avg_diff = round(sum(diffs) / len(diffs), 2)
+    if avg_diff > OD_BALANCED_PP:
+        direction = "offense"
+    elif avg_diff < -OD_BALANCED_PP:
+        direction = "defense"
+    else:
+        direction = "balanced"
+
+    confirming = []
+    if direction != "balanced":
+        sign = 1.0 if direction == "offense" else -1.0
+        for window, rec in by_window.items():
+            if sign * rec["diff"] >= OD_CONFIRM_THRESHOLD_PP:
+                confirming.append(window)
+
+    return {
+        "direction": direction,
+        "magnitude": _od_magnitude_label(avg_diff),
+        "avg_diff": avg_diff,
+        "by_window": by_window,
+        "confirming_windows": confirming,
+        "n_windows": len(diffs),
+    }
+
+
+def build_sector_excess(ohlcv_loader=None) -> dict:
+    """Build ``{sector: {window: excess_vs_spy_pp}}`` for the o/d baskets.
+
+    ``ohlcv_loader(ticker) -> close Series`` is injectable; the default fetches
+    via ``data_fetcher`` (the Sector page path). The Market-Internals layer passes
+    a CACHE-ONLY loader so the ranking/refresh path stays network-free. Excess is
+    the basket member's window return minus SPY's, in percentage points.
+    Fail-closed per ticker."""
+    def _default_loader(tk):
+        df = _get_ohlcv(tk, "2y")
+        if df is None or df.empty:
+            return None
+        return df["Close"].dropna()
+
+    loader = ohlcv_loader or _default_loader
+    try:
+        spy_close = loader("SPY")
+    except Exception:
+        spy_close = None
+    spy_ret = {}
+    if spy_close is not None:
+        for w, n in OD_WINDOW_DAYS.items():
+            spy_ret[w] = _pct_ret(spy_close, n) * 100.0
+
+    out: dict = {}
+    members = set(OFFENSE_SECTORS) | set(DEFENSE_SECTORS)
+    for sector in members:
+        cfg = SECTOR_CONFIG.get(sector)
+        if not cfg:
+            continue
+        try:
+            close = loader(cfg["etf"])
+        except Exception:
+            close = None
+        if close is None:
+            continue
+        rec = {}
+        for w, n in OD_WINDOW_DAYS.items():
+            base = spy_ret.get(w)
+            if base is None:
+                continue
+            rec[w] = round(_pct_ret(close, n) * 100.0 - base, 2)
+        if rec:
+            out[sector] = rec
+    return out
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def compute_offense_defense() -> dict:
+    """Sector-page entry point: fetch the baskets and return the o/d reading."""
+    return offense_defense_reading(build_sector_excess())
+
+
 # ── Intra-sector stock ranking ────────────────────────────────────────────────
 
 @st.cache_data(ttl=3600, show_spinner=False)
