@@ -405,3 +405,61 @@ daily snapshot `_meta` via `history_from_snapshots`.
    untouched (7A byte-compat). Tests: a fixture with deliberately missing ticker
    dates → excess equals the hand-computed aligned value, not the positional-slice
    value; QQQ gaps align independently.
+
+---
+
+## Data-vintage round 3 — earnings degrade visibility + banner↔_meta parity
+
+### Earnings degrade is honest, and now self-explanatory on screen
+
+The good-news-sold component is computed over the **candidate universe** (the
+round-2 fix that stopped the market-wide `good_news_sold=39/92` leak by filtering
+`_reaction_records` to `universe` and bounding `earnings_evaluated <= |universe|`).
+A consequence, surfaced by the 2026-06-06 00:01 live refresh: when the day's
+universe is 20 momentum names that all reported 10–88 days ago, **zero** fall in
+the `earnings_lookback_sessions = 5` window, so the component correctly degrades to
+`no_reports_in_window` (`good_news_sold=null`, `earnings_evaluated=0`). This is the
+right reading for that universe — not a bug. The earlier inline "lit" reading
+(evaluated=12) came from a market-wide reconstruction the universe filter is
+designed to exclude; it was the verification that was wrong, not the live path.
+
+- **Banner now says WHY.** When `good_news_sold` is `None`, the Cockpit banner
+  renders `<n/a> (earnings_degrade_reason)` — e.g. `好消息被卖: 无数据
+  (no_reports_in_window)` — using the same `earnings_degrade_reason` carried in the
+  `_meta`. The Macro Dashboard internals table already shows the reason in its
+  "degrade reason" column. A report/UI divergence is therefore self-explanatory on
+  both surfaces.
+- **Rate-limit defense.** `fetch_earnings_reactions_calendar` (the single bulk
+  Finnhub call) now **retries once with a short backoff** (`_FINNHUB_BULK_RETRY_BACKOFF_S`,
+  monkeypatchable to 0 in tests) before declaring `finnhub_unavailable`. The free
+  tier is 60 req/min and a refresh that already fetched the candidate universe can
+  trip a 429, which `_finnhub_get` swallows to `None`. Still fully degradable: both
+  attempts failing → raises → caller records `finnhub_unavailable` (never blocks).
+- **After-midnight / weekend anchoring is safe.** `today_str` is the system date
+  (Saturday 06-06), but the earnings window counts **benchmark trading sessions**
+  (`rxn < bd <= today`), and `bench_dates` ends on the last traded session
+  (Fri 06-05). A weekend `today_str` therefore cannot empty an otherwise-populated
+  window; the degrade above is purely the universe-recency effect, not anchoring.
+
+### Breadth-slope trigger boundary (by design)
+
+`breadth_narrowing` fires when `comp.breadth_slope <= -abs(breadth_slope_drop)`
+with `breadth_slope_drop = 0.08`. The boundary is **inclusive on the magnitude**:
+a drop of *exactly* 0.08 (e.g. 68% → 60%) **does** fire (it is `<=`, i.e. "fell by
+at least 8 pp"), it is **not** strictly-greater. The 06-06 reading
+(68.42% → 60.00%, slope `-0.0842`) clears the threshold and triggers.
+
+### Banner↔_meta parity test (§18) — the real-path guarantee
+
+Root cause of three straight report/UI mismatches: verification reconstructed the
+computation inline instead of driving the real refresh, so call-site differences
+never surfaced until the next live refresh. §18 of the 7B suite drives the **actual
+`_run_refresh`** (the function the refresh button triggers) under AppTest with only
+the network leaves mocked — the real `compute_market_fragility`,
+`fragility_snapshot`, and `write_daily_snapshot` run — then asserts every component
+token the banner renders equals the `_meta` that same refresh wrote (lit path: a
+counted number; dark path: `n/a (no_reports_in_window)`). Two negative checks prove
+the test FAILS when banner and `_meta` diverge (mutated level; mutated component
+value). The three historical mismatches (nested components, vintage split, dead
+earnings arg) each render a banner that disagrees with `_meta` → each would fail
+this check. The live-path verification rule is recorded in `CLAUDE.md`.

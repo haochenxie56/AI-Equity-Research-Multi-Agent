@@ -388,6 +388,9 @@ def _finnhub_get(url: str, params: dict) -> Optional[object]:
 
 
 _FINNHUB_EARNINGS_CAL = "https://finnhub.io/api/v1/calendar/earnings"
+# Backoff before the single retry of the bulk earnings-calendar call (rate-limit
+# defense). Module-level so tests can monkeypatch it to 0 (no real sleep).
+_FINNHUB_BULK_RETRY_BACKOFF_S = 2.0
 
 
 def fetch_earnings_reactions_calendar(date_from: str, date_to: str) -> list:
@@ -401,8 +404,19 @@ def fetch_earnings_reactions_calendar(date_from: str, date_to: str) -> list:
     Reports missing actual/estimate are skipped (no direction can be derived)."""
     if not FINNHUB_API_KEY:
         raise RuntimeError("finnhub_no_key")
-    data = _finnhub_get(_FINNHUB_EARNINGS_CAL,
-                        {"from": date_from, "to": date_to, "token": FINNHUB_API_KEY})
+    # Single bulk call. Finnhub's free tier is 60 req/min; a refresh that already
+    # fetched the candidate universe (hundreds of per-ticker calls) can trip a 429
+    # here, which _finnhub_get swallows to None. Retry ONCE with a short backoff
+    # before declaring the source unavailable, so a transient rate-limit degrades
+    # to a real reading on the second attempt rather than going dark. Still fully
+    # degradable: if both attempts fail it raises and the caller records
+    # "finnhub_unavailable" (never blocks the refresh).
+    _params = {"from": date_from, "to": date_to, "token": FINNHUB_API_KEY}
+    data = _finnhub_get(_FINNHUB_EARNINGS_CAL, _params)
+    if data is None:
+        import time as _time
+        _time.sleep(_FINNHUB_BULK_RETRY_BACKOFF_S)
+        data = _finnhub_get(_FINNHUB_EARNINGS_CAL, _params)
     if data is None:
         raise RuntimeError("finnhub_error")
     rows = data.get("earningsCalendar", []) if isinstance(data, dict) else []

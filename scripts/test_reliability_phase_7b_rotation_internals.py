@@ -1105,6 +1105,246 @@ check("17.11 universe-filtered reactions are bounded by the universe size",
       len(_recs_uni) <= 1)
 
 
+# ===========================================================================
+# 17b. Bulk earnings-calendar retry-once-with-backoff (rate-limit defense).
+# ===========================================================================
+import lib.signal_engine as _se_rt  # noqa: E402
+_orig_get = _se_rt._finnhub_get
+_orig_key = _se_rt.FINNHUB_API_KEY
+_orig_backoff = _se_rt._FINNHUB_BULK_RETRY_BACKOFF_S
+try:
+    _se_rt.FINNHUB_API_KEY = "dummy"          # bypass the no-key guard
+    _se_rt._FINNHUB_BULK_RETRY_BACKOFF_S = 0  # no real sleep in tests
+    # (a) a transient 429 (None on attempt 1) then a valid payload → succeeds.
+    _calls = {"n": 0}
+
+    def _flaky(url, params):
+        _calls["n"] += 1
+        if _calls["n"] == 1:
+            return None  # first attempt rate-limited
+        return {"earningsCalendar": [{"symbol": "AVGO", "date": "2026-06-02",
+                                      "epsActual": 1.0, "epsEstimate": 1.2}]}
+
+    _se_rt._finnhub_get = _flaky
+    _out = _se_rt.fetch_earnings_reactions_calendar("2026-05-20", "2026-06-05")
+    check("17b.1 transient rate-limit → retried once → returns the second payload",
+          _calls["n"] == 2 and len(_out) == 1 and _out[0]["ticker"] == "AVGO")
+    # (b) both attempts fail → still raises (fully degradable → finnhub_unavailable).
+    _calls["n"] = 0
+    _se_rt._finnhub_get = lambda url, params: (_calls.__setitem__("n", _calls["n"] + 1)
+                                               or None)
+    _raised = False
+    try:
+        _se_rt.fetch_earnings_reactions_calendar("2026-05-20", "2026-06-05")
+    except RuntimeError:
+        _raised = True
+    check("17b.2 both attempts fail → raises after exactly one retry (2 calls)",
+          _raised and _calls["n"] == 2)
+finally:
+    _se_rt._finnhub_get = _orig_get
+    _se_rt.FINNHUB_API_KEY = _orig_key
+    _se_rt._FINNHUB_BULK_RETRY_BACKOFF_S = _orig_backoff
+
+
+# ===========================================================================
+# 18. Banner ↔ _meta PARITY — drive the REAL Cockpit refresh end to end.
+# ===========================================================================
+# Root cause of the recurring report/UI mismatches: verification reconstructed the
+# fragility computation INLINE instead of driving the real refresh path, so
+# call-site differences (loader choice, universe arg, field nesting) only surfaced
+# on the next live refresh. This test drives the ACTUAL `_run_refresh` (the same
+# function the refresh button triggers) under AppTest with the network leaves
+# mocked, then asserts the banner the page RENDERS equals the `_meta` that same
+# refresh WROTE — one source, end to end. The three historical mismatches (nested
+# components, vintage split, dead earnings arg) each render a banner that disagrees
+# with `_meta`, so each would fail this parity check.
+import contextlib as _ctx  # noqa: E402
+from datetime import datetime as _dt2, timedelta as _td2  # noqa: E402
+from unittest import mock as _mock  # noqa: E402
+
+# en tokens come from the SAME translation table the page renders with, so the
+# expected-banner tokens never drift from production strings.
+import ui_utils as _uiu  # noqa: E402
+_EN = _uiu.TRANSLATIONS["en"]
+
+
+def _parity_frames():
+    """Synthetic OHLCV keyed by ticker on ONE business-day calendar ending at the
+    last bday <= now (mirrors the Saturday-after-midnight live situation). 'AAA'
+    carries a planted beat-sold-next-session reaction; the rest gently rise."""
+    _now = _dt2.now()
+    _idx = pd.bdate_range(end=_now, periods=60)
+    _report_date = str(_idx[-3].date())  # report 2 sessions before the last bday
+
+    def _loader(tk):
+        tk = str(tk).upper().strip()
+        if tk == "AAA":  # beat printed at idx[-3]; next session (idx[-2]) sells off
+            closes = [100.0 + i * 0.1 for i in range(60)]
+            closes[-2] = closes[-3] * 0.96  # -4% reaction → good-news-sold
+            closes[-1] = closes[-2] * 1.001
+        else:
+            closes = [50.0 + i * 0.2 for i in range(60)]
+        vols = [1e6 + (i % 5) * 1e5 for i in range(60)]
+        return pd.DataFrame({"Close": closes, "Volume": vols}, index=_idx)
+
+    return _loader, _report_date
+
+
+def _parity_patches(snap_dir, earnings_cal_fn):
+    """ExitStack of patches over the refresh's network leaves only — the REAL
+    compute_market_fragility / fragility_snapshot / write_daily_snapshot run."""
+    _loader, _ = _parity_frames()
+    _cands = [SimpleNamespace(ticker=tk) for tk in ("AAA", "BBB", "CCC", "DDD")]
+
+    def _boom(*a, **k):
+        raise RuntimeError("offline")
+
+    import lib.candidate_generator as _cg
+    import lib.theme_baskets as _tbm
+    import lib.macro_data as _md
+    import lib.relative_strength as _rsmod
+    import lib.anchor_cache as _ac
+    import lib.opportunity_ranker as _orr
+    import lib.signal_engine as _se
+
+    stack = _ctx.ExitStack()
+    stack.enter_context(_mock.patch.object(_cg, "generate_candidates",
+                                           lambda *a, **k: list(_cands)))
+    stack.enter_context(_mock.patch.object(_tbm, "compute_all_themes",
+                                           lambda *a, **k: []))
+    stack.enter_context(_mock.patch.object(_md, "fetch_all_macro", _boom))
+    stack.enter_context(_mock.patch.object(_md, "fetch_economic_releases", _boom))
+    stack.enter_context(_mock.patch.object(_rsmod, "build_rs_map_cache_only",
+                                           lambda *a, **k: {}))
+    stack.enter_context(_mock.patch.object(_rsmod, "persist_frames_to_cache",
+                                           lambda *a, **k: None))
+    stack.enter_context(_mock.patch.object(_ac, "load_all", lambda *a, **k: {}))
+    # rank → [] keeps card construction out of scope; _meta still carries the
+    # fragility header via write_daily_snapshot(fragility=cockpit_fragility).
+    stack.enter_context(_mock.patch.object(_orr, "rank_opportunities",
+                                           lambda *a, **k: []))
+    stack.enter_context(_mock.patch.object(_orr, "SNAPSHOT_DIR", snap_dir))
+    stack.enter_context(_mock.patch.object(_uiu, "load_ohlcv",
+                                           lambda tk, *a, **k: _loader(tk)))
+    stack.enter_context(_mock.patch.object(_se, "fetch_earnings_reactions_calendar",
+                                           earnings_cal_fn))
+    return stack
+
+
+def _expected_tokens(meta):
+    """The component tokens the banner MUST render, derived from _meta alone —
+    using the exact same formatting rules as pages/7 lines ~500-521."""
+    na = _EN["cockpit_frag_na"]
+    toks = []
+    toks.append(("level", str(meta.get("fragility_level", "normal"))))
+    _dd = max([x for x in (meta.get("distribution_days_spy"),
+                           meta.get("distribution_days_qqq")) if x is not None],
+              default=None)
+    toks.append(("dist", f"{_dd}/25" if _dd is not None else na))
+    _b20, _b20p = meta.get("breadth_above_sma20"), meta.get("breadth_above_sma20_prev")
+    if _b20 is None:
+        toks.append(("breadth", na))
+    elif _b20p is not None:
+        toks.append(("breadth", f"{int(_b20p*100)}%→{int(_b20*100)}%"))
+    else:
+        toks.append(("breadth", f"{int(_b20*100)}%"))
+    _gns = meta.get("good_news_sold")
+    if _gns is not None:
+        toks.append(("gns", f"{_EN['cockpit_frag_gns']}: {_gns}"))
+    else:
+        _r = str(meta.get("earnings_degrade_reason") or "")
+        toks.append(("gns", f"{_EN['cockpit_frag_gns']}: "
+                            + (f"{na} ({_r})" if _r else na)))
+    return toks
+
+
+def _parity_holds(blob, meta):
+    """True iff EVERY token _meta implies is present in the rendered banner blob."""
+    return all(tok in blob for _name, tok in _expected_tokens(meta))
+
+
+def _run_parity(earnings_cal_fn):
+    """Drive the real refresh once; return (banner_blob, meta_dict, exception)."""
+    import streamlit as _stp
+    _stp.page_link = lambda *a, **k: None
+    from streamlit.testing.v1 import AppTest as _ATp
+    _tmp = _P(_tf.mkdtemp())
+    with _parity_patches(_tmp, earnings_cal_fn):
+        _a = _ATp.from_file(os.path.join(_REPO_ROOT, "pages/7_Investment_Cockpit.py"),
+                            default_timeout=120)
+        _a.session_state["language"] = "en"
+        # Seed a valid regime so Section A (which hosts the internals banner) renders;
+        # the offline macro step fails-closed and PRESERVES this seed (never clears).
+        _a.session_state["macro_regime_result"] = {
+            "regime": "transition", "confidence": "low",
+            "horizon_bias": {"short": "cautious"}, "key_signals": [],
+            "opportunity_posture": "", "data_coverage": 1.0, "signals": []}
+        _a.run()
+        # Click the refresh button (the SAME entry point the user clicks).
+        _btn = None
+        for _b in _a.button:
+            if getattr(_b, "key", "") == "cockpit_refresh_all":
+                _btn = _b
+                break
+        if _btn is None:
+            return "", {}, "refresh button not found"
+        _btn.click().run()
+        _blob = " ".join(str(getattr(_m, "value", "")) for _m in _a.markdown)
+        _exc = str(list(_a.exception)) if _a.exception else ""
+        # Read the _meta the SAME refresh wrote.
+        _files = sorted(_tmp.glob("opportunities_*.jsonl"))
+        _meta = {}
+        if _files:
+            _first = _files[-1].read_text(encoding="utf-8").splitlines()[0]
+            _meta = _json.loads(_first)
+    return _blob, _meta, _exc
+
+
+try:
+    # --- Scenario A: earnings LIT (a beat sold) — banner shows the number ---
+    _lit_cal = lambda *a, **k: [{"ticker": "AAA",
+                                 "report_date": _parity_frames()[1],
+                                 "direction": "beat"}]  # noqa: E731
+    _blobA, _metaA, _excA = _run_parity(_lit_cal)
+    check("18.1 real refresh wrote a fragility _meta header (lit path)",
+          bool(_metaA) and "fragility_level" in _metaA, _excA[:160])
+    check("18.2 refresh raised no exception (lit path)", _excA == "", _excA[:200])
+    check("18.3 LIVE: earnings evaluated → good_news_sold is a number in _meta",
+          _metaA.get("good_news_sold") is not None
+          and _metaA.get("earnings_degrade_reason", "") == "",
+          f"gns={_metaA.get('good_news_sold')} reason={_metaA.get('earnings_degrade_reason')}")
+    check("18.4 PARITY (lit): every _meta token is rendered on the banner",
+          _parity_holds(_blobA, _metaA),
+          str(_expected_tokens(_metaA)) + " || " + _blobA[:240])
+
+    # --- Scenario B: earnings DARK (empty calendar) — the EXACT live bug ---
+    _dark_cal = lambda *a, **k: []  # call OK, nothing in window → no_reports_in_window
+    _blobB, _metaB, _excB = _run_parity(_dark_cal)
+    check("18.5 LIVE: empty calendar degrades to no_reports_in_window in _meta",
+          _metaB.get("good_news_sold") is None
+          and _metaB.get("earnings_degrade_reason") == "no_reports_in_window",
+          f"gns={_metaB.get('good_news_sold')} reason={_metaB.get('earnings_degrade_reason')}")
+    check("18.6 PARITY (dark): banner shows 'n/a (no_reports_in_window)' = _meta",
+          _parity_holds(_blobB, _metaB)
+          and "good-news-sold: n/a (no_reports_in_window)" in _blobB,
+          _blobB[:240])
+
+    # --- The parity check FAILS when banner and _meta diverge (the guarantee) ---
+    # A _meta whose level/components were altered (the nested/vintage/dead-arg class
+    # of bug) is NOT what the banner rendered → _parity_holds must be False.
+    _diverged_level = {**_metaB, "fragility_level":
+                       ("high" if _metaB.get("fragility_level") != "high" else "normal")}
+    check("18.7 parity FAILS on a diverged level (level mismatch caught)",
+          not _parity_holds(_blobB, _diverged_level))
+    _diverged_gns = {**_metaA, "good_news_sold": (_metaA.get("good_news_sold") or 0) + 7}
+    check("18.8 parity FAILS on a diverged component value (number mismatch caught)",
+          not _parity_holds(_blobA, _diverged_gns))
+except Exception as _e:  # noqa: BLE001 — AppTest unavailable counts as a failure
+    import traceback as _tb_p
+    check("18.1 banner↔_meta parity harness ran", False,
+          f"{_e} :: {_tb_p.format_exc()[-300:]}")
+
+
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------

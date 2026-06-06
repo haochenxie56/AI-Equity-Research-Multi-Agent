@@ -170,6 +170,22 @@ investment-agents/
 - Explain whether the change preserves deterministic computation.
 - If a relevant test exists, run it and report the result.
 
+### Verification Discipline (live-path rule)
+
+- **Any reported "today's reading" / live value in a final response MUST come from
+  executing the REAL refresh path** (the same code the UI button triggers —
+  `_run_refresh` for the Cockpit), NOT from an inline reconstruction of the
+  computation. Inline reconstructions silently diverge from the live path on
+  call-site details (loader choice, universe argument, field nesting), which is the
+  documented cause of repeated report-vs-UI mismatches.
+- **State the function actually invoked** to obtain the reading (e.g. "driven via
+  `pages/7_Investment_Cockpit.py::_run_refresh` under AppTest with mocked network").
+- A reading whose source the page reads (`_meta` / session_state) and a banner
+  rendering must be proven equal by a parity test that drives one refresh end to
+  end (see `scripts/test_reliability_phase_7b_rotation_internals.py` §18). The
+  parity test must FAIL if the rendered banner and the `_meta` written by that same
+  refresh disagree.
+
 ### Phase 0: Reliability Foundation
 
 Phase 0 is the **Reliability Foundation**. Its purpose is to create a standalone evidence and validation layer that can later wrap existing deterministic tools and LLM outputs **without changing** the current Streamlit UI or the existing research workflow.

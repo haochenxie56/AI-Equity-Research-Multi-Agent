@@ -511,8 +511,15 @@ else:
         else:
             _bits.append(f"{t('cockpit_frag_breadth')} {int(_b20*100)}%")
         _gns = _frag.get("good_news_sold")
-        _bits.append(f"{t('cockpit_frag_gns')}: "
-                     + (f"{_gns}" if _gns is not None else _na))
+        if _gns is not None:
+            _gns_txt = f"{_gns}"
+        else:
+            # When the earnings component is dark, say WHY on screen (the same
+            # earnings_degrade_reason carried in the _meta) so a report/UI
+            # divergence is self-explanatory: "无数据 (no_reports_in_window)".
+            _greason = str(_frag.get("earnings_degrade_reason") or "")
+            _gns_txt = f"{_na} ({_greason})" if _greason else _na
+        _bits.append(f"{t('cockpit_frag_gns')}: {_gns_txt}")
         st.markdown(
             f"{t('cockpit_hub_internals')}: "
             + _badge(_flevel, _fcolor)
