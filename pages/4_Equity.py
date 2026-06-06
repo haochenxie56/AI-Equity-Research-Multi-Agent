@@ -639,7 +639,9 @@ with tab_news:
 # placeholder in place — no st.rerun(), no layout shift, no second frame.
 # ``fv_slot.container()`` re-targets the st.empty() slot, so the result renders at
 # its original below-the-tabs position.
-from lib.equity_valuation import compute_app_fair_value, store_equity_research_result
+from lib.equity_valuation import (
+    compute_app_fair_value, store_equity_research_result, fetch_cyclical_band_history,
+)
 from lib.llm_orchestrator import analyze_equity_fair_value_debate
 
 _fv_lang = st.session_state.get("language", "en")
@@ -658,10 +660,14 @@ def _macro_regime_str_p4() -> str:
 if _fv_key not in st.session_state:
     # Pass the already-fetched peer info dicts so the routed valuation can use
     # growth-matched peer multiples for the EV anchors (Task 3). Falls back to
-    # sector-median multiples when peers are unavailable.
+    # sector-median multiples when peers are unavailable. The cyclical history
+    # fetcher (page path only) builds the ≤4y annual PB/PS band for cyclical names;
+    # the result is written through to the anchor cache so the network-free
+    # ranking / Cockpit paths read the baked band.
     _peers_for_val = globals().get("peer_infos") or None
     st.session_state[_fv_key] = compute_app_fair_value(
-        ticker, price, peers=_peers_for_val)
+        ticker, price, peers=_peers_for_val,
+        cyclical_history_fetcher=fetch_cyclical_band_history)
 _fv = st.session_state[_fv_key]
 
 _fv_irreconcilable = getattr(_fv, "blend_state", "blended") == "anchors_irreconcilable"
@@ -703,6 +709,11 @@ def _render_company_type_badge(_fv) -> None:
             _parts.append(f"{str(_a.get('name', '')).upper()} "
                           f"${float(_a.get('value', 0.0)):.2f} ({_flbl})")
         st.caption(f"{t('cockpit_fv_excluded')}: " + " · ".join(_parts))
+    # Degradation caveats (e.g. cyclical_band_unavailable / single_anchor_blend).
+    _caveats = getattr(_fv, "caveats", []) or []
+    if _caveats:
+        _clabels = [t(f"cockpit_fv_caveat_{c}") for c in _caveats]
+        st.caption(f"⚠️ {t('cockpit_fv_caveats')}: " + " · ".join(_clabels))
 
 
 with fv_slot.container().expander(t("cockpit_fv_header"), expanded=True):

@@ -355,10 +355,13 @@ with tempfile.TemporaryDirectory() as _td:
     with open(_vp, "w", encoding="utf-8") as fh:
         _json.dump({"version": _cur_ver, "anchors": {"X": {"fair_value_mid": 1.0}}}, fh)
     check(f"5.16 supported version (=={_cur_ver}) loads", set(ac.load_all(_vp)) == {"X"})
+    # DELIBERATE ASSERTION CHANGE (review fix F3/I4): bare un-versioned legacy
+    # objects are now REJECTED (invalidated → recomputed), not tolerated, so stale
+    # entries lacking company_type cannot surface. Old files degrade gracefully.
     with open(_vp, "w", encoding="utf-8") as fh:
         _json.dump({"X": {"fair_value_mid": 1.0}}, fh)
-    check("5.17 bare un-versioned legacy object still tolerated",
-          set(ac.load_all(_vp)) == {"X"})
+    check("5.17 bare un-versioned legacy object is now REJECTED (loads as empty)",
+          ac.load_all(_vp) == {}, detail=str(ac.load_all(_vp)))
 
 
 # ===========================================================================

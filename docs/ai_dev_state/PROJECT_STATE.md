@@ -1,20 +1,30 @@
 # AI Investment Agent — Project State
 
 **Last updated**: 2026-06-06 (**Valuation Refactor v1 — method router +
-growth-profile peers — Implemented** — see the section immediately below; Phase
-7B, Valuation Stop-the-Bleed, and Phase 7A sections follow. Prior status blob
+growth-profile peers — Implemented; UNDER INDEPENDENT REVIEW (REQUEST CHANGES fix
+round applied; not yet closed)** — see the section immediately below; Phase 7B,
+Valuation Stop-the-Bleed, and Phase 7A sections follow. Prior status blob
 preserved verbatim afterward.)
 
-## Valuation Refactor v1 — Method Router + Growth-Profile Peers — Implemented (CURRENT TASK)
+## Valuation Refactor v1 — Method Router + Growth-Profile Peers — Implemented; Under Independent Review (CURRENT TASK)
 
 Gives each company type an appropriate valuation method menu so the
 irreconcilable-anchor rate materially drops (the KTOS class no longer dead-ends at
 "we don't know"). **All deterministic; no LLM** (reverse DCF + debate integration
 are Phase 8). Phase doc `docs/reliability_valuation_router.md`; suite
-`scripts/test_reliability_valuation_router.py` **54/54**; full canonical set green
+`scripts/test_reliability_valuation_router.py` **81/81**; full canonical set green
 (stopbleed 65/65, 7A 115/115, 7B 187/187, 6c_b 47/47, equity_render_order 50/50,
 6c_trading_desk 118/118, 6c_v3_entry_v4 47/47, 6b_v3_horizon_scoring 189/189,
 theme_baskets 146/146, scanner_rotation_adapter 15/15).
+
+**Review status:** independent review returned **REQUEST CHANGES**; all five
+findings fixed (NOT yet closed — closure happens after re-review approves):
+**F1** growth_unprofitable excludes DCF structurally (menu, not a computability
+guard); **F2** cyclical PB/PS band is a real ≤4y annual band (yfinance annual
+fundamentals + cached prices, page path only, baked into the anchor cache so
+ranking/Cockpit stay network-free; degrades to analyst-only + caveat);
+**F3** anchor cache rejects bare un-versioned legacy maps; **F4** industry/sector
+hints matched by token boundary (`industry_has_hint`); **F5** status docs aligned.
 
 **Task 1 — Classifier** (`lib/valuation_router.py`, NEW): `classify_company`
 classifies into mature_profitable / growth_profitable / growth_unprofitable /

@@ -119,12 +119,12 @@ _DEFAULT_PS = 2.5
 # --- Method menus per company type (Valuation Refactor v1, Task 2) -----------
 # Each company type routes a different INPUT SET into the blend. ``blend`` lists
 # the anchor keys eligible for the blend (only the ones whose value is present
-# actually contribute); ``blend_if_present`` adds an anchor only when it is
-# computable (e.g. DCF for an unprofitable grower is usually not); ``excluded``
-# anchors are computed-but-not-blended (shown for transparency, flagged with the
-# reason). The dispersion gate from stop-the-bleed runs LAST on whatever the menu
-# produced. The default (empty / unknown company_type) is mature_profitable, which
-# is byte-identical to the prior DCF + relative-PE + analyst behavior.
+# actually contribute); ``blend_if_present`` (a generic, currently-unused
+# mechanism) would add an anchor only when its value exists; ``excluded`` anchors
+# are computed-but-not-blended (shown for transparency, flagged with the reason).
+# The dispersion gate from stop-the-bleed runs LAST on whatever the menu produced.
+# The default (empty / unknown company_type) is mature_profitable, which is
+# byte-identical to the prior DCF + relative-PE + analyst behavior.
 METHOD_MENUS: dict = {
     "mature_profitable": {
         "blend": ["dcf", "relative_pe", "analyst"],
@@ -137,11 +137,12 @@ METHOD_MENUS: dict = {
         "excluded": ["dcf"],
     },
     "growth_unprofitable": {
-        # forward EV/S vs growth-matched peers + analyst; PE EXCLUDED (the garbage
-        # source); DCF only if it happens to be computable.
+        # forward EV/S vs growth-matched peers + analyst ONLY. PE EXCLUDED (the
+        # garbage source) AND DCF EXCLUDED structurally — for loss-making companies
+        # DCF output is unreliable even when FCF is momentarily positive, and a
+        # user DCF override must not bypass the menu either (review fix D2).
         "blend": ["ev_s", "analyst"],
-        "blend_if_present": ["dcf"],
-        "excluded": ["relative_pe"],
+        "excluded": ["relative_pe", "dcf"],
     },
     "project_driven": {
         # forward EV/EBITDA + analyst; backlog coverage is the right metric but is
@@ -151,8 +152,8 @@ METHOD_MENUS: dict = {
         "backlog_metric": True,
     },
     "cyclical": {
-        # PB/PS band vs the ticker's own 5y history + analyst; trailing-PE is
-        # cycle-distorted (flagged, not blended); DCF excluded.
+        # PB/PS band vs the ticker's own ≤4y annual history + analyst; trailing-PE
+        # is cycle-distorted (flagged, not blended); DCF excluded.
         "blend": ["pb_ps_band", "analyst"],
         "excluded": ["dcf"],
         "cycle_distorted": ["relative_pe"],
@@ -168,7 +169,7 @@ _ANCHOR_FACTORS: dict = {
     "analyst":     (0.80, _W_ANALYST, 1.05, "analyst target"),
     "ev_s":        (0.85, 0.45, 1.10, "forward EV/S (peer P/S proxy, growth-matched)"),
     "ev_ebitda":   (0.85, 0.50, 1.10, "forward EV/EBITDA (peers)"),
-    "pb_ps_band":  (0.90, 0.50, 1.10, "PB/PS band (5y percentile)"),
+    "pb_ps_band":  (0.90, 0.50, 1.10, "PB/PS band (≤4y annual percentile)"),
 }
 
 # Display name for each anchor key (kept stable for the cache / UI: the relative
@@ -185,6 +186,25 @@ _RULE_OF_40_TARGET = 0.40
 _RULE_OF_40_SENSITIVITY = 0.5   # multiplier swing per 1.0 of (score − 0.40)
 _RULE_OF_40_MIN = 0.80
 _RULE_OF_40_MAX = 1.25
+
+# --- Cyclical PB/PS history band (review fix D1/I10) -------------------------
+# The cyclical menu values the company against its OWN historical multiple range.
+# Free yfinance annual fundamentals yield ~4 annual observations, so this is an
+# **≤4-year ANNUAL approximation** (NOT a 5-year band) and is labelled as such
+# everywhere it surfaces. The percentile levels are a single visible config block:
+# the p50 (median) of the historical multiple × the current per-share fundamental
+# is the blended anchor; p20 / p80 contextualize the cheap / expensive band.
+PB_PS_BAND_PERCENTILES: dict = {"low": 20, "mid": 50, "high": 80}
+MIN_CYCLICAL_BAND_OBS = 3   # need >= 3 annual observations to trust the band
+CYCLICAL_BAND_MAX_YEARS = 4  # free-tier annual statements yield ~4 observations
+
+# --- Valuation caveat vocabulary (review fix I10) ---------------------------
+# Real degradation tokens surfaced in pages/4 and carried on AppFairValue.caveats.
+CAVEAT_CYCLICAL_BAND_UNAVAILABLE = "cyclical_band_unavailable"
+CAVEAT_SINGLE_ANCHOR_BLEND = "single_anchor_blend"
+VALUATION_CAVEATS: tuple = (
+    CAVEAT_CYCLICAL_BAND_UNAVAILABLE, CAVEAT_SINGLE_ANCHOR_BLEND,
+)
 
 
 def get_sector_median_pe(sector: Optional[str]) -> float:
@@ -264,6 +284,10 @@ class AppFairValue:
     pb_ps_value: Optional[float] = None
     peer_basis: str = ""
     backlog_note: str = ""
+    # caveats: real degradation tokens (see VALUATION_CAVEATS) — e.g.
+    # "cyclical_band_unavailable" (history band could not be built) or
+    # "single_anchor_blend" (only one anchor entered the blend). Surfaced in pages/4.
+    caveats: list = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -321,6 +345,7 @@ def build_app_fair_value(
     pb_ps_basis: str = "",
     peer_basis: str = "",
     backlog_note: str = "",
+    caveats: Optional[list] = None,
 ) -> AppFairValue:
     """Assemble an :class:`AppFairValue` from the routed anchor set (pure).
 
@@ -420,6 +445,12 @@ def build_app_fair_value(
     irreconcilable = (anchor_dispersion is not None
                       and anchor_dispersion > ANCHOR_DISPERSION_THRESHOLD)
 
+    # Caveats: caller-supplied tokens (e.g. cyclical_band_unavailable) plus a
+    # generic single_anchor_blend when exactly one anchor entered the blend.
+    _caveats = list(caveats or [])
+    if len(anchors) == 1 and CAVEAT_SINGLE_ANCHOR_BLEND not in _caveats:
+        _caveats.append(CAVEAT_SINGLE_ANCHOR_BLEND)
+
     _common = dict(
         company_type=company_type,
         company_type_confidence=company_type_confidence,
@@ -431,6 +462,7 @@ def build_app_fair_value(
         pb_ps_value=(round(pb_ps, 2) if pb_ps is not None else None),
         peer_basis=peer_basis,
         backlog_note=backlog_note,
+        caveats=_caveats,
     )
 
     if irreconcilable:
@@ -763,6 +795,21 @@ def _median(vals: list) -> Optional[float]:
     return nums[mid] if n % 2 == 1 else (nums[mid - 1] + nums[mid]) / 2.0
 
 
+def _percentile(vals: list, p: float) -> Optional[float]:
+    """Linear-interpolation percentile (``p`` in 0–100) over ``vals`` (numpy-free,
+    deterministic). Returns ``None`` for an empty / all-invalid list."""
+    nums = sorted(float(v) for v in vals if _finite(v) is not None)
+    if not nums:
+        return None
+    if len(nums) == 1:
+        return nums[0]
+    rank = (p / 100.0) * (len(nums) - 1)
+    lo = int(rank)
+    hi = min(lo + 1, len(nums) - 1)
+    frac = rank - lo
+    return nums[lo] + (nums[hi] - nums[lo]) * frac
+
+
 def _rule_of_40_multiplier(score: Optional[float]) -> float:
     """Rule-of-40 quality modifier on a growth multiple (bounded).
 
@@ -848,34 +895,188 @@ def _compute_ev_ebitda(raw: dict, *, peer_ev_ebitda: Optional[float] = None) -> 
 
 
 def _compute_pb_ps_band(raw: dict, *, pb_history: Optional[list] = None,
-                        ps_history: Optional[list] = None) -> tuple:
-    """PB/PS band anchor vs the ticker's OWN 5y history (fail-closed).
+                        ps_history: Optional[list] = None,
+                        years: Optional[int] = None) -> tuple:
+    """PB/PS band anchor vs the ticker's OWN ≤4-year ANNUAL history (fail-closed).
 
-    Needs a historical multiple series (``pb_history`` of price/book or
-    ``ps_history`` of price/sales) — free ``info`` only carries the current
-    multiple, so on the routed network-free path this returns ``(None, "")`` and
-    the caller emits a cyclical note. When a series is injected (tests / a richer
-    source) the mid-cycle multiple is the series median: PB band uses
-    ``median_pb × book_value_per_share``; PS band uses
-    ``median_ps × (revenue / shares)``. Returns ``(value, basis)`` or ``(None, "")``.
+    Given a historical annual multiple series (``pb_history`` of price/book or
+    ``ps_history`` of price/sales — built by :func:`build_pb_ps_history` on the
+    page path), the blended anchor is the **p50 (median)** of the multiple ×
+    the current per-share fundamental (mid-cycle re-rating). The p20 / p80
+    percentiles (``PB_PS_BAND_PERCENTILES``) contextualize the cheap / expensive
+    band in the basis label. PB is preferred (stabler for cyclicals); PS is the
+    fallback. The label says it is an **≤Ny annual approximation** — never a "5y
+    band". Returns ``(value, basis)`` or ``(None, "")`` (callers degrade with the
+    ``cyclical_band_unavailable`` caveat).
     """
+    lo_p = PB_PS_BAND_PERCENTILES["low"]
+    mid_p = PB_PS_BAND_PERCENTILES["mid"]
+    hi_p = PB_PS_BAND_PERCENTILES["high"]
+
     bvps = _finite_pos(raw.get("book_value"))
     if pb_history and bvps is not None:
-        med = _median(pb_history)
-        if med is not None and med > 0:
-            value = med * bvps
+        vals = [v for v in pb_history if _finite_pos(v) is not None]
+        p50 = _percentile(vals, mid_p)
+        if p50 is not None and p50 > 0:
+            value = p50 * bvps
             if value == value and value > 0:
-                return round(value, 2), "PB band (5y median × BVPS)"
+                p20 = _percentile(vals, lo_p) or p50
+                p80 = _percentile(vals, hi_p) or p50
+                yr = years if years else len(vals)
+                return round(value, 2), (
+                    f"PB band (≤{yr}y annual: p20/p50/p80 = "
+                    f"{p20:.1f}/{p50:.1f}/{p80:.1f}× × BVPS ${bvps:.2f})")
     if ps_history:
         revenue = _finite_pos(raw.get("total_revenue"))
         shares = _finite_pos(raw.get("shares"))
         if revenue is not None and shares is not None:
-            med = _median(ps_history)
-            if med is not None and med > 0:
-                value = med * (revenue / shares)
+            vals = [v for v in ps_history if _finite_pos(v) is not None]
+            p50 = _percentile(vals, mid_p)
+            if p50 is not None and p50 > 0:
+                value = p50 * (revenue / shares)
                 if value == value and value > 0:
-                    return round(value, 2), "PS band (5y median × sales/share)"
+                    p20 = _percentile(vals, lo_p) or p50
+                    p80 = _percentile(vals, hi_p) or p50
+                    yr = years if years else len(vals)
+                    return round(value, 2), (
+                        f"PS band (≤{yr}y annual: p20/p50/p80 = "
+                        f"{p20:.1f}/{p50:.1f}/{p80:.1f}× × sales/share)")
     return None, ""
+
+
+def build_pb_ps_history(balance_sheet, income_stmt, price_history, *,
+                        ticker: str = "",
+                        max_years: int = CYCLICAL_BAND_MAX_YEARS) -> dict:
+    """Build annual PB & PS multiple series from annual statements + dated prices.
+
+    PURE (no network): given yfinance-shaped annual ``balance_sheet`` /
+    ``income_stmt`` DataFrames (index = row label, columns = fiscal-period
+    Timestamps) and a ``price_history`` (a DataFrame/Series with a DatetimeIndex
+    and a Close), compute, for each of the most recent ``max_years`` fiscal
+    periods, ``PB = price_asof / (equity / shares)`` and
+    ``PS = price_asof / (revenue / shares)``. Returns
+    ``{"pb_history", "ps_history", "years", "source"}`` (``years`` = count of
+    usable annual observations). Fail-closed → ``{}`` on any error.
+    """
+    try:
+        import pandas as pd  # local import; pandas already a project dep
+
+        def _row(df, names):
+            if df is None or getattr(df, "empty", True):
+                return None
+            for nm in names:
+                if nm in df.index:
+                    return df.loc[nm]
+            return None
+
+        equity_row = _row(balance_sheet, [
+            "Stockholders Equity", "Common Stock Equity",
+            "Total Stockholder Equity", "StockholdersEquity"])
+        shares_row = _row(balance_sheet, [
+            "Ordinary Shares Number", "Share Issued", "Common Stock Shares Outstanding"])
+        revenue_row = _row(income_stmt, ["Total Revenue", "TotalRevenue", "Revenue"])
+        if equity_row is None or shares_row is None:
+            return {}
+
+        # Dated Close series for as-of lookup.
+        close = None
+        if price_history is not None:
+            try:
+                if hasattr(price_history, "columns"):
+                    close = (price_history["Close"] if "Close" in price_history.columns
+                             else price_history.iloc[:, 0])
+                else:
+                    close = price_history  # already a Series
+                close = close.dropna()
+                close = close.sort_index()
+            except Exception:  # noqa: BLE001
+                close = None
+
+        def _price_asof(date):
+            if close is None or len(close) == 0:
+                return None
+            try:
+                ts = pd.Timestamp(date)
+                sub = close[close.index <= ts]
+                if len(sub) == 0:
+                    return None
+                return float(sub.iloc[-1])
+            except Exception:  # noqa: BLE001
+                return None
+
+        cols = list(equity_row.index)[:max_years]
+        pb_history, ps_history = [], []
+        for c in cols:
+            try:
+                equity = _finite_pos(equity_row.get(c))
+                shares = _finite_pos(shares_row.get(c))
+            except Exception:  # noqa: BLE001
+                equity = shares = None
+            if equity is None or shares is None:
+                continue
+            price = _price_asof(c)
+            if price is None or price <= 0:
+                continue
+            bvps = equity / shares
+            if bvps and bvps > 0:
+                pb = price / bvps
+                if pb == pb and pb > 0:
+                    pb_history.append(round(pb, 4))
+            if revenue_row is not None:
+                try:
+                    rev = _finite_pos(revenue_row.get(c))
+                except Exception:  # noqa: BLE001
+                    rev = None
+                if rev is not None:
+                    sps = rev / shares
+                    if sps and sps > 0:
+                        ps = price / sps
+                        if ps == ps and ps > 0:
+                            ps_history.append(round(ps, 4))
+        years = max(len(pb_history), len(ps_history))
+        if years == 0:
+            return {}
+        return {"pb_history": pb_history, "ps_history": ps_history,
+                "years": years, "source": "yfinance annual (≤4y)"}
+    except Exception:  # noqa: BLE001 — fully fail-closed
+        return {}
+
+
+def fetch_cyclical_band_history(ticker: str, *, price_loader=None) -> dict:
+    """Fetch annual fundamentals (yfinance) + cached prices → PB/PS history.
+
+    **PAGE PATH ONLY** — the per-ticker fundamentals fetch is allowed only where
+    existing per-ticker fetches happen (pages/4 context). The price history comes
+    from the local OHLCV cache (no fetch). Results are written through to the
+    anchor cache by the page hand-off, so subsequent loads and ALL ranking /
+    Cockpit refresh paths read the baked band and stay network-free. Fail-closed
+    → ``{}`` (caller degrades with the ``cyclical_band_unavailable`` caveat).
+    """
+    try:
+        import yfinance as yf
+
+        tk = yf.Ticker(ticker)
+        bs = getattr(tk, "balance_sheet", None)
+        istmt = getattr(tk, "income_stmt", None)
+        if istmt is None or getattr(istmt, "empty", True):
+            istmt = getattr(tk, "financials", None)
+
+        if price_loader is None:
+            def price_loader(t):  # default: local OHLCV cache (no fetch)
+                try:
+                    from lib import cache_manager
+                    for dt in ("ohlcv_1y_1d", "ohlcv", "ohlcv_2y_1d", "ohlcv_5y_1wk"):
+                        df = cache_manager.load(t, dt)
+                        if df is not None and not getattr(df, "empty", True):
+                            return df
+                except Exception:  # noqa: BLE001
+                    return None
+                return None
+
+        px = price_loader(ticker)
+        return build_pb_ps_history(bs, istmt, px, ticker=ticker)
+    except Exception:  # noqa: BLE001 — fail-closed (page path)
+        return {}
 
 
 # ---------------------------------------------------------------------------
@@ -885,7 +1086,8 @@ def _compute_pb_ps_band(raw: dict, *, pb_history: Optional[list] = None,
 
 def _assemble_fair_value(ticker: str, current_price: float,
                          dcf_override: Optional[float], raw: dict,
-                         peers: Optional[list] = None) -> AppFairValue:
+                         peers: Optional[list] = None,
+                         cyclical_history_fetcher=None) -> AppFairValue:
     """Classify the company, route the anchor menu, and assemble the band (pure).
 
     Computes the DCF / relative-PE / analyst anchors (unchanged), classifies the
@@ -893,8 +1095,13 @@ def _assemble_fair_value(ticker: str, current_price: float,
     the routed extra anchors (EV/S, EV/EBITDA, PB/PS band) the menu needs. When
     ``peers`` (already-fetched peer ``info`` dicts) is supplied, growth-matched
     peer multiples drive the EV anchors; otherwise the sector-median fallback is
-    used and ``peer_basis="sector_fallback"``. The dispersion gate still runs LAST
-    inside :func:`build_app_fair_value`.
+    used and ``peer_basis="sector_fallback"``.
+
+    ``cyclical_history_fetcher`` (page path only) is a ``ticker -> {pb_history,
+    ps_history, years}`` callable used ONLY for the cyclical menu to build the
+    ≤4y annual PB/PS band. It is ``None`` on the cached / ranking path, so those
+    paths stay network-free and degrade with the ``cyclical_band_unavailable``
+    caveat. The dispersion gate still runs LAST inside :func:`build_app_fair_value`.
     """
     from lib.valuation_router import (
         classify_company, select_method_menu, match_growth_profile_peers,
@@ -955,6 +1162,7 @@ def _assemble_fair_value(ticker: str, current_price: float,
     ev_s_basis = ev_ebitda_basis = pb_ps_basis = ""
     peer_basis = ""
     backlog_note = ""
+    caveats: list = []
 
     needs_ev_s = "ev_s" in menu.get("blend", [])
     needs_ev_ebitda = "ev_ebitda" in menu.get("blend", [])
@@ -1002,7 +1210,23 @@ def _assemble_fair_value(ticker: str, current_price: float,
             peer_basis = "growth_matched" if peer_ev_ebitda is not None else "sector_fallback"
 
     if needs_pb_ps:
-        pb_ps_value, pb_ps_basis = _compute_pb_ps_band(raw)
+        # Build the ≤4y annual PB/PS band ONLY on the page path (fetcher
+        # supplied). Need >= MIN_CYCLICAL_BAND_OBS annual observations; else
+        # degrade to analyst-only with a real caveat token (network-free ranking /
+        # Cockpit paths always take this degrade since they pass no fetcher).
+        _hist = None
+        if cyclical_history_fetcher is not None:
+            try:
+                _hist = cyclical_history_fetcher(ticker)
+            except Exception:  # noqa: BLE001 — fail-closed
+                _hist = None
+        _yrs = int((_hist or {}).get("years", 0) or 0)
+        if _hist and _yrs >= MIN_CYCLICAL_BAND_OBS:
+            pb_ps_value, pb_ps_basis = _compute_pb_ps_band(
+                raw, pb_history=_hist.get("pb_history"),
+                ps_history=_hist.get("ps_history"), years=_yrs)
+        if pb_ps_value is None:
+            caveats.append(CAVEAT_CYCLICAL_BAND_UNAVAILABLE)
 
     if menu.get("backlog_metric") and not pb_ps_value:
         backlog_note = (
@@ -1042,6 +1266,7 @@ def _assemble_fair_value(ticker: str, current_price: float,
         pb_ps_basis=pb_ps_basis,
         peer_basis=peer_basis,
         backlog_note=backlog_note,
+        caveats=caveats,
     )
 
 
@@ -1060,7 +1285,8 @@ def _compute_cached(ticker: str, current_price: float,
 
 def compute_app_fair_value(ticker: str, current_price: float, *,
                            dcf_override: Optional[float] = None,
-                           peers: Optional[list] = None) -> AppFairValue:
+                           peers: Optional[list] = None,
+                           cyclical_history_fetcher=None) -> AppFairValue:
     """Compute the :class:`AppFairValue` for ``ticker`` (yfinance only; fail-closed).
 
     Cached TTL=3600 keyed on ``(ticker, current_price, dcf_override)``. When
@@ -1068,9 +1294,11 @@ def compute_app_fair_value(ticker: str, current_price: float, *,
     internal DCF (e.g. a user-adjusted DCF from the Financials tab).
 
     When ``peers`` (already-fetched peer ``info`` dicts from the Equity page peer
-    table) is supplied, growth-matched peer multiples drive the routed EV anchors;
-    this path is NOT cached (the list is unhashable) and re-uses the page's peers
-    — no new per-ticker network. On ANY failure a well-formed
+    table) OR ``cyclical_history_fetcher`` (the page-path PB/PS-band fetcher) is
+    supplied, the routed path runs UNCACHED (the inputs are unhashable) and re-uses
+    page-side data — no new per-ticker network beyond the page's existing fetches.
+    The cached path (neither supplied) is taken by the ranking / Cockpit refresh,
+    which therefore stays network-free. On ANY failure a well-formed
     ``data_source="fixture"`` result anchored on ``current_price`` is returned —
     this function never raises.
     """
@@ -1084,8 +1312,10 @@ def compute_app_fair_value(ticker: str, current_price: float, *,
         except (TypeError, ValueError):
             ov = None
     try:
-        if peers:
-            return _assemble_fair_value(t, round(cp, 4), ov, _fetch_raw(t), peers=peers)
+        if peers or cyclical_history_fetcher is not None:
+            return _assemble_fair_value(
+                t, round(cp, 4), ov, _fetch_raw(t), peers=peers,
+                cyclical_history_fetcher=cyclical_history_fetcher)
         return _compute_cached(t, round(cp, 4), ov)
     except Exception:  # noqa: BLE001 — fully fail-closed
         return build_app_fair_value(

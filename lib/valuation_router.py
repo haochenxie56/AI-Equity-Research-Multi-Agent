@@ -29,6 +29,7 @@ Five company types
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -62,17 +63,18 @@ CLASSIFIER_CONFIG: dict = {
     "borderline_rel_band": 0.15,
 }
 
-# Industry-name substrings (lower-cased contains-match) that mark a company as
-# project / backlog driven. Industry is the strong signal; revenue lumpiness is a
-# secondary / borderline confirmer.
-# Precise industry-name phrases (avoid over-broad single words like
-# "infrastructure", which would wrongly catch "Software—Infrastructure").
+# Industry-name hints (token-boundary matched — see industry_has_hint) that mark
+# a company as project / backlog driven. Industry is the strong signal; revenue
+# lumpiness is a secondary / borderline confirmer. Hints are matched as whole
+# tokens / contiguous token runs, so over-broad single words (e.g. the removed
+# "infrastructure") cannot match inside longer tokens like "Software—Infrastructure".
 PROJECT_DRIVEN_INDUSTRY_HINTS: tuple = (
     "aerospace", "defense", "engineering & construction",
     "security & protection", "shipbuilding", "marine shipping",
 )
 
-# Sectors / industry substrings that mark a company as cyclical.
+# Sectors (exact match) / industry hints (token-boundary) that mark a company as
+# cyclical.
 CYCLICAL_SECTORS: tuple = ("Energy", "Basic Materials")
 # "memory" (not the broad "semiconductor") is the canonical cyclical semi —
 # broad-based semiconductor growth names (e.g. NVDA) should route to a growth menu.
@@ -86,6 +88,46 @@ COMPANY_TYPES: tuple = (
     "project_driven", "cyclical",
 )
 DEFAULT_TYPE = "mature_profitable"
+
+
+# ===========================================================================
+# Token-boundary hint matching (review fix I8)
+# ===========================================================================
+#
+# Industry / sector strings are matched against the hint lists by TOKEN BOUNDARY,
+# not substring containment. A single-word hint must equal a whole token (so
+# "gas" no longer matches inside "vegas", and "semiconductor" no longer matches
+# "Semiconductors"); a multi-word hint must appear as a contiguous run of tokens.
+# Tokenization lower-cases and splits on every non-alphanumeric character —
+# including the em-dash used in yfinance industry strings ("Software—Infrastructure"
+# → ["software", "infrastructure"]).
+
+
+def _tokenize(s) -> list:
+    """Lower-case ``s`` and split into alphanumeric tokens (em-dash aware)."""
+    if not isinstance(s, str):
+        return []
+    return [tok for tok in re.split(r"[^a-z0-9]+", s.lower()) if tok]
+
+
+def _hint_matches_tokens(text_tokens: list, hint: str) -> bool:
+    """True when ``hint`` (tokenized) appears as a contiguous run in ``text_tokens``."""
+    hint_tokens = _tokenize(hint)
+    if not hint_tokens:
+        return False
+    n = len(hint_tokens)
+    for i in range(len(text_tokens) - n + 1):
+        if text_tokens[i:i + n] == hint_tokens:
+            return True
+    return False
+
+
+def industry_has_hint(industry, hints) -> bool:
+    """True when any hint in ``hints`` token-matches the ``industry`` string."""
+    toks = _tokenize(industry)
+    if not toks:
+        return False
+    return any(_hint_matches_tokens(toks, h) for h in hints)
 
 
 # ===========================================================================
@@ -230,7 +272,7 @@ def classify_company(
         )
 
     # --- 1. project_driven: backlog / contract industry hint (or lumpy rev) --
-    industry_hint = any(h in industry_l for h in PROJECT_DRIVEN_INDUSTRY_HINTS)
+    industry_hint = industry_has_hint(industry_l, PROJECT_DRIVEN_INDUSTRY_HINTS)
     lumpy = (rcov is not None and rcov >= config["revenue_cov_lumpy"])
     fired.append(_rule("project_industry_hint", industry or "", "contains",
                        PROJECT_DRIVEN_INDUSTRY_HINTS, industry_hint))
@@ -247,7 +289,7 @@ def classify_company(
 
     # --- 2. cyclical: commodity / memory / industrial-cycle hint -------------
     sector_cyc = sector_s in CYCLICAL_SECTORS
-    industry_cyc = any(h in industry_l for h in CYCLICAL_INDUSTRY_HINTS)
+    industry_cyc = industry_has_hint(industry_l, CYCLICAL_INDUSTRY_HINTS)
     margin_volatile = (mcov is not None and mcov >= config["margin_cov_cyclical"])
     fired.append(_rule("cyclical_sector", sector_s, "in", CYCLICAL_SECTORS, sector_cyc))
     fired.append(_rule("cyclical_industry_hint", industry or "", "contains",

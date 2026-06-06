@@ -50,6 +50,8 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
+import pandas as pd  # noqa: E402
+
 import lib.valuation_router as vr  # noqa: E402
 import lib.equity_valuation as eqv  # noqa: E402
 import lib.anchor_cache as ac  # noqa: E402
@@ -202,12 +204,16 @@ check("2.6 growth_unprofitable EXCLUDES relative-PE (the garbage source)",
       and _excluded_flag(_gub, "relative") == "excluded",
       detail=str(_gub.excluded_anchors))
 
-# growth_unprofitable: DCF included only if computable (blend_if_present).
+# DELIBERATE ASSERTION CHANGE (review fix F1/D2): growth_unprofitable EXCLUDES
+# DCF structurally — even when a positive DCF input is supplied (and a user DCF
+# override must not bypass the menu). DCF output is unreliable for loss-makers.
 _gub_dcf = eqv.build_app_fair_value(
     "GUD", 50.0, dcf_value=44.0, relative_value=80.0, analyst_target=45.0,
     analyst_count=6, company_type="growth_unprofitable", ev_s_value=40.0)
-check("2.7 growth_unprofitable adds DCF when computable",
-      "dcf" in _names(_gub_dcf.anchors), detail=str(_names(_gub_dcf.anchors)))
+check("2.7 growth_unprofitable EXCLUDES DCF even when a positive DCF is available",
+      "dcf" not in _names(_gub_dcf.anchors)
+      and _excluded_flag(_gub_dcf, "dcf") == "excluded",
+      detail=f"anchors={_names(_gub_dcf.anchors)} excl={_gub_dcf.excluded_anchors}")
 
 # project_driven: ev_ebitda + analyst; DCF + PE excluded.
 _pdb = eqv.build_app_fair_value(
@@ -405,6 +411,172 @@ check("7.7 AFTER DCF note is the honest 'excluded for type' reason",
       "excluded" in (_after.dcf_note or "").lower(), detail=_after.dcf_note)
 check("7.8 AFTER carries a backlog_note (free-source limit honesty)",
       bool(_after.backlog_note), detail=_after.backlog_note)
+
+
+# ===========================================================================
+# Section 8 — Token-boundary hint matching (review fix F4/I8)
+# ===========================================================================
+
+# Historical over-match #1: "Software—Infrastructure" must NOT be project_driven
+# (the over-broad "infrastructure" hint was removed; phrases are token-matched).
+_sw = vr.classify_company(
+    ticker="SW", sector="Technology", industry="Software—Infrastructure",
+    revenue_growth=0.40, profit_margin=-0.10, market_cap=2.0e10)
+check("8.1 'Software—Infrastructure' is NOT project_driven",
+      _sw.company_type != "project_driven", detail=_sw.company_type)
+
+# Historical over-match #2: broad "Semiconductors" must NOT be cyclical
+# (token-boundary: singular "memory"/"semiconductor" hint != plural token).
+_semi = vr.classify_company(
+    ticker="NVDA", sector="Technology", industry="Semiconductors",
+    revenue_growth=0.60, profit_margin=0.50, market_cap=2.0e12)
+check("8.2 'Semiconductors' (NVDA) is NOT cyclical",
+      _semi.company_type != "cyclical", detail=_semi.company_type)
+check("8.3 'Semiconductors' (NVDA) stays growth_profitable",
+      _semi.company_type == "growth_profitable", detail=_semi.company_type)
+
+# Intended positive matches preserved.
+_lmt = vr.classify_company(
+    ticker="LMT", sector="Industrials", industry="Aerospace & Defense",
+    revenue_growth=0.05, profit_margin=0.10, market_cap=1.0e11)
+check("8.4 'Aerospace & Defense' -> project_driven (LMT)",
+      _lmt.company_type == "project_driven", detail=_lmt.company_type)
+_mu_cls = vr.classify_company(
+    ticker="MU", sector="Technology", industry="Semiconductor Memory",
+    revenue_growth=0.20, profit_margin=0.10, market_cap=1.0e11)
+check("8.5 'Semiconductor Memory' -> cyclical (memory token, MU)",
+      _mu_cls.company_type == "cyclical", detail=_mu_cls.company_type)
+
+# Matcher-level structural pins.
+check("8.6 token matcher: 'semiconductor' does NOT match 'Semiconductors'",
+      not vr.industry_has_hint("Semiconductors", ("semiconductor",)))
+check("8.7 token matcher: 'gas' does NOT match inside 'Las Vegas Casinos'",
+      not vr.industry_has_hint("Las Vegas Casinos & Resorts", ("gas",)))
+check("8.8 token matcher: multi-word 'engineering & construction' matches",
+      vr.industry_has_hint("Engineering & Construction Services",
+                           ("engineering & construction",)))
+check("8.9 token matcher: em-dash split ('oil' matches 'Oil—Gas Midstream')",
+      vr.industry_has_hint("Oil—Gas Midstream", ("oil",)))
+
+
+# ===========================================================================
+# Section 9 — Cyclical ≤4y annual PB/PS history band (review fix F2/D1)
+# ===========================================================================
+
+# 9.1 percentile helper (linear interpolation, deterministic).
+check("9.1 _percentile p50 of [10,20,30,40] == 25.0",
+      eqv._percentile([10, 20, 30, 40], 50) == 25.0,
+      detail=str(eqv._percentile([10, 20, 30, 40], 50)))
+
+# 9.2 _compute_pb_ps_band: p50 × BVPS, honest ≤Ny annual label (NOT "5y").
+_band_val, _band_basis = eqv._compute_pb_ps_band(
+    {"book_value": 10.0}, pb_history=[1.0, 1.5, 2.0, 2.5], years=4)
+check("9.2 PB band value = p50(1.75) × BVPS(10) = 17.5", _band_val == 17.5,
+      detail=str(_band_val))
+check("9.3 PB band basis is an annual approximation, never '5y'",
+      "annual" in _band_basis and "p20/p50/p80" in _band_basis
+      and "5y" not in _band_basis, detail=_band_basis)
+
+# 9.4 build_pb_ps_history from synthetic annual statements + dated prices (PURE).
+_dates = [pd.Timestamp("2025-12-31"), pd.Timestamp("2024-12-31"),
+          pd.Timestamp("2023-12-31"), pd.Timestamp("2022-12-31")]
+_bs = pd.DataFrame({
+    _dates[0]: {"Stockholders Equity": 1.0e10, "Ordinary Shares Number": 1.0e9},
+    _dates[1]: {"Stockholders Equity": 0.9e10, "Ordinary Shares Number": 1.0e9},
+    _dates[2]: {"Stockholders Equity": 0.8e10, "Ordinary Shares Number": 1.0e9},
+    _dates[3]: {"Stockholders Equity": 0.7e10, "Ordinary Shares Number": 1.0e9},
+})
+_is = pd.DataFrame({
+    _dates[0]: {"Total Revenue": 2.0e10}, _dates[1]: {"Total Revenue": 1.8e10},
+    _dates[2]: {"Total Revenue": 1.6e10}, _dates[3]: {"Total Revenue": 1.4e10},
+})
+_pidx = pd.date_range("2022-01-31", "2025-12-31", freq="ME")
+_px = pd.DataFrame({"Close": [20.0 + i * 0.5 for i in range(len(_pidx))]}, index=_pidx)
+_hist = eqv.build_pb_ps_history(_bs, _is, _px, ticker="CYC")
+check("9.5 build_pb_ps_history yields 4 annual observations",
+      _hist.get("years") == 4, detail=str(_hist.get("years")))
+check("9.6 build_pb_ps_history pb + ps series populated",
+      len(_hist.get("pb_history", [])) == 4 and len(_hist.get("ps_history", [])) == 4,
+      detail=str(_hist))
+
+# 9.7 MU full path: cyclical + injected history fetcher -> blended (band+analyst).
+_MU_RAW = {
+    "fcf_ttm": 2.0e9, "fcf_source": "", "ebitda": 8.0e9, "shares": 1.1e9,
+    "growth_rate": 0.15, "trailing_eps": 5.0, "forward_eps": None,
+    "sector": "Technology", "industry": "Semiconductor Memory",
+    "analyst_median": 110.0, "analyst_mean": 108.0, "analyst_count": 20,
+    "revenue_growth": 0.20, "earnings_growth": 0.10, "profit_margin": 0.10,
+    "operating_margin": 0.12, "market_cap": 1.1e11, "enterprise_value": 1.2e11,
+    "total_revenue": 2.5e10, "total_debt": 1.0e10, "total_cash": 0.9e10,
+    "book_value": 30.0, "price_to_book": 3.0, "price_to_sales": 4.0, "live": True,
+}
+
+
+def _mu_fetcher(_tk):
+    return {"pb_history": [1.0, 1.4, 1.8, 2.2],
+            "ps_history": [1.5, 2.0, 2.5, 3.0], "years": 4}
+
+
+with mock.patch.object(eqv, "_fetch_raw", return_value=dict(_MU_RAW)):
+    _mu = eqv.compute_app_fair_value("MU", 100.0, cyclical_history_fetcher=_mu_fetcher)
+check("9.7 MU classified cyclical", _mu.company_type == "cyclical", detail=_mu.company_type)
+check("9.8 MU blends PB/PS band + analyst (NOT analyst-only)",
+      _names(_mu.anchors) == {"pb_ps", "analyst"}, detail=str(_names(_mu.anchors)))
+check("9.9 MU blend_state blended + band value present",
+      _mu.blend_state == "blended" and _mu.pb_ps_value is not None,
+      detail=f"{_mu.blend_state}/{_mu.pb_ps_value}")
+check("9.10 MU has NO cyclical_band_unavailable caveat",
+      "cyclical_band_unavailable" not in (_mu.caveats or []), detail=str(_mu.caveats))
+check("9.11 MU trailing-PE flagged cycle_distorted (excluded)",
+      _excluded_flag(_mu, "relative") == "cycle_distorted", detail=str(_mu.excluded_anchors))
+
+# 9.12 XOM full path: Energy sector cyclical + band -> blended.
+_XOM_RAW = dict(_MU_RAW)
+_XOM_RAW.update({"sector": "Energy", "industry": "Oil & Gas Integrated",
+                 "analyst_median": 120.0, "book_value": 55.0})
+
+
+def _xom_fetcher(_tk):
+    return {"pb_history": [1.2, 1.5, 1.8, 2.0],
+            "ps_history": [1.0, 1.3, 1.6, 1.9], "years": 4}
+
+
+with mock.patch.object(eqv, "_fetch_raw", return_value=dict(_XOM_RAW)):
+    _xom = eqv.compute_app_fair_value("XOM", 110.0, cyclical_history_fetcher=_xom_fetcher)
+check("9.13 XOM classified cyclical", _xom.company_type == "cyclical", detail=_xom.company_type)
+check("9.14 XOM blends PB/PS band + analyst", _names(_xom.anchors) == {"pb_ps", "analyst"},
+      detail=str(_names(_xom.anchors)))
+check("9.15 XOM blended band (mid > 0, not analyst-parroting)",
+      _xom.blend_state == "blended" and _xom.fair_value_mid > 0
+      and _xom.pb_ps_value != _xom.analyst_target,
+      detail=f"{_xom.fair_value_mid}/{_xom.pb_ps_value}/{_xom.analyst_target}")
+
+# 9.16 Degradation: cyclical with NO fetcher (cached/ranking path) -> analyst-only
+# + the real caveat tokens. Network-free path takes this degrade.
+with mock.patch.object(eqv, "_fetch_raw", return_value=dict(_MU_RAW)):
+    _mu_deg = eqv.compute_app_fair_value("MUDEG", 100.0)  # no fetcher
+check("9.17 degraded cyclical -> analyst-only blend",
+      _names(_mu_deg.anchors) == {"analyst"}, detail=str(_names(_mu_deg.anchors)))
+check("9.18 degraded cyclical emits cyclical_band_unavailable caveat",
+      "cyclical_band_unavailable" in (_mu_deg.caveats or []), detail=str(_mu_deg.caveats))
+check("9.19 degraded single-anchor blend emits single_anchor_blend caveat",
+      "single_anchor_blend" in (_mu_deg.caveats or []), detail=str(_mu_deg.caveats))
+check("9.20 degraded cyclical still produces a usable band (mid > 0)",
+      _mu_deg.blend_state == "blended" and _mu_deg.fair_value_mid > 0,
+      detail=f"{_mu_deg.blend_state}/{_mu_deg.fair_value_mid}")
+
+# 9.21 fewer than MIN_CYCLICAL_BAND_OBS annual obs -> degrade (band not trusted).
+def _short_fetcher(_tk):
+    return {"pb_history": [1.0, 1.5], "ps_history": [1.5, 2.0], "years": 2}
+
+
+with mock.patch.object(eqv, "_fetch_raw", return_value=dict(_MU_RAW)):
+    _mu_short = eqv.compute_app_fair_value("MUSHORT", 100.0,
+                                           cyclical_history_fetcher=_short_fetcher)
+check("9.22 < 3 annual obs -> band degraded + caveat",
+      _mu_short.pb_ps_value is None
+      and "cyclical_band_unavailable" in (_mu_short.caveats or []),
+      detail=f"{_mu_short.pb_ps_value}/{_mu_short.caveats}")
 
 
 # ===========================================================================

@@ -1,10 +1,25 @@
 # Phase — Valuation Refactor v1 (method router + growth-profile peers)
 
-**Status:** Implemented · suite `scripts/test_reliability_valuation_router.py`
-**54/54**; full canonical set green (stopbleed 65/65, 7A 115/115, 7B 187/187,
-6c_b 47/47, equity_render_order 50/50, 6c_trading_desk 118/118, 6c_v3_entry_v4
-47/47, 6b_v3_horizon_scoring 189/189, theme_baskets 146/146,
-scanner_rotation_adapter 15/15).
+**Status:** Implemented — **under independent review (REQUEST CHANGES fix round
+applied); NOT yet closed.** Suite `scripts/test_reliability_valuation_router.py`
+**81/81** (was 54/54 before the fix round); full canonical set green (stopbleed
+65/65, 7A 115/115, 7B 187/187, 6c_b 47/47, equity_render_order 50/50,
+6c_trading_desk 118/118, 6c_v3_entry_v4 47/47, 6b_v3_horizon_scoring 189/189,
+theme_baskets 146/146, scanner_rotation_adapter 15/15).
+
+## Review fix round (5 findings, all addressed)
+
+- **F1 (D2)** — `growth_unprofitable` now excludes DCF **structurally** (menu
+  `excluded`), not via a computability guard; a user DCF override cannot bypass it.
+- **F2 (D1/I10)** — the cyclical PB/PS band is now a REAL **≤4y annual** band
+  (yfinance annual fundamentals + cached prices, page path only; baked into the
+  anchor cache so ranking/Cockpit stay network-free); degrades to analyst-only
+  with the `cyclical_band_unavailable` caveat.
+- **F3 (I4)** — `anchor_cache.load_all` now **rejects** bare un-versioned legacy
+  maps (invalidate → recompute) instead of tolerating them.
+- **F4 (I8)** — industry/sector hints are matched by **token boundary**
+  (`industry_has_hint`), not substring containment.
+- **F5 (I10)** — status docs aligned: implemented, under review, not closed.
 
 ## Problem
 
@@ -50,7 +65,12 @@ Sector / industry hint lists: `PROJECT_DRIVEN_INDUSTRY_HINTS`
 shipbuilding, marine shipping), `CYCLICAL_SECTORS` (Energy, Basic Materials),
 `CYCLICAL_INDUSTRY_HINTS` (memory — *not* the broad "semiconductor" —, steel,
 oil, gas, mining, chemical, auto manufacturers, airlines, copper, aluminum,
-coal).
+coal). Hints are matched by **token boundary** (`industry_has_hint`): the
+industry/sector string is lower-cased and split on every non-alphanumeric
+character (em-dash included, so "Software—Infrastructure" → `["software",
+"infrastructure"]`); a single-word hint must equal a whole token (so "gas" never
+matches inside "vegas" and "semiconductor" never matches "Semiconductors"), and a
+multi-word hint must appear as a contiguous token run.
 
 ### Decision order (first match wins)
 
@@ -95,9 +115,9 @@ reproduces the prior DCF + relative-PE + analyst factors **byte-for-byte**.
 |------|-----------------|--------------------|-------|
 | mature_profitable | DCF + relative-PE + analyst | — | unchanged |
 | growth_profitable | EV/S + relative-PE + analyst | DCF (`excluded`) | Rule-of-40 modifies the EV/S multiple |
-| growth_unprofitable | EV/S + analyst (+ DCF *if computable*) | relative-PE (`excluded`) | PE is the garbage source |
+| growth_unprofitable | EV/S + analyst **only** | relative-PE (`excluded`), **DCF (`excluded`)** | PE is the garbage source; DCF excluded **structurally** (unreliable for loss-makers; a user DCF override cannot bypass the menu) |
 | project_driven | EV/EBITDA + analyst | DCF, relative-PE (`excluded`) | `backlog_note` when backlog unavailable |
-| cyclical | PB/PS band + analyst | DCF (`excluded`), relative-PE (`cycle_distorted`) | PB/PS band needs 5y history |
+| cyclical | PB/PS band + analyst | DCF (`excluded`), relative-PE (`cycle_distorted`) | PB/PS band = ticker's own ≤4y annual history; degrades to analyst-only with a caveat when unavailable |
 
 Per-anchor blend factors `(low, mid_weight, high)` live in `_ANCHOR_FACTORS`;
 the mature trio reproduces the legacy 0.85/0.90/0.80 lows, 0.35/0.35/0.30
@@ -115,14 +135,33 @@ set — routing reduces irreconcilables, the gate still catches the rest.
 * **EV/EBITDA** (`_compute_ev_ebitda`): `(target × EBITDA − net_debt) / shares`;
   `net_debt = total_debt − total_cash`, else `enterprise_value − market_cap`,
   else 0. `target` = growth-matched peer median EV/EBITDA else sector fallback.
-* **PB/PS band** (`_compute_pb_ps_band`): mid-cycle multiple = median of an
-  injected 5y series × BVPS (or sales/share). Free `info` carries only the current
-  multiple, so on the network-free path this returns `None` and a `backlog_note`/
-  cyclical caveat is emitted (honest about the limit); a richer source / tests can
-  inject `pb_history` / `ps_history`.
+* **PB/PS band** (`_compute_pb_ps_band` + `build_pb_ps_history` +
+  `fetch_cyclical_band_history`): a REAL **≤4-year ANNUAL** band built from
+  yfinance annual fundamentals (annual balance sheet → equity & shares; annual
+  income statement → revenue) combined with already-cached price history. For each
+  fiscal year `PB = price_asof / (equity/shares)` and `PS = price_asof /
+  (revenue/shares)`. The blended anchor is the **p50** of the historical multiple
+  × the current per-share fundamental; p20 / p80 (config `PB_PS_BAND_PERCENTILES`
+  = 20/50/80) contextualize the band in the basis label. It is labelled an
+  **≤Ny annual approximation** everywhere — never a "5-year band". **Network
+  discipline:** the fundamentals fetch runs ONLY on the per-ticker page path (a
+  `cyclical_history_fetcher` passed from pages/4); the cached / ranking / Cockpit
+  paths pass no fetcher and read the band baked into the anchor cache, so they
+  stay network-free. **Degradation:** when fundamentals are unavailable or fewer
+  than `MIN_CYCLICAL_BAND_OBS` (3) annual observations exist, the band is dropped,
+  the blend degrades to analyst-only, and a real caveat token
+  (`cyclical_band_unavailable`, plus `single_anchor_blend`) is emitted on
+  `AppFairValue.caveats` and surfaced in pages/4.
 
 Sector fallback maps: `SECTOR_MEDIAN_EV_EBITDA` (default 12.0), `SECTOR_MEDIAN_PS`
 (default 2.5), alongside the existing `SECTOR_MEDIAN_PE`.
+
+### Valuation caveat vocabulary
+
+`VALUATION_CAVEATS` = `cyclical_band_unavailable` (history band could not be
+built) · `single_anchor_blend` (only one anchor entered the blend). Carried on
+`AppFairValue.caveats`, written to the anchor cache entry, surfaced bilingually in
+pages/4 (`cockpit_fv_caveat_*`).
 
 ---
 
@@ -152,11 +191,13 @@ the sector-median fallback.
   `routing_rationale`, `methods_used`, `excluded_anchors`, `ev_s_value`,
   `ev_ebitda_value`, `pb_ps_value`, `peer_basis`, `backlog_note`.
 * **Anchor cache** `_SCHEMA_VERSION` bumped **1 → 2**; the entry now carries
-  `company_type` + `peer_basis`. The version guard from stop-the-bleed handles
-  migration: a stale version-1 envelope loads as empty (Cockpit falls back to
-  Research-Required until rewarmed). The LONG band consumer still reads only
-  `fair_value_low/mid/high` + `blend_state` — **verified: no Cockpit change beyond
-  the version bump**.
+  `company_type` + `peer_basis` + `caveats`. `load_all` accepts ONLY a valid
+  current-schema envelope: a version mismatch OR a bare un-versioned legacy map is
+  **rejected** (invalidate → recompute), so stale entries lacking `company_type`
+  cannot surface (review fix F3/I4); old files on disk degrade gracefully (Cockpit
+  falls back to Research-Required until rewarmed). The LONG band consumer still
+  reads only `fair_value_low/mid/high` + `blend_state` — **verified: no Cockpit
+  change beyond the version bump**.
 * **`pages/4` AI Valuation Summary** shows a company-type badge (+ borderline /
   peer-basis note), the per-anchor method labels (`name $value (method)`), and the
   excluded anchors with their flag; the irreconcilable view is otherwise unchanged.

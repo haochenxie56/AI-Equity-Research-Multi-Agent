@@ -5,16 +5,25 @@
 > history preserved verbatim). This file keeps only the active phase. The
 > long-form running status remains in `docs/ai_dev_state/PROJECT_STATE.md`.
 
-## Valuation Refactor v1 — Method Router + Growth-Profile Peers (CURRENT — Implemented)
+## Valuation Refactor v1 — Method Router + Growth-Profile Peers (CURRENT — Implemented; Under Independent Review)
 
 Each company type gets an appropriate valuation method menu so the
 irreconcilable-anchor rate drops (KTOS class no longer dead-ends). **Deterministic;
 no LLM** (reverse DCF + debate = Phase 8). Phase doc
 `docs/reliability_valuation_router.md`; suite
-`scripts/test_reliability_valuation_router.py` **54/54**. Full canonical set green:
+`scripts/test_reliability_valuation_router.py` **81/81**. Full canonical set green:
 stopbleed 65, 7A 115, 7B 187, 6c_b 47, equity_render_order 50, 6c_trading_desk
 118, 6c_v3_entry_v4 47, 6b_v3_horizon_scoring 189, theme_baskets 146,
 scanner_rotation_adapter 15.
+
+**Review status: REQUEST CHANGES fix round applied; NOT yet closed** (closure
+after re-review). Fixes: **F1** growth_unprofitable excludes DCF structurally;
+**F2** real cyclical ≤4y annual PB/PS band (page-path fetch, cached, network-free
+ranking; degrades to analyst-only + `cyclical_band_unavailable` caveat); **F3**
+anchor cache rejects bare legacy maps; **F4** token-boundary hint matching
+(`industry_has_hint`); **F5** status docs aligned. Two deliberate test-assertion
+changes: router 2.7 (DCF now excluded for growth_unprofitable) + stopbleed 5.17
+(bare legacy cache now rejected).
 
 - **Task 1 — Classifier** (`lib/valuation_router.py`, NEW): `classify_company` →
   5 types from one visible `CLASSIFIER_CONFIG` block + sector/industry hints, over
