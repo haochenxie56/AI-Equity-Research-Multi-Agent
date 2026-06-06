@@ -1468,4 +1468,90 @@ def main() -> None:
     _render_fixture_tabs()
 
 
+def _render_market_internals() -> None:
+    """Phase 7B — Market-Internals workbench (verification surface).
+
+    Reuses the Cockpit's session reading + rolling series (zero new computation):
+    a 10-day raw-reading trend (points line + level colour markers, hysteresis
+    source + data vintage) and a per-component detail table (value incl 0, triggered
+    flag, degrade reason). The Cockpit keeps the one-line conclusion; this is the
+    macro workbench (same division as Sector page vs Cockpit)."""
+    st.divider()
+    st.subheader(t("mi_header"))
+    frag = st.session_state.get("cockpit_fragility") or {}
+    series = st.session_state.get("cockpit_fragility_series") or []
+    if not frag:
+        st.info(t("mi_not_loaded"))
+        st.page_link("pages/7_Investment_Cockpit.py", label=t("mi_go_cockpit"))
+        return
+
+    _lvl_color = {"normal": "#3fb950", "elevated": "#d29922", "high": "#f85149"}
+    level = str(frag.get("fragility_level", "normal"))
+    st.markdown(
+        f"{t('mi_level')}: " + _badge_html(level, _lvl_color.get(level, "#8b949e"))
+        + f" &nbsp; {t('mi_source')}: <b>{frag.get('hysteresis_source', '—')}</b>"
+        + f" &nbsp; {t('mi_vintage')}: <b>{frag.get('data_vintage') or '—'}</b>"
+        + (f" &nbsp; ⚠️ {t('mi_vintage_mismatch')}" if frag.get("vintage_mismatch") else ""),
+        unsafe_allow_html=True,
+    )
+
+    # 10-day raw-reading trend: points line + per-day level-coloured markers.
+    if series:
+        xs = [row[0] for row in series]
+        ys = [row[2] if len(row) > 2 else 0 for row in series]
+        marker_colors = [_lvl_color.get(row[1], "#8b949e") for row in series]
+        fig = go.Figure(go.Scatter(
+            x=xs, y=ys, mode="lines+markers",
+            line=dict(color="#8b949e", width=2),
+            marker=dict(size=9, color=marker_colors),
+            name=t("mi_points")))
+        try:
+            import lib.market_internals as _miC
+            fig.add_hline(y=_miC.INTERNALS_CONFIG["elevated_points"],
+                          line=dict(color="#d29922", dash="dot"))
+            fig.add_hline(y=_miC.INTERNALS_CONFIG["high_points"],
+                          line=dict(color="#f85149", dash="dot"))
+        except Exception:  # noqa: BLE001
+            pass
+        apply_layout(fig, height=240)
+        apply_legend(fig)
+        st.plotly_chart(fig, use_container_width=True)
+
+    # Component detail table — value (0 renders as 0), triggered flag, degrade reason.
+    triggered = set(frag.get("fragility_triggered", []) or [])
+    earn_reason = frag.get("earnings_degrade_reason", "") or ""
+
+    def _row(label, value, trig_keys, reason=""):
+        fired = any(k in triggered for k in trig_keys)
+        val = t("cockpit_frag_na") if value is None else (
+            f"{value:.2f}" if isinstance(value, float) else str(value))
+        return {t("mi_component"): label, t("mi_value"): val,
+                t("mi_triggered"): "✅" if fired else "—",
+                t("mi_degrade"): reason}
+
+    rows = [
+        _row(t("cockpit_frag_dist") + " SPY", frag.get("distribution_days_spy"),
+             ("distribution_days_elevated", "distribution_days_high")),
+        _row(t("cockpit_frag_dist") + " QQQ", frag.get("distribution_days_qqq"),
+             ("distribution_days_elevated", "distribution_days_high")),
+        _row(t("cockpit_frag_breadth") + " >SMA20", frag.get("breadth_above_sma20"),
+             ("breadth_weak",)),
+        _row(t("cockpit_frag_breadth") + " >SMA50", frag.get("breadth_above_sma50"), ()),
+        _row(t("mi_c_slope"), frag.get("breadth_slope"), ("breadth_narrowing",)),
+        _row(t("mi_c_weak_bounce"), frag.get("weak_bounce"), ("weak_bounce",)),
+        _row(t("cockpit_frag_gns"), frag.get("good_news_sold"),
+             ("good_news_sold_elevated", "good_news_sold_high"),
+             earn_reason if frag.get("good_news_sold") is None else ""),
+        _row(t("mi_c_vol"), frag.get("leading_theme_volume_shrinking"),
+             ("leading_theme_volume_shrinking",)),
+        _row(t("mi_c_od"),
+             f"{frag.get('offense_defense_direction', '') or '—'} "
+             f"{frag.get('offense_defense_magnitude', '') or ''}".strip(),
+             ("offense_defense_defensive", "offense_defense_defensive_strong")),
+    ]
+    st.table(rows)
+    st.caption(t("mi_note"))
+
+
 main()
+_render_market_internals()

@@ -1,9 +1,38 @@
 # Phase 7B — Multi-window Relative Strength, Two-Ring Rotation Engine, and Market-Internals Fragility Layer
 
 **Status**: Implemented + Codex fix round (×2) + polish rounds (×3) + rolling
-internals round (lib + tests green). Review-only; not investment advice.
-**Suite**: `scripts/test_reliability_phase_7b_rotation_internals.py` — **131/131**,
+internals round + rolling fix round (lib + tests green). Review-only; not
+investment advice.
+**Suite**: `scripts/test_reliability_phase_7b_rotation_internals.py` — **141/141**,
 mock-only / offline.
+
+**Rolling fix round (banner field drift + data-vintage split).** Three bugs the
+Cockpit exposed: (1) **Banner showed level + all-n/a.** Root cause:
+`FragilityReading.to_dict()` **nests** components under `components`, but the
+banner read flat top-level keys → every component `None` → `n/a`, while `level`
+(top-level) survived. Fix: the Cockpit stores the **flat `fragility_snapshot(...)`**
+in session_state — the SAME object written to `_meta` — and the banner reads
+`fragility_level` + the flat component keys, so level and components come from ONE
+source (structurally cannot disagree). (2) **Data-vintage split.** Root cause: the
+fragility frame loader read the on-disk parquet cache (`cache_manager`, which
+`load_ohlcv` does NOT write through, so it lagged to 2026-05-15) while the
+benchmark used `load_ohlcv` (fresh) — so distribution (fresh) and breadth/rolling
+(stale) described **different markets**, and the clock check (fresh frame) never
+flagged it. Fix: the Cockpit uses **one loader (`load_ohlcv`) for benchmark AND
+frames** (the same frames the refresh just loaded; in-memory fresh), and
+`compute_market_fragility` enforces a **single vintage**: it records `data_vintage`
+(the last trading date common to the frames used) and `vintage_mismatch` (benchmark
+last ≠ universe last); on mismatch the rolling series **degrades to the snapshot
+path** + flags, and the clock-drift check runs against the **common** vintage (so a
+stale cache trips `clock_suspect`). (3) **Where `[high]` came from:** a *genuinely
+computed* `reading.level` from the rolling replay over the vintage-split series —
+not a stale session leftover nor a wrong key; the components were merely invisible
+(bug 1). With the vintage guard a vintage-split escalation now degrades+flags rather
+than silently reaching the UI. Also: the Macro Dashboard gains a **Market Internals
+workbench** (10-day points trend + level markers + per-component table with value/
+triggered/degrade-reason, vintage + hysteresis source); and the Cockpit's
+last-refresh caption is filled via a placeholder AFTER the refresh runs (it used to
+render above the button → showed "never" on the same run).
 
 **Rolling internals round — two-track principle (audit vs signal).** Most
 fragility inputs are pure functions of cached OHLCV, so they can be **recomputed

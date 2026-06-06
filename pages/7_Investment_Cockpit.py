@@ -269,32 +269,39 @@ def _run_refresh() -> None:
         try:
             from datetime import timedelta as _timedelta
             from lib import market_internals as _mi
-            from lib.relative_strength import _default_frame_loader as _cache_frames
             from lib.opportunity_ranker import SNAPSHOT_DIR as _snap_dir
             from lib.signal_engine import fetch_earnings_reactions_calendar as _earn_cal
-            from ui_utils import load_ohlcv as _bench_frames
+            from ui_utils import load_ohlcv as _load_ohlcv
 
-            # Item 2 — wire the earnings-reaction component: ONE bulk Finnhub
-            # earnings-calendar call (skippable/degradable), next-session reaction
-            # read from the SAME cached OHLCV (no per-ticker network). Was never
-            # passed before, so good-news-sold always degraded.
+            # Single data vintage (fix round): the fragility frame loader is the
+            # SAME source the refresh just loaded (ui_utils.load_ohlcv — in-memory
+            # fresh, already populated by the signal pipeline), NOT the separate
+            # on-disk parquet cache (which can lag weeks behind). The benchmark,
+            # breadth, rolling series and clock check therefore all share ONE
+            # vintage; compute_market_fragility flags vintage_mismatch + degrades to
+            # the snapshot path if they ever disagree.
+            _ohlcv = lambda tk: _load_ohlcv(tk, "1y")  # noqa: E731
+            # Item 2 — earnings-reaction: ONE bulk Finnhub earnings-calendar call
+            # (skippable/degradable); reaction read from the SAME frames.
             _today = datetime.now().strftime("%Y-%m-%d")
-            _from = (datetime.now() - _timedelta(days=12)).strftime("%Y-%m-%d")
+            _from = (datetime.now() - _timedelta(days=20)).strftime("%Y-%m-%d")
             _earn_cal_fn = lambda: _earn_cal(_from, _today)  # noqa: E731
             _fragility = _mi.compute_market_fragility(
-                universe=_tickers, frame_loader=_cache_frames,
-                benchmark_loader=lambda tk: _bench_frames(tk, "1y"),
+                universe=_tickers, frame_loader=_ohlcv,
+                benchmark_loader=_ohlcv,
                 themes=_themes_list, snapshot_dir=_snap_dir,
                 earnings_calendar_fn=_earn_cal_fn,
                 today_str=_today)
             _frag_level = _fragility.level
-            st.session_state["cockpit_fragility"] = _fragility.to_dict()
-            # WSL clock-drift defense — sanity-check the system date against the
-            # latest cached benchmark trading date; flag but NEVER block the write.
+            # Store the FLAT snapshot (the SAME object written to _meta) so the
+            # banner and the snapshot can never disagree on level vs components.
+            st.session_state["cockpit_fragility"] = _mi.fragility_snapshot(_fragility, _today)
+            st.session_state["cockpit_fragility_series"] = list(_fragility.rolling_raw_series)
+            # WSL clock-drift defense — against the COMMON data vintage (so a stale
+            # cache trips the flag); flag but NEVER block the write.
             try:
-                _bench_idx = _mi._frame_date_index(_bench_frames("SPY", "1y"))
                 _clk_suspect, _clk_reason = _mi.detect_clock_drift(
-                    datetime.now().strftime("%Y-%m-%d"), _bench_idx)
+                    _today, [_fragility.data_vintage] if _fragility.data_vintage else [])
                 st.session_state["cockpit_clock_suspect"] = (_clk_suspect, _clk_reason)
             except Exception:  # noqa: BLE001
                 _clk_suspect, _clk_reason = False, ""
@@ -307,13 +314,8 @@ def _run_refresh() -> None:
             themes=_themes_list, rs_map=_rs_map, cpi_date=_cpi_date,
             anchor_cache=_anchor_cache, fragility_level=_frag_level)
         st.session_state["cockpit_opportunities"] = [c.to_dict() for c in _cards]
-        _frag_meta = None
-        if _fragility is not None:
-            try:
-                _frag_meta = _mi.fragility_snapshot(
-                    _fragility, datetime.now().strftime("%Y-%m-%d"))
-            except Exception:  # noqa: BLE001
-                _frag_meta = None
+        # The SAME flat snapshot object the banner reads (one canonical source).
+        _frag_meta = st.session_state.get("cockpit_fragility")
         write_daily_snapshot(_cards, themes=_themes_list, macro_regime=_regime_str(),
                              horizon_bias=_bias, fragility=_frag_meta,
                              clock_suspect=_clk_suspect,
@@ -396,8 +398,10 @@ st.warning(t("cockpit_hub_safety"))
 
 _hl, _hr = st.columns([3, 1])
 with _hl:
-    _last = st.session_state.get("cockpit_last_refresh")
-    st.caption(f"{t('cockpit_hub_last_refresh')}: {_last or t('cockpit_hub_never')}")
+    # Placeholder filled AFTER any refresh runs, so the same run shows the fresh
+    # timestamp instead of the pre-refresh "never" (the caption used to render
+    # above the button, before _run_refresh set the key).
+    _last_ph = st.empty()
 with _hr:
     _do_refresh = st.button(t("cockpit_hub_refresh_btn"), type="primary",
                             use_container_width=True, key="cockpit_refresh_all")
@@ -414,6 +418,10 @@ if _do_refresh:
         f"{t('cockpit_hub_status_themes')}: {'✅' if _status.get('themes') else '—'} "
         f"{t('cockpit_hub_status_signals')}: {_n_sig}"
     )
+
+# Fill the last-refresh caption now (after any refresh set the timestamp).
+_last = st.session_state.get("cockpit_last_refresh")
+_last_ph.caption(f"{t('cockpit_hub_last_refresh')}: {_last or t('cockpit_hub_never')}")
 
 # Status indicators — green = refreshed this session, gray = stale / never.
 _status = st.session_state.get("cockpit_status", {})
@@ -470,9 +478,12 @@ else:
     # The internals line ALWAYS renders after a refresh (including level=normal) —
     # an invisible monitor is indistinguishable from a broken one. It shows the
     # level plus the component values; gating only happens at high (tighten-only).
+    # Reads the FLAT snapshot object (the same one written to _meta) so the level
+    # and the component values come from ONE source — structurally impossible to
+    # disagree (the level-high-but-all-n/a banner bug).
     _frag = st.session_state.get("cockpit_fragility") or {}
     if _frag:
-        _flevel = str(_frag.get("level", "normal"))
+        _flevel = str(_frag.get("fragility_level", "normal"))
         _fcolor = {"normal": "#3fb950", "elevated": "#d29922",
                    "high": "#f85149"}.get(_flevel, "#8b949e")
         # Each component renders one of THREE states (Item 1): a numeric value

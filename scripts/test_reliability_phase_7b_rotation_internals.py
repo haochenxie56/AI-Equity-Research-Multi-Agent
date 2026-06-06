@@ -676,7 +676,7 @@ try:
                                 "horizon_bias": {"short": "cautious"},
                                 "key_signals": [], "opportunity_posture": "",
                                 "data_coverage": 1.0, "signals": []},
-        "cockpit_fragility": {"level": "normal", "distribution_days_spy": 2,
+        "cockpit_fragility": {"fragility_level": "normal", "distribution_days_spy": 2,
                               "distribution_days_qqq": 1,
                               "breadth_above_sma20": 0.55, "good_news_sold": 0},
     }
@@ -784,11 +784,11 @@ try:
         _a.run()
         return " ".join(str(getattr(_m, "value", "")) for _m in _a.markdown)
 
-    _blob0 = _render_frag({"level": "normal", "distribution_days_spy": 3,
+    _blob0 = _render_frag({"fragility_level": "normal", "distribution_days_spy": 3,
                            "breadth_above_sma20": 0.55, "good_news_sold": 0})
     check("14.12 good_news_sold=0 renders as '0' (not suppressed)",
           "good-news-sold: 0" in _blob0, _blob0[:200])
-    _blobN = _render_frag({"level": "normal", "distribution_days_spy": None,
+    _blobN = _render_frag({"fragility_level": "normal", "distribution_days_spy": None,
                            "breadth_above_sma20": None, "good_news_sold": None})
     check("14.13 None components render the n/a marker, never omitted",
           "good-news-sold: n/a" in _blobN and "distribution days n/a" in _blobN,
@@ -899,6 +899,102 @@ mi.compute_market_fragility(universe=list(_uni_frames), frame_loader=_rec_frame,
 _expected = {tk.upper() for tk in _uni_frames} | {"SPY", "QQQ"} | _sector_etfs
 check("15.9 no surprise per-ticker fetches (requests ⊆ expected universe)",
       _req <= _expected, f"unexpected={_req - _expected}")
+
+
+# ===========================================================================
+# 16. Rolling internals FIX round (banner field drift + data-vintage split)
+# ===========================================================================
+_fx_fresh = pd.bdate_range(end="2026-06-05", periods=60)
+_fx_stale = pd.bdate_range(end="2026-05-15", periods=60)
+
+
+def _mkf(idx):
+    return pd.DataFrame({"Close": [100.0 + i * 0.1 for i in range(60)],
+                         "Volume": [1e6] * 60}, index=idx)
+
+
+_spy_fresh = _mkf(_fx_fresh)
+_uni_stale = {f"U{n}": _mkf(_fx_stale) for n in range(6)}
+_uni_fresh = {f"U{n}": _mkf(_fx_fresh) for n in range(6)}
+
+# 16.1 — Item 2: vintage MISMATCH (fresh bench vs stale universe) → degrade + flag.
+_r_mm = mi.compute_market_fragility(
+    universe=list(_uni_stale), frame_loader=lambda tk: _uni_stale.get(tk),
+    benchmark_loader=lambda tk: _spy_fresh, today_str="2026-06-05")
+check("16.1 vintage mismatch → flagged + degraded to snapshot",
+      _r_mm.vintage_mismatch is True and _r_mm.hysteresis_source == "snapshot")
+check("16.2 data_vintage is the COMMON (older) date on mismatch",
+      _r_mm.data_vintage == "2026-05-15", _r_mm.data_vintage)
+# 16.3 — clock_suspect fires when the common vintage is >7d behind system date.
+check("16.3 clock_suspect on the common vintage (>7d behind)",
+      mi.detect_clock_drift("2026-06-05", [_r_mm.data_vintage])[0] is True)
+
+# 16.4 — MATCHED vintage uses the rolling series.
+_r_ok = mi.compute_market_fragility(
+    universe=list(_uni_fresh), frame_loader=lambda tk: _uni_fresh.get(tk),
+    benchmark_loader=lambda tk: _spy_fresh, today_str="2026-06-05")
+check("16.4 matched vintage → rolling, no mismatch",
+      _r_ok.vintage_mismatch is False and _r_ok.hysteresis_source == "rolling")
+check("16.5 rolling series carries per-day points (3-tuples)",
+      len(_r_ok.rolling_raw_series[-1]) == 3
+      and isinstance(_r_ok.rolling_raw_series[-1][2], int))
+
+# 16.6 — Item 1: the canonical session object is the FLAT snapshot — level AND
+# components are top-level (to_dict() nests components → the banner-n/a bug).
+_high = mi.compute_fragility(distribution_days_spy=8, good_news_sold=3,
+                             prior_level="high", recent_raw_levels=["high", "high"])
+_flat = mi.fragility_snapshot(_high, "2026-06-05")
+_nested = _high.to_dict()
+check("16.7 flat snapshot has level + components at the SAME (top) level",
+      "fragility_level" in _flat and "distribution_days_spy" in _flat
+      and "good_news_sold" in _flat)
+check("16.8 to_dict() nests components (the field-drift the banner hit)",
+      "distribution_days_spy" not in _nested
+      and "distribution_days_spy" in _nested.get("components", {}))
+
+# 16.9 — Item 1 render: a non-normal level shows its triggered components' NUMBERS
+# (level + components from one object → cannot disagree).
+try:
+    import streamlit as _st4  # noqa: E402
+    _st4.page_link = lambda *a, **k: None
+    from streamlit.testing.v1 import AppTest as _AT4  # noqa: E402
+    _a4 = _AT4.from_file(os.path.join(_REPO_ROOT, "pages/7_Investment_Cockpit.py"),
+                         default_timeout=60)
+    _a4.session_state["macro_regime_result"] = {
+        "regime": "transition", "confidence": "low", "horizon_bias": {},
+        "key_signals": [], "opportunity_posture": "", "data_coverage": 1.0,
+        "signals": []}
+    _a4.session_state["cockpit_fragility"] = _flat  # the flat snapshot
+    _a4.run()
+    _b4 = " ".join(str(getattr(_m, "value", "")) for _m in _a4.markdown)
+    check("16.10 non-normal banner shows level AND non-null component numbers",
+          "high" in _b4 and "distribution days 8/25" in _b4
+          and "good-news-sold: 3" in _b4, _b4[:240])
+except Exception as _e:  # noqa: BLE001
+    check("16.10 banner one-source render-smoke ran", False, f"AppTest: {_e}")
+
+# 16.11 — Item 4: Macro Dashboard Market-Internals block renders the component table.
+try:
+    import streamlit as _st5  # noqa: E402
+    _st5.page_link = lambda *a, **k: None
+    from streamlit.testing.v1 import AppTest as _AT5  # noqa: E402
+    _a5 = _AT5.from_file(os.path.join(_REPO_ROOT, "pages/8_Macro_Dashboard.py"),
+                         default_timeout=60)
+    _a5.session_state["cockpit_fragility"] = _flat
+    _a5.session_state["cockpit_fragility_series"] = [
+        ("2026-06-03", "elevated", 2), ("2026-06-04", "high", 4),
+        ("2026-06-05", "high", 4)]
+    _a5.run()
+    _b5 = (" ".join(str(getattr(_m, "value", "")) for _m in _a5.markdown)
+           + " " + " ".join(str(getattr(_s, "value", "")) for _s in _a5.subheader))
+    check("16.11 Macro Dashboard internals block renders (header + level/source)",
+          ("Market Internals" in _b5 or "市场内部结构" in _b5)
+          and ("rolling" in _b5 or "snapshot" in _b5 or "high" in _b5),
+          _b5[-200:])
+    check("16.12 Macro Dashboard render raised no exception",
+          not _a5.exception, str(list(_a5.exception)))
+except Exception as _e:  # noqa: BLE001
+    check("16.11 Macro Dashboard render-smoke ran", False, f"AppTest: {_e}")
 
 
 # ---------------------------------------------------------------------------

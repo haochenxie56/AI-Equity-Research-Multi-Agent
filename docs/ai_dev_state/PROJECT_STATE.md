@@ -8,8 +8,19 @@ follow. Prior status blob preserved verbatim afterward.)
 
 Makes rotation VISIBLE and market deterioration EARLY-VISIBLE. **All deterministic;
 no LLM.** Phase doc `docs/reliability_phase_7b_rotation_internals.md`; suite
-`scripts/test_reliability_phase_7b_rotation_internals.py` **131/131** (mock-only,
-incl. Codex fix round + polish 1–3 + rolling internals round). Polish: same-date
+`scripts/test_reliability_phase_7b_rotation_internals.py` **141/141** (mock-only,
+incl. Codex fix round + polish 1–3 + rolling internals round + rolling FIX round:
+(1) banner read flat top-level component keys but to_dict() nests them → stored the
+flat fragility_snapshot in session_state so banner + _meta share ONE object;
+(2) data-vintage split — fragility frame loader read the stale on-disk parquet
+(load_ohlcv doesn't write through) while benchmark was fresh; fixed by ONE loader
+(load_ohlcv) + a single-vintage guard (data_vintage + vintage_mismatch → degrade to
+snapshot, clock check on common vintage); (3) the displayed [high] was a real
+computed level over the vintage-split series, now guard-degraded. Added a Macro
+Dashboard Market-Internals workbench + fixed the Cockpit last-refresh caption.
+Today on the unified fresh vintage: data_vintage 2026-06-05, source rolling, today
+raw high (4pts) but EFFECTIVE elevated (06-05 high is a single high session after an
+elevated run), no vintage_mismatch, no clock_suspect). Polish: same-date
 adjacency, volume-shrink flag, AST guard, clock-drift; always render fragility at
 normal, LONG why_now fix, theme excess-3M label; banner zero/null three-state,
 earnings reactions WIRED via one bulk Finnhub call (distinct degrade reasons),

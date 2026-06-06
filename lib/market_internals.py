@@ -168,7 +168,14 @@ class FragilityReading:
     # cache depth was insufficient. The rolling raw series + the window used.
     hysteresis_source: str = "snapshot"
     rolling_window: int = 0
-    rolling_raw_series: list = field(default_factory=list)  # [(date, raw_level), ...]
+    rolling_raw_series: list = field(default_factory=list)  # [(date, raw_level, points), ...]
+    # The single data vintage of this refresh: the last trading date common to the
+    # frames actually used. ``vintage_mismatch`` is True when the benchmark and the
+    # universe frames disagree on their last date (stale on-disk cache vs fresh
+    # fetch) — the rolling series then DEGRADES to the snapshot path rather than
+    # replaying a different-vintage market.
+    data_vintage: str = ""
+    vintage_mismatch: bool = False
 
     def to_dict(self) -> dict:
         d = asdict(self)
@@ -708,6 +715,8 @@ def fragility_snapshot(reading: FragilityReading, date_str: str) -> dict:
         "earnings_degrade_reason": reading.earnings_degrade_reason,
         "hysteresis_source": reading.hysteresis_source,
         "rolling_window": reading.rolling_window,
+        "data_vintage": reading.data_vintage,
+        "vintage_mismatch": reading.vintage_mismatch,
         # every component value, attributable
         "distribution_days_spy": c.distribution_days_spy,
         "distribution_days_qqq": c.distribution_days_qqq,
@@ -1060,8 +1069,8 @@ def compute_rolling_raw_series(window, *, bench_arr, qqq_arr, universe_arrays,
                                sector_arrays, frame_loader, themes,
                                reaction_records, bench_dates, today_str, cfg):
     """The recomputed raw level for each of the last ``window`` trading days
-    (chronological ``[(date_str, raw_level), ...]``) from cached data — the SIGNAL
-    trail hysteresis consumes. Empty when the benchmark calendar is unusable."""
+    (chronological ``[(date_str, raw_level, points), ...]``) from cached data — the
+    SIGNAL trail hysteresis consumes. Empty when the benchmark calendar is unusable."""
     if not bench_dates:
         return []
     anchor = today_str or str(bench_dates[-1])
@@ -1072,10 +1081,12 @@ def compute_rolling_raw_series(window, *, bench_arr, qqq_arr, universe_arrays,
     series = []
     for i in range(start, pos_today + 1):
         d = bench_dates[i]
-        series.append((str(d), _raw_level_asof(
+        comp = _components_asof(
             d, bench_arr=bench_arr, qqq_arr=qqq_arr, universe_arrays=universe_arrays,
             sector_arrays=sector_arrays, frame_loader=frame_loader, themes=themes,
-            reaction_records=reaction_records, bench_dates=bench_dates, cfg=cfg)))
+            reaction_records=reaction_records, bench_dates=bench_dates, cfg=cfg)
+        points, _ = _score_components(comp, cfg)
+        series.append((str(d), _raw_level_from_points(points, cfg), points))
     return series
 
 
@@ -1242,6 +1253,18 @@ def compute_market_fragility(*, universe=None, frame_loader=None,
     universe_arrays = {tk: (_dated_arrays(df) if df is not None else None)
                        for tk, df in (locals().get("frames") or {}).items()}
     sector_arrays = _preload_sector_arrays(frame_loader)
+
+    # ── Single data vintage guard (fix round) ────────────────────────────────
+    # The benchmark and the universe frames must share their last trading date;
+    # a mismatch (e.g. fresh benchmark fetch vs a stale on-disk universe cache)
+    # means the rolling series would replay a DIFFERENT-vintage market, so it
+    # degrades to the snapshot path + flags vintage_mismatch.
+    _bench_last = bench_dates[-1] if bench_dates else None
+    _uni_lasts = [a[0][-1] for a in universe_arrays.values() if a and a[0]]
+    _uni_last = max(_uni_lasts) if _uni_lasts else None
+    vintage_mismatch = bool(_bench_last and _uni_last and _bench_last != _uni_last)
+    _vintage_candidates = [d for d in (_bench_last, _uni_last) if d is not None]
+    data_vintage = str(min(_vintage_candidates)) if _vintage_candidates else ""
     if bench_dates:
         lb = int(cfg["breadth_slope_lookback_sessions"])
         pos_today = _pos_le(bench_dates, today_str or str(bench_dates[-1]))
@@ -1260,9 +1283,11 @@ def compute_market_fragility(*, universe=None, frame_loader=None,
             today_str=today_str, cfg=cfg)
     except Exception:  # noqa: BLE001 — rolling unavailable → snapshot fallback
         rolling_series = []
-    if len(rolling_series) >= int(cfg["hysteresis_escalate_sessions"]):
+    # A vintage mismatch forbids trusting the rolling replay (different market).
+    if (not vintage_mismatch
+            and len(rolling_series) >= int(cfg["hysteresis_escalate_sessions"])):
         rolling_effective, rolling_consec = _replay_hysteresis(
-            [lv for _d, lv in rolling_series], cfg)
+            [t[1] for t in rolling_series], cfg)
 
     # Hysteresis history from the snapshot memory (FALLBACK when the rolling series
     # is too shallow; with dates so gapped snapshots can't fabricate a run).
@@ -1283,6 +1308,8 @@ def compute_market_fragility(*, universe=None, frame_loader=None,
     reading.earnings_degrade_reason = earnings_degrade_reason
     reading.rolling_window = int(cfg["rolling_window_sessions"])
     reading.rolling_raw_series = rolling_series
+    reading.data_vintage = data_vintage
+    reading.vintage_mismatch = vintage_mismatch
     if rolling_effective is not None:
         # Rolling is authoritative: escalation = condition held N recomputed
         # sessions (the intended meaning), adjacency inherent.
