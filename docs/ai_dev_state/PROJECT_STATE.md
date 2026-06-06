@@ -8,7 +8,7 @@ follow. Prior status blob preserved verbatim afterward.)
 
 Makes rotation VISIBLE and market deterioration EARLY-VISIBLE. **All deterministic;
 no LLM.** Phase doc `docs/reliability_phase_7b_rotation_internals.md`; suite
-`scripts/test_reliability_phase_7b_rotation_internals.py` **152/152** (mock-only,
+`scripts/test_reliability_phase_7b_rotation_internals.py` **187/187** (mock-only,
 incl. Codex fix round + polish 1–3 + rolling internals round + rolling FIX round +
 data-vintage round 2: (1) RS path silently read a stale parquet — cache_manager
 globs `{tk}_ohlcv_*` descending so an old bare `_ohlcv_20260515` sorted above the

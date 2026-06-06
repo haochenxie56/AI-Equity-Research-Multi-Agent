@@ -3,7 +3,7 @@
 **Status**: Implemented + Codex fix round (×2) + polish rounds (×3) + rolling
 internals round + rolling fix rounds (×2) + close-out (parity completeness +
 i18n terminology) (lib + tests green). Review-only; not investment advice.
-**Suite**: `scripts/test_reliability_phase_7b_rotation_internals.py` — **181/181**,
+**Suite**: `scripts/test_reliability_phase_7b_rotation_internals.py` — **187/187**,
 mock-only / offline.
 
 **Data-vintage round 2 (RS stale guard + earnings universe filter).**
@@ -581,7 +581,7 @@ every snapshot field against its rendered token:
   each makes full parity fail, proving the assertions actually bind.
 
 No real divergence was exposed: every `_meta` field either renders on a surface or is
-a justified exclusion. Suite: **181/181**, mock-only / offline.
+a justified exclusion. Suite: **187/187**, mock-only / offline.
 
 ### Terminology (ZH only; EN production strings unchanged)
 
@@ -596,3 +596,36 @@ a justified exclusion. Suite: **181/181**, mock-only / offline.
   the badge-wrapped token `>{level}</span>` -- it binds the actual badge surface and is
   robust to the explainer caption. EN badge text is the raw level word (i18n is ZH
   only), so the production EN string the test pins is unchanged.
+
+### i18n contract (clarification)
+
+Existing EN strings: **zero changes** (verified). The apparent "EN changed" finding
+was a **spec conflict between two review prompts**, not a defect — one prompt read
+"EN unchanged" as "touch nothing in the EN dict," but adding a brand-new caption is
+not changing an existing string. By i18n policy, every NEW piece of UI text in this
+bilingual app must exist in **both** `TRANSLATIONS["en"]` and `TRANSLATIONS["zh"]`: a
+ZH-only key renders **blank in EN mode** (`t()` falls back to the key name / empty
+surface), which would ship a broken English UI. The **six new EN keys** added in the
+close-out Item 2 are the explainer / unit / concept captions for the new features, not
+edits to any pre-existing string:
+
+* `cockpit_frag_gns_unit` (empty in EN; ` 例` in ZH)
+* `cockpit_frag_gns_concept` (the sell-the-news concept caption)
+* `cockpit_frag_lvl_normal` / `cockpit_frag_lvl_elevated` / `cockpit_frag_lvl_high`
+  (badge text — EN keeps the raw level word, ZH is 正常 / 警戒 / 警报)
+* `cockpit_frag_lvl_explain` (the one-line tighten-only level explainer)
+
+`cockpit_frag_gns` itself was **not** changed in EN (still `good-news-sold`); only its
+ZH value moved (好消息被卖 → 利好遭抛).
+
+### Deferred — banner-wording round (small items)
+
+Tracked together with the distribution-day count wording tweak; both touch banner
+text and are batched into a single banner-wording pass:
+
+* **good-news-sold denominator (Codex suggestion).** Show the evaluated denominator
+  on the banner — `利好遭抛: 5/12 评估` (EN `good-news-sold: 5/12 evaluated`) — rather
+  than the bare count, so a small absolute number reads in context. **Deferred** to the
+  banner-wording round because it changes the banner token shape that §18 parity pins
+  (`_gns_banner` / `cockpit_frag_gns` rendering), so it must land in the same pass that
+  updates the parity tokens — not piecemeal.

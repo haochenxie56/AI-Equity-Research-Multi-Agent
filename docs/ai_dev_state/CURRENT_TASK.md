@@ -10,7 +10,7 @@
 Makes rotation VISIBLE and market deterioration EARLY-VISIBLE. **All
 deterministic; no LLM.** Phase doc
 `docs/reliability_phase_7b_rotation_internals.md`; suite
-`scripts/test_reliability_phase_7b_rotation_internals.py` **90/90** (mock-only).
+`scripts/test_reliability_phase_7b_rotation_internals.py` **187/187** (mock-only).
 Full canonical set green: 7A 115, stopbleed 64, 6c_b 47, equity_render_order 50,
 6c_trading_desk 118, 6c_v3_entry_v4 47, 6b_v3_horizon_scoring 189, theme_baskets
 146, scanner_rotation_adapter 15. Pages 2 & 7 render-smoke clean (AppTest).
