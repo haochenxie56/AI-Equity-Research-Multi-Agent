@@ -1,0 +1,66 @@
+{
+  "case_id": "hallucinated_evidence_id",
+  "description": "Agent cites evidence_id 'ev_hallucinated_xyz' that does not exist in the supplied tool_results.",
+  "failure_mode": "hallucinated_evidence_id",
+  "inputs": {
+    "agent_result": {
+      "agent_name": "financial_analyst_agent",
+      "run_id": "TEST_HALL_001",
+      "findings": [
+        {
+          "text": "DCF fair value is $150 per share based on discounted cash flow analysis.",
+          "evidence": [
+            {
+              "evidence_id": "ev_hallucinated_xyz",
+              "excerpt": "DCF output: fair_value=150",
+              "tool_name": "valuation",
+              "metric": "fair_value",
+              "field_path": "valuation.dcf.fair_value"
+            }
+          ],
+          "confidence": 0.9
+        }
+      ],
+      "assumptions": [
+        {
+          "name": "WACC assumption",
+          "rationale": "Industry average WACC",
+          "value": "8.5%",
+          "source": "agent",
+          "sensitivity": "high"
+        }
+      ],
+      "risks": [
+        {
+          "name": "WACC sensitivity",
+          "description": "Small changes in WACC materially affect DCF output.",
+          "severity": "high",
+          "evidence": []
+        }
+      ],
+      "confidence": {
+        "level": "medium",
+        "rationale": "DCF model applied",
+        "score": 0.7
+      }
+    },
+    "tool_results": [
+      {
+        "evidence_id": "ev_real_001",
+        "tool_name": "valuation",
+        "run_id": "TEST_HALL_001",
+        "outputs": {
+          "valuation": {
+            "dcf": {
+              "fair_value": 145
+            }
+          }
+        }
+      }
+    ]
+  },
+  "metadata": {
+    "severity_expected": "critical",
+    "notes": "validate_agent_result should flag INVALID_EVIDENCE_ID for 'ev_hallucinated_xyz'."
+  }
+}

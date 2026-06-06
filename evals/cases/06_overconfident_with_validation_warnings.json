@@ -1,0 +1,60 @@
+{
+  "case_id": "overconfident_with_validation_warnings",
+  "description": "Agent reports high confidence while validation aggregate has warning-level items.",
+  "failure_mode": "overconfidence_with_validation_warnings",
+  "inputs": {
+    "agent_result": {
+      "agent_name": "equity_research_agent",
+      "run_id": "TEST_OVERCONF_VA_001",
+      "findings": [
+        {
+          "text": "Strong buy with high conviction.",
+          "evidence": [],
+          "confidence": 0.9
+        }
+      ],
+      "assumptions": [
+        {
+          "name": "Revenue growth",
+          "rationale": "Historical trend continuation",
+          "value": "20%",
+          "source": "agent",
+          "sensitivity": "high"
+        }
+      ],
+      "risks": [
+        {
+          "name": "Competition risk",
+          "description": "New entrants may erode margins.",
+          "severity": "medium",
+          "evidence": []
+        }
+      ],
+      "confidence": {
+        "level": "high",
+        "rationale": "High conviction based on analysis",
+        "score": 0.9
+      }
+    },
+    "tool_results": [],
+    "validation_aggregate": {
+      "aggregate_id": "va_overconf_001",
+      "as_of": "2026-01-15",
+      "items": [
+        {
+          "item_id": "vi_001",
+          "domain": "agent_result",
+          "severity": "warning",
+          "item_type": "evidence_binding",
+          "message": "Finding has numeric claim but no evidence binding.",
+          "source_name": "validate_agent_result",
+          "blocking": false
+        }
+      ]
+    }
+  },
+  "metadata": {
+    "severity_expected": "warning",
+    "notes": "detect_overconfidence should fire because confidence is high but validation aggregate is pass_with_warnings."
+  }
+}

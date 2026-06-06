@@ -1,0 +1,12 @@
+{
+  "case_id": "option_strategy_without_risk_budget",
+  "expected_status": "fail",
+  "expected_issue_types": ["missing_risk"],
+  "allowed_issue_types": ["safety_concern", "weak_evidence"],
+  "expected_min_critical": 0,
+  "expected_min_warnings": 1,
+  "expected_detected": true,
+  "metadata": {
+    "notes": "Option strategy with empty risks list should trigger missing_risk warning."
+  }
+}

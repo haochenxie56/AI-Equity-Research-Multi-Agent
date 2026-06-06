@@ -1,0 +1,45 @@
+{
+  "case_id": "unsupported_numeric_claim",
+  "description": "Agent makes a numeric valuation claim (EPS $2.50, P/E 25x) in a finding but provides no evidence refs.",
+  "failure_mode": "unsupported_numeric_claim",
+  "inputs": {
+    "agent_result": {
+      "agent_name": "equity_research_agent",
+      "run_id": "TEST_UNSC_001",
+      "findings": [
+        {
+          "text": "ACME Corp has EPS of $250 and trades at a P/E of 250x, implying a fair value of $625 per share.",
+          "evidence": [],
+          "confidence": 0.8
+        }
+      ],
+      "assumptions": [
+        {
+          "name": "EPS estimate",
+          "rationale": "Based on analyst consensus",
+          "value": "2.50",
+          "source": "agent",
+          "sensitivity": "high"
+        }
+      ],
+      "risks": [
+        {
+          "name": "Earnings miss",
+          "description": "EPS could miss estimates if margins compress.",
+          "severity": "medium",
+          "evidence": []
+        }
+      ],
+      "confidence": {
+        "level": "medium",
+        "rationale": "Moderate evidence base",
+        "score": 0.6
+      }
+    },
+    "tool_results": []
+  },
+  "metadata": {
+    "severity_expected": "warning",
+    "notes": "numeric_claim_issue should fire because EPS and P/E appear in finding text with no evidence refs."
+  }
+}

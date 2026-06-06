@@ -1,0 +1,12 @@
+{
+  "case_id": "hallucinated_evidence_id",
+  "expected_status": "fail",
+  "expected_issue_types": ["validation_failure"],
+  "allowed_issue_types": ["weak_evidence", "unsupported_claim"],
+  "expected_min_critical": 0,
+  "expected_min_warnings": 1,
+  "expected_detected": true,
+  "metadata": {
+    "notes": "validate_agent_result should flag INVALID_EVIDENCE_ID for ev_hallucinated_xyz. ValidationReport failure maps to validation_failure in critic or direct validation failure detection."
+  }
+}

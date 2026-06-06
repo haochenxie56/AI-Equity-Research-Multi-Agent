@@ -1,0 +1,12 @@
+{
+  "case_id": "unsupported_numeric_claim",
+  "expected_status": "fail",
+  "expected_issue_types": ["numeric_claim_issue"],
+  "allowed_issue_types": ["unsupported_claim"],
+  "expected_min_critical": 0,
+  "expected_min_warnings": 1,
+  "expected_detected": true,
+  "metadata": {
+    "notes": "EPS $2.50 and P/E 25x in finding text with no evidence should trigger numeric_claim_issue at warning level."
+  }
+}

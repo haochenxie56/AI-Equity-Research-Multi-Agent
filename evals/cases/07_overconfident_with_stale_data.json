@@ -1,0 +1,67 @@
+{
+  "case_id": "overconfident_with_stale_data",
+  "description": "Agent reports high confidence while staleness report shows stale macro data.",
+  "failure_mode": "overconfidence_with_stale_data",
+  "inputs": {
+    "agent_result": {
+      "agent_name": "macro_research_agent",
+      "run_id": "TEST_OVERCONF_STALE_001",
+      "findings": [
+        {
+          "text": "Macro environment is supportive of risk-on positioning.",
+          "evidence": [],
+          "confidence": 0.85
+        }
+      ],
+      "assumptions": [
+        {
+          "name": "Macro regime",
+          "rationale": "Current macro data supports growth",
+          "value": "growth",
+          "source": "agent",
+          "sensitivity": "high"
+        }
+      ],
+      "risks": [
+        {
+          "name": "Macro reversal",
+          "description": "Policy shift could reverse macro tailwinds.",
+          "severity": "medium",
+          "evidence": []
+        }
+      ],
+      "confidence": {
+        "level": "high",
+        "rationale": "Macro analysis complete",
+        "score": 0.85
+      }
+    },
+    "tool_results": [],
+    "staleness_report": {
+      "report_id": "sr_stale_macro_001",
+      "as_of": "2026-01-15",
+      "target": "MACRO",
+      "findings": [
+        {
+          "finding_id": "sf_macro_stale_001",
+          "domain": "macro",
+          "status": "stale",
+          "severity": "warning",
+          "message": "Macro snapshot is 35 days old (max_age=30 days). Data is stale.",
+          "timestamp_value": "2025-12-11T00:00:00+00:00",
+          "timestamp_role": "as_of",
+          "as_of": "2026-01-15",
+          "age_days": 35.0,
+          "max_age_days": 30.0,
+          "object_id": "macro_snapshot_001",
+          "field_path": "macro_snapshot.as_of",
+          "source_name": "macro_snapshot"
+        }
+      ]
+    }
+  },
+  "metadata": {
+    "severity_expected": "warning",
+    "notes": "detect_overconfidence should fire because confidence is high but staleness report is stale."
+  }
+}

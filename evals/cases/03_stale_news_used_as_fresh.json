@@ -1,0 +1,67 @@
+{
+  "case_id": "stale_news_used_as_fresh",
+  "description": "Agent cites news from 45 days ago while claiming current market relevance. Staleness report shows expired news domain.",
+  "failure_mode": "stale_news_used_as_fresh",
+  "inputs": {
+    "agent_result": {
+      "agent_name": "news_summary_agent",
+      "run_id": "TEST_STALE_001",
+      "findings": [
+        {
+          "text": "Recent earnings beat confirms bullish thesis. CEO commentary supports revenue acceleration.",
+          "evidence": [],
+          "confidence": 0.75
+        }
+      ],
+      "assumptions": [
+        {
+          "name": "News recency",
+          "rationale": "News sourced from available feed",
+          "value": "current",
+          "source": "agent",
+          "sensitivity": "medium"
+        }
+      ],
+      "risks": [
+        {
+          "name": "News staleness",
+          "description": "News data may be outdated.",
+          "severity": "low",
+          "evidence": []
+        }
+      ],
+      "confidence": {
+        "level": "medium",
+        "rationale": "Based on recent news",
+        "score": 0.6
+      }
+    },
+    "tool_results": [],
+    "staleness_report": {
+      "report_id": "sr_stale_news_001",
+      "as_of": "2026-01-15",
+      "target": "TEST",
+      "findings": [
+        {
+          "finding_id": "sf_news_expired_001",
+          "domain": "news",
+          "status": "expired",
+          "severity": "critical",
+          "message": "News snapshot is 45 days old (max_age=7 days). Data is expired.",
+          "timestamp_value": "2025-12-01T00:00:00+00:00",
+          "timestamp_role": "published_at",
+          "as_of": "2026-01-15",
+          "age_days": 45.0,
+          "max_age_days": 7.0,
+          "object_id": "news_snapshot_001",
+          "field_path": "news_snapshot.events.0.published_at",
+          "source_name": "news_snapshot"
+        }
+      ]
+    }
+  },
+  "metadata": {
+    "severity_expected": "critical",
+    "notes": "staleness report expired finding should become stale_evidence critic issue."
+  }
+}

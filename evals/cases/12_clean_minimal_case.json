@@ -1,0 +1,93 @@
+{
+  "case_id": "clean_minimal_case",
+  "description": "A minimal valid agent result with findings, evidence refs, assumptions, and risks. Validation aggregate and staleness report are both clean. Should pass without critical or warning issues.",
+  "failure_mode": "clean_minimal_case",
+  "inputs": {
+    "agent_result": {
+      "agent_name": "equity_research_agent",
+      "run_id": "TEST_CLEAN_001",
+      "findings": [
+        {
+          "text": "Company demonstrates durable competitive advantage in enterprise software.",
+          "evidence": [
+            {
+              "evidence_id": "ev_clean_001",
+              "excerpt": "Gross margin 78%, retention rate 94%",
+              "tool_name": "financial_tool",
+              "metric": "gross_margin",
+              "field_path": "financials.gross_margin"
+            },
+            {
+              "evidence_id": "ev_clean_002",
+              "excerpt": "Market share 32%, growing +3pp YoY",
+              "tool_name": "sector_tool",
+              "metric": "market_share",
+              "field_path": "sector.market_share"
+            }
+          ],
+          "confidence": 0.8
+        }
+      ],
+      "assumptions": [
+        {
+          "name": "Revenue retention",
+          "rationale": "Net revenue retention above 100% supports compounding growth",
+          "value": "105%",
+          "source": "tool",
+          "sensitivity": "medium"
+        }
+      ],
+      "risks": [
+        {
+          "name": "Competitive displacement",
+          "description": "Larger hyperscaler could bundle competing product.",
+          "severity": "medium",
+          "evidence": []
+        }
+      ],
+      "confidence": {
+        "level": "medium",
+        "rationale": "Two evidence references support core finding",
+        "score": 0.7
+      }
+    },
+    "tool_results": [
+      {
+        "evidence_id": "ev_clean_001",
+        "tool_name": "financial_tool",
+        "run_id": "TEST_CLEAN_001",
+        "outputs": {
+          "financials": {
+            "gross_margin": 0.78,
+            "retention_rate": 0.94
+          }
+        }
+      },
+      {
+        "evidence_id": "ev_clean_002",
+        "tool_name": "sector_tool",
+        "run_id": "TEST_CLEAN_001",
+        "outputs": {
+          "sector": {
+            "market_share": 0.32
+          }
+        }
+      }
+    ],
+    "validation_aggregate": {
+      "aggregate_id": "va_clean_001",
+      "as_of": "2026-01-15",
+      "items": []
+    },
+    "staleness_report": {
+      "report_id": "sr_clean_001",
+      "as_of": "2026-01-15",
+      "target": "CLEAN",
+      "findings": []
+    }
+  },
+  "metadata": {
+    "severity_expected": "info",
+    "notes": "All evidence refs exist in tool_results. No staleness or validation warnings. Should produce no critical or warning issues."
+  }
+}

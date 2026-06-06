@@ -112,10 +112,10 @@ This report is for research purposes only and does not constitute investment adv
 
 ```
 investment-agents/
-├── CLAUDE.md                  # this file
+├── AGENTS.md                  # this file
 ├── requirements.txt
 ├── .env.example               # environment variable template
-├── .claude/
+├── .Codex/
 │   └── agents/                # sub-agent definitions
 ├── lib/                       # shared Python utilities
 │   ├── cache_manager.py       # local cache management
@@ -134,85 +134,3 @@ investment-agents/
     ├── fetch_financials.py
     └── run_research.py
 ```
-
----
-
-## Evidence-First Reliable Multi-Agent Refactor
-
-### Architecture Principle
-
-> **Deterministic computation, agentic interpretation, auditable synthesis.**
->
-> Code computes facts. Tools produce versioned deterministic outputs. LLM agents interpret, critique, and synthesize.
-
-### Reliability Rules
-
-- Financial data extraction must be performed by code, not LLM inference.
-- DCF, FCF, WACC, relative valuation, technical indicators, scanner scores, and portfolio risk calculations must be performed by deterministic tools.
-- LLM agents must not invent financial numbers, valuation outputs, technical indicators, scanner scores, market data, or portfolio metrics.
-- LLM output should be structured as `AgentResult` and must reference `ToolResult` evidence IDs.
-- Numeric or metric-related claims must be backed by evidence IDs.
-- Unsupported numeric claims must be flagged by validators.
-- Do not replace deterministic workflow logic with free-form LLM reasoning.
-- Preserve existing Streamlit pages unless the task explicitly requests UI changes.
-- Prefer small, reviewable changes. Avoid broad rewrites unless specifically requested.
-
-### Development Workflow
-
-**Before editing:**
-- Inspect relevant files.
-- Summarize the planned change.
-- Avoid touching unrelated code.
-
-**After editing:**
-- Report changed files.
-- Report any errors or warnings.
-- Explain whether the change preserves deterministic computation.
-- If a relevant test exists, run it and report the result.
-
-### Phase 0: Reliability Foundation
-
-Phase 0 is the **Reliability Foundation**. Its purpose is to create a standalone evidence and validation layer that can later wrap existing deterministic tools and LLM outputs **without changing** the current Streamlit UI or the existing research workflow.
-
-**Planned package:** `lib/reliability/`
-
-| File | Purpose |
-|------|---------|
-| `__init__.py` | Package init |
-| `schemas.py` | Pydantic data models |
-| `run_context.py` | RunContext dataclass and factory |
-| `evidence_store.py` | EvidenceStore: add/get/persist tool results |
-| `validators.py` | validate_agent_result() |
-| `serialization.py` | save_json_model(), save_json() helpers |
-
-**Key schemas** (all defined in `schemas.py`):
-`DataSnapshot`, `ToolResult`, `EvidenceRef`, `Finding`, `Assumption`, `Risk`, `AgentConfidence`, `AgentResult`, `ValidationIssue`, `ValidationReport`
-
-**Run context:**
-- `RunContext` dataclass with a unique `run_id` of the form `TICKER_YYYYMMDD_HHMMSS_shortuuid`
-- Each run exposes a `run_dir` under `research/runs/`
-- Factory: `create_run_context(ticker=None, task=None, base_dir="research/runs")`
-
-**Evidence store behavior:**
-- `add_tool_result(result: ToolResult) -> str` — returns an `evidence_id`
-- Persists records to `tool_results.jsonl`
-- Persists manifest to `evidence_manifest.json`
-
-**Validator requirements:**
-- Detect findings with no evidence
-- Detect evidence IDs that do not exist in the store
-- Detect numeric or metric-related claims without evidence
-- Detect risk evidence references pointing to missing evidence IDs
-
-**Planned test script:** `scripts/test_reliability_foundation.py`
-
-**Preferred test command:**
-```bash
-python scripts/test_reliability_foundation.py
-```
-
-Expected behavior after Phase 0 is implemented:
-- Validation passes.
-- A run directory is created under `research/runs/`.
-- `tool_results.jsonl` is persisted.
-- `evidence_manifest.json` is persisted.

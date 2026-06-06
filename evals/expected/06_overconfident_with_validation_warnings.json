@@ -1,0 +1,12 @@
+{
+  "case_id": "overconfident_with_validation_warnings",
+  "expected_status": "fail",
+  "expected_issue_types": ["overconfidence"],
+  "allowed_issue_types": ["weak_evidence", "validation_failure"],
+  "expected_min_critical": 0,
+  "expected_min_warnings": 1,
+  "expected_detected": true,
+  "metadata": {
+    "notes": "detect_overconfidence fires when confidence=high and validation_aggregate status=pass_with_warnings."
+  }
+}

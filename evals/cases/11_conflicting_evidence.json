@@ -1,0 +1,60 @@
+{
+  "case_id": "conflicting_evidence",
+  "description": "Agent asserts a bullish conclusion while the validation aggregate contains a mismatch item indicating conflicting evidence (bearish technical vs bullish fundamental).",
+  "failure_mode": "conflicting_evidence",
+  "inputs": {
+    "agent_result": {
+      "agent_name": "equity_research_agent",
+      "run_id": "TEST_CONFLICT_001",
+      "findings": [
+        {
+          "text": "Fundamental analysis strongly supports a bullish thesis with upside to $200.",
+          "evidence": [],
+          "confidence": 0.8
+        }
+      ],
+      "assumptions": [
+        {
+          "name": "Fundamental dominance",
+          "rationale": "Fundamentals will override short-term technical weakness",
+          "value": "true",
+          "source": "agent",
+          "sensitivity": "medium"
+        }
+      ],
+      "risks": [
+        {
+          "name": "Technical breakdown",
+          "description": "Technical indicators are bearish and may precede fundamental deterioration.",
+          "severity": "high",
+          "evidence": []
+        }
+      ],
+      "confidence": {
+        "level": "medium",
+        "rationale": "Fundamental conviction despite technical headwinds",
+        "score": 0.65
+      }
+    },
+    "tool_results": [],
+    "validation_aggregate": {
+      "aggregate_id": "va_conflict_001",
+      "as_of": "2026-01-15",
+      "items": [
+        {
+          "item_id": "vi_conflict_001",
+          "domain": "agent_result",
+          "severity": "warning",
+          "item_type": "mismatch",
+          "message": "Bullish fundamental conclusion conflicts with bearish technical signal (RSI=28, MACD negative crossover).",
+          "source_name": "cross_domain_validator",
+          "blocking": false
+        }
+      ]
+    }
+  },
+  "metadata": {
+    "severity_expected": "warning",
+    "notes": "mismatch validation item should become conflicting_evidence critic issue."
+  }
+}

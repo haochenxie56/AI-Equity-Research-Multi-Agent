@@ -1,0 +1,12 @@
+{
+  "case_id": "conflicting_evidence",
+  "expected_status": "fail",
+  "expected_issue_types": ["conflicting_evidence"],
+  "allowed_issue_types": ["validation_failure", "weak_evidence"],
+  "expected_min_critical": 0,
+  "expected_min_warnings": 1,
+  "expected_detected": true,
+  "metadata": {
+    "notes": "mismatch item in validation_aggregate converts to conflicting_evidence critic issue."
+  }
+}

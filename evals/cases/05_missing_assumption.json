@@ -1,0 +1,37 @@
+{
+  "case_id": "missing_assumption",
+  "description": "Agent draws investment conclusion but assumptions list is empty.",
+  "failure_mode": "missing_assumption",
+  "inputs": {
+    "agent_result": {
+      "agent_name": "financial_analyst_agent",
+      "run_id": "TEST_NOASSUMP_001",
+      "findings": [
+        {
+          "text": "Based on analysis, the stock appears undervalued relative to peers.",
+          "evidence": [],
+          "confidence": 0.7
+        }
+      ],
+      "assumptions": [],
+      "risks": [
+        {
+          "name": "Market risk",
+          "description": "General market downturn could affect valuation.",
+          "severity": "medium",
+          "evidence": []
+        }
+      ],
+      "confidence": {
+        "level": "medium",
+        "rationale": "Peer comparison analysis",
+        "score": 0.55
+      }
+    },
+    "tool_results": []
+  },
+  "metadata": {
+    "severity_expected": "warning",
+    "notes": "critique_agent_result_structure should fire missing_assumption because assumptions list is empty."
+  }
+}
