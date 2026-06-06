@@ -1,9 +1,9 @@
 # Phase 7B — Multi-window Relative Strength, Two-Ring Rotation Engine, and Market-Internals Fragility Layer
 
 **Status**: Implemented + Codex fix round (×2) + polish rounds (×3) + rolling
-internals round + rolling fix rounds (×2) (lib + tests green). Review-only; not
-investment advice.
-**Suite**: `scripts/test_reliability_phase_7b_rotation_internals.py` — **152/152**,
+internals round + rolling fix rounds (×2) + close-out (parity completeness +
+i18n terminology) (lib + tests green). Review-only; not investment advice.
+**Suite**: `scripts/test_reliability_phase_7b_rotation_internals.py` — **181/181**,
 mock-only / offline.
 
 **Data-vintage round 2 (RS stale guard + earnings universe filter).**
@@ -349,6 +349,17 @@ daily snapshot `_meta` via `history_from_snapshots`.
 * **Frozen**: `lib/macro_regime.py`, `lib/workflow_state.py`, `lib/technical.py`,
   `.claude/agents/*`. No paid APIs. Review-only outputs.
 
+### Known limits
+
+* **`weak_bounce` operates at DAILY granularity.** The component reads end-of-day
+  OHLCV and judges a bounce as "weak" from the daily close/volume relationship.
+  Intraday bounce quality — e.g. the 2026-06-03 / 06-04 intraday rallies that faded
+  without volume support (per user observation) — is invisible at this granularity:
+  a session that rallies intraday but closes flat is one daily bar. Resolving it
+  would require intraday (sub-daily) data, which is outside the **free daily-OHLCV
+  data boundary** this layer is contracted to. This is a documented capability edge
+  of the data source, **not a defect** in the component.
+
 ---
 
 ## Judgment calls
@@ -544,3 +555,44 @@ path (non-destructive):
   window reset — gets the calendar call through. Follow-up (not this round): issue
   the single bulk calendar call BEFORE the Track B fan-out, or widen the backoff, so
   a cold-cache refresh evaluates earnings on the first pass.
+
+## Close-out round — parity completeness + terminology (i18n)
+
+### §18 parity now asserts EVERY `_meta` field with a UI surface
+
+The §18 harness previously asserted only level, distribution days, breadth, and
+good-news-sold/reason on the Cockpit banner. It now renders **both** surfaces from
+one refresh — the Cockpit banner AND the Macro Dashboard internals block (level
+badge, hysteresis source, data vintage, trend, per-component table) — and asserts
+every snapshot field against its rendered token:
+
+* **Structural completeness (18.0).** `FIELD_RENDER ∪ EXCLUSIONS` is asserted
+  equal to the live `fragility_snapshot(...)` key set. A new snapshot field added
+  without a UI decision fails loudly (it lands in neither set). Each exclusion carries
+  a one-line justification (e.g. `fragility_points` -> trend-chart Y only, no text
+  token; `fragility_consecutive_raw` -> internal hysteresis counter).
+* **Full cross-page parity (18.11/18.16/18.17).** `_missing()` walks every
+  `FIELD_RENDER` surface (banner substring, macro substring, or exact
+  internals-table cell) and must come back empty against the same refresh's `_meta`.
+* **Triggered checkmark parity (18.12)** and **clock / vintage-mismatch parity
+  (18.13/18.14)** tie the Macro table's checkmark count and warnings back to `_meta`.
+* **Negative divergence controls (18.18/18.19/18.20).** Mutating `data_vintage`,
+  `hysteresis_source`, or one `fragility_degraded` entry post-refresh (blobs frozen)
+  each makes full parity fail, proving the assertions actually bind.
+
+No real divergence was exposed: every `_meta` field either renders on a surface or is
+a justified exclusion. Suite: **181/181**, mock-only / offline.
+
+### Terminology (ZH only; EN production strings unchanged)
+
+* good-news-sold banner count line -> `利好遭抛: N 例`; the Macro
+  block names the concept `利好出尽式抛售 (sell-the-news)`.
+* Fragility level badges normal/elevated/high -> `正常 / 警戒 /
+  警报`, with a one-line tighten-only explainer near the Cockpit banner and on
+  the Macro block (normal = no systemic deterioration; elevated = alert only,
+  thresholds unchanged; high = short-horizon entry tightens, mid/long unaffected).
+* **Parity coordination.** The level explainer now names all three levels in the
+  rendered text, so the parity level check was tightened from a bare-word substring to
+  the badge-wrapped token `>{level}</span>` -- it binds the actual badge surface and is
+  robust to the explainer caption. EN badge text is the raw level word (i18n is ZH
+  only), so the production EN string the test pins is unchanged.

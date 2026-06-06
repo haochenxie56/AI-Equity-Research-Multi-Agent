@@ -502,6 +502,11 @@ else:
         _flevel = str(_frag.get("fragility_level", "normal"))
         _fcolor = {"normal": "#3fb950", "elevated": "#d29922",
                    "high": "#f85149"}.get(_flevel, "#8b949e")
+        # Localized badge text (EN keeps the raw level word the parity test pins;
+        # ZH renders 正常 / 警戒 / 警报). Unknown level → the raw string.
+        _flabel = {"normal": t("cockpit_frag_lvl_normal"),
+                   "elevated": t("cockpit_frag_lvl_elevated"),
+                   "high": t("cockpit_frag_lvl_high")}.get(_flevel, _flevel)
         # Each component renders one of THREE states (Item 1): a numeric value
         # INCLUDING 0 shows the number; None/degraded shows the n/a marker; a
         # component is NEVER silently omitted (an invisible 0 hides real signal).
@@ -526,18 +531,21 @@ else:
         # self-explanatory: dark → "无数据 (no_reports_in_window)"; a real reading
         # under thin coverage → "2 (partial_frame_coverage)".
         _greason = str(_frag.get("earnings_degrade_reason") or "")
+        # ZH appends a counter unit ("N 例"); EN unit is empty → "N" (parity-pinned).
+        _gunit = t("cockpit_frag_gns_unit")
         if _gns is not None:
-            _gns_txt = f"{_gns}" + (f" ({_greason})" if _greason else "")
+            _gns_txt = f"{_gns}{_gunit}" + (f" ({_greason})" if _greason else "")
         else:
             _gns_txt = f"{_na} ({_greason})" if _greason else _na
         _bits.append(f"{t('cockpit_frag_gns')}: {_gns_txt}")
         st.markdown(
             f"{t('cockpit_hub_internals')}: "
-            + _badge(_flevel, _fcolor)
+            + _badge(_flabel, _fcolor)
             + (f" — {', '.join(_bits)}" if _bits else ""),
             unsafe_allow_html=True,
         )
         st.caption(t("cockpit_hub_internals_note"))
+        st.caption(t("cockpit_frag_lvl_explain"))
     else:
         # Refresh ran but fragility was unavailable — say so rather than vanish.
         st.caption(f"{t('cockpit_hub_internals')}: {t('cockpit_hub_internals_unavail')}")

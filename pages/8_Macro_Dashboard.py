@@ -1487,13 +1487,18 @@ def _render_market_internals() -> None:
 
     _lvl_color = {"normal": "#3fb950", "elevated": "#d29922", "high": "#f85149"}
     level = str(frag.get("fragility_level", "normal"))
+    # Localized badge text (EN keeps the raw level word; ZH renders 正常/警戒/警报).
+    _lvl_label = {"normal": t("cockpit_frag_lvl_normal"),
+                  "elevated": t("cockpit_frag_lvl_elevated"),
+                  "high": t("cockpit_frag_lvl_high")}.get(level, level)
     st.markdown(
-        f"{t('mi_level')}: " + _badge_html(level, _lvl_color.get(level, "#8b949e"))
+        f"{t('mi_level')}: " + _badge_html(_lvl_label, _lvl_color.get(level, "#8b949e"))
         + f" &nbsp; {t('mi_source')}: <b>{frag.get('hysteresis_source', '—')}</b>"
         + f" &nbsp; {t('mi_vintage')}: <b>{frag.get('data_vintage') or '—'}</b>"
         + (f" &nbsp; ⚠️ {t('mi_vintage_mismatch')}" if frag.get("vintage_mismatch") else ""),
         unsafe_allow_html=True,
     )
+    st.caption(t("cockpit_frag_lvl_explain"))
 
     # 10-day raw-reading trend: points line + per-day level-coloured markers.
     if series:
@@ -1554,6 +1559,7 @@ def _render_market_internals() -> None:
              ("offense_defense_defensive", "offense_defense_defensive_strong")),
     ]
     st.table(rows)
+    st.caption(t("cockpit_frag_gns_concept"))
     st.caption(t("mi_note"))
 
 

@@ -1119,8 +1119,15 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "cockpit_hub_internals_unavail":"暂不可用",
         "cockpit_frag_dist":            "派发日",
         "cockpit_frag_breadth":         "广度",
-        "cockpit_frag_gns":             "好消息被卖",
+        "cockpit_frag_gns":             "利好遭抛",
+        "cockpit_frag_gns_unit":        " 例",
+        "cockpit_frag_gns_concept":     "利好遭抛 = 利好出尽式抛售 (sell-the-news)：财报利好后次日放量下跌的名单占比。",
         "cockpit_frag_na":              "无数据",
+        # Fragility level badge names + one-line tighten-only explainer.
+        "cockpit_frag_lvl_normal":      "正常",
+        "cockpit_frag_lvl_elevated":    "警戒",
+        "cockpit_frag_lvl_high":        "警报",
+        "cockpit_frag_lvl_explain":     "正常 = 无系统性恶化信号；警戒 = 多个恶化信号并存，仅提醒，不收紧门槛；警报 = 恶化信号广泛确认，短线入场门槛收紧（中长线不受影响）。",
         # Phase 7B — Macro Dashboard "Market Internals" workbench block
         "mi_header":                    "市场内部结构（工作台）",
         "mi_not_loaded":                "请先在投资驾驶舱刷新以生成内部结构读数",
@@ -2515,7 +2522,14 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "cockpit_frag_dist":            "distribution days",
         "cockpit_frag_breadth":         "breadth",
         "cockpit_frag_gns":             "good-news-sold",
+        "cockpit_frag_gns_unit":        "",
+        "cockpit_frag_gns_concept":     "good-news-sold = sell-the-news: share of post-beat names that sold off on the next session.",
         "cockpit_frag_na":              "n/a",
+        # Fragility level badge names + one-line tighten-only explainer.
+        "cockpit_frag_lvl_normal":      "normal",
+        "cockpit_frag_lvl_elevated":    "elevated",
+        "cockpit_frag_lvl_high":        "high",
+        "cockpit_frag_lvl_explain":     "normal = no systemic deterioration signals; elevated = several deterioration signals coexist — alert only, thresholds unchanged; high = deterioration broadly confirmed — short-horizon entry thresholds tighten (mid/long unaffected).",
         # Phase 7B — Macro Dashboard "Market Internals" workbench block
         "mi_header":                    "Market Internals (workbench)",
         "mi_not_loaded":                "Refresh the Cockpit first to generate an internals reading",

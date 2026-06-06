@@ -1376,6 +1376,17 @@ _TABLE_TRIGGERS = [
 ]
 
 
+def _lvl_token(level):
+    """The level as it renders INSIDE the badge span (`>normal</span>`), not a bare
+    substring. Item 2b added a one-line explainer caption near the banner AND on the
+    Macro block that names all three levels ("normal = … elevated = … high = …"), so a
+    bare-word level check would match the explainer text and (a) pass vacuously and
+    (b) break the diverged-level negative control. Pinning the badge-wrapped form keeps
+    the assertion on the actual badge surface — and EN badge text is the raw level word
+    (Item 2 is ZH-only), so this is unchanged for the rendered EN production string."""
+    return f">{level}</span>"
+
+
 def _dd_banner(m):
     dd = max([x for x in (m.get("distribution_days_spy"), m.get("distribution_days_qqq"))
               if x is not None], default=None)
@@ -1416,8 +1427,8 @@ def _od_cell(m):
 # a rendered surface; the structural check asserts FIELD_RENDER ∪ EXCLUSIONS == all
 # snapshot fields, so a new snapshot field with no surface decision fails loudly.
 FIELD_RENDER = {
-    "fragility_level": lambda m: [("banner", str(m["fragility_level"])),
-                                  ("macro", str(m["fragility_level"]))],
+    "fragility_level": lambda m: [("banner", _lvl_token(str(m["fragility_level"]))),
+                                  ("macro", _lvl_token(str(m["fragility_level"])))],
     "distribution_days_spy": lambda m: [("banner", _dd_banner(m)),
                                         ("cell", _macro_cell(m.get("distribution_days_spy")))],
     "distribution_days_qqq": lambda m: [("cell", _macro_cell(m.get("distribution_days_qqq")))],
@@ -1523,7 +1534,7 @@ def _internals_cells(df):
 
 def _expected_tokens(meta):
     """Banner-derived tokens (retained for the banner-only checks 18.4/18.6/18.10)."""
-    return [("level", str(meta.get("fragility_level", "normal"))),
+    return [("level", _lvl_token(str(meta.get("fragility_level", "normal")))),
             ("dist", _dd_banner(meta)), ("breadth", _breadth_banner(meta)),
             ("gns", _gns_banner(meta))]
 
