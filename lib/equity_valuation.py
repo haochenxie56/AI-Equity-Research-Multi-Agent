@@ -38,8 +38,11 @@ _GROWTH_CAP = 0.15      # cap the growth_rate at 15%
 _GROWTH_DEFAULT = 0.05  # fall back to 5% when no growth field is available
 _DCF_YEARS = 5          # single-stage horizon exponent
 
-# Mid-value blend weights (only the present sources contribute; weights are
-# renormalized over whatever is available).
+# Mid-value blend weights for the mature_profitable menu (only present sources
+# contribute; weights renormalized over whatever is available). These are the
+# canonical source-of-truth weights; they are mirrored into ``_ANCHOR_FACTORS``
+# (the routed per-anchor factor table) for the dcf / relative_pe / analyst keys so
+# the default path stays byte-identical.
 _W_DCF = 0.35
 _W_RELATIVE = 0.35
 _W_ANALYST = 0.30
@@ -79,10 +82,124 @@ SECTOR_MEDIAN_PE: dict[str, float] = {
 }
 _DEFAULT_MEDIAN_PE = 19.0
 
+# Hardcoded sector → median EV/EBITDA and P/S fallback maps (free, deterministic).
+# Used ONLY when growth-matched peer multiples are unavailable on the routed
+# EV/EBITDA (project_driven) / EV/S (growth) menus — the honest "sector_fallback"
+# basis. Curated June 2026; intentionally conservative.
+SECTOR_MEDIAN_EV_EBITDA: dict[str, float] = {
+    "Technology": 18.0,
+    "Communication Services": 11.0,
+    "Consumer Cyclical": 12.0,
+    "Consumer Defensive": 13.0,
+    "Healthcare": 14.0,
+    "Financial Services": 10.0,
+    "Industrials": 13.0,
+    "Energy": 6.0,
+    "Basic Materials": 8.0,
+    "Real Estate": 18.0,
+    "Utilities": 11.0,
+}
+_DEFAULT_EV_EBITDA = 12.0
+
+SECTOR_MEDIAN_PS: dict[str, float] = {
+    "Technology": 6.0,
+    "Communication Services": 3.5,
+    "Consumer Cyclical": 1.5,
+    "Consumer Defensive": 1.5,
+    "Healthcare": 4.0,
+    "Financial Services": 3.0,
+    "Industrials": 2.0,
+    "Energy": 1.2,
+    "Basic Materials": 1.5,
+    "Real Estate": 6.0,
+    "Utilities": 2.5,
+}
+_DEFAULT_PS = 2.5
+
+# --- Method menus per company type (Valuation Refactor v1, Task 2) -----------
+# Each company type routes a different INPUT SET into the blend. ``blend`` lists
+# the anchor keys eligible for the blend (only the ones whose value is present
+# actually contribute); ``blend_if_present`` adds an anchor only when it is
+# computable (e.g. DCF for an unprofitable grower is usually not); ``excluded``
+# anchors are computed-but-not-blended (shown for transparency, flagged with the
+# reason). The dispersion gate from stop-the-bleed runs LAST on whatever the menu
+# produced. The default (empty / unknown company_type) is mature_profitable, which
+# is byte-identical to the prior DCF + relative-PE + analyst behavior.
+METHOD_MENUS: dict = {
+    "mature_profitable": {
+        "blend": ["dcf", "relative_pe", "analyst"],
+        "excluded": [],
+    },
+    "growth_profitable": {
+        # forward EV/S vs growth-matched peers (primary) + forward PE (secondary)
+        # + analyst; Rule-of-40 modifies the EV/S multiple (see _compute_ev_s).
+        "blend": ["ev_s", "relative_pe", "analyst"],
+        "excluded": ["dcf"],
+    },
+    "growth_unprofitable": {
+        # forward EV/S vs growth-matched peers + analyst; PE EXCLUDED (the garbage
+        # source); DCF only if it happens to be computable.
+        "blend": ["ev_s", "analyst"],
+        "blend_if_present": ["dcf"],
+        "excluded": ["relative_pe"],
+    },
+    "project_driven": {
+        # forward EV/EBITDA + analyst; backlog coverage is the right metric but is
+        # unavailable on free sources (backlog_note). PE / DCF excluded.
+        "blend": ["ev_ebitda", "analyst"],
+        "excluded": ["dcf", "relative_pe"],
+        "backlog_metric": True,
+    },
+    "cyclical": {
+        # PB/PS band vs the ticker's own 5y history + analyst; trailing-PE is
+        # cycle-distorted (flagged, not blended); DCF excluded.
+        "blend": ["pb_ps_band", "analyst"],
+        "excluded": ["dcf"],
+        "cycle_distorted": ["relative_pe"],
+    },
+}
+
+# Per-anchor blend factors: (low_factor, mid_weight, high_factor, method_label).
+# The mature_profitable trio (dcf / relative_pe / analyst) reproduces the prior
+# discount / weight / premium factors EXACTLY so the default path is unchanged.
+_ANCHOR_FACTORS: dict = {
+    "dcf":         (0.85, _W_DCF, 1.10, "DCF (Gordon growth)"),
+    "relative_pe": (0.90, _W_RELATIVE, 1.05, "relative P/E × EPS"),
+    "analyst":     (0.80, _W_ANALYST, 1.05, "analyst target"),
+    "ev_s":        (0.85, 0.45, 1.10, "forward EV/S (peer P/S proxy, growth-matched)"),
+    "ev_ebitda":   (0.85, 0.50, 1.10, "forward EV/EBITDA (peers)"),
+    "pb_ps_band":  (0.90, 0.50, 1.10, "PB/PS band (5y percentile)"),
+}
+
+# Display name for each anchor key (kept stable for the cache / UI: the relative
+# P/E anchor stays "relative", the price-band anchor "pb_ps").
+_ANCHOR_DISPLAY: dict = {
+    "dcf": "dcf", "relative_pe": "relative", "analyst": "analyst",
+    "ev_s": "ev_s", "ev_ebitda": "ev_ebitda", "pb_ps_band": "pb_ps",
+}
+
+# Rule-of-40 (growth_profitable quality modifier): a company whose
+# (revenue_growth + fcf_margin) clears 40% gets a premium on its EV/S multiple;
+# below 40% a discount. Bounded so it never dominates the anchor.
+_RULE_OF_40_TARGET = 0.40
+_RULE_OF_40_SENSITIVITY = 0.5   # multiplier swing per 1.0 of (score − 0.40)
+_RULE_OF_40_MIN = 0.80
+_RULE_OF_40_MAX = 1.25
+
 
 def get_sector_median_pe(sector: Optional[str]) -> float:
     """Return the hardcoded median trailing P/E for ``sector`` (default if unknown)."""
     return SECTOR_MEDIAN_PE.get(sector or "", _DEFAULT_MEDIAN_PE)
+
+
+def get_sector_median_ev_ebitda(sector: Optional[str]) -> float:
+    """Return the hardcoded median EV/EBITDA for ``sector`` (default if unknown)."""
+    return SECTOR_MEDIAN_EV_EBITDA.get(sector or "", _DEFAULT_EV_EBITDA)
+
+
+def get_sector_median_ps(sector: Optional[str]) -> float:
+    """Return the hardcoded median P/S for ``sector`` (default if unknown)."""
+    return SECTOR_MEDIAN_PS.get(sector or "", _DEFAULT_PS)
 
 
 @dataclass
@@ -125,6 +242,28 @@ class AppFairValue:
     # median P/E (the hardcoded map is trailing) | "trailing" | "".
     relative_basis: str = ""
     peer_pe_basis: str = ""
+    # --- Method router (Valuation Refactor v1) ----------------------------
+    # company_type: the detected classification (mature_profitable /
+    # growth_profitable / growth_unprofitable / project_driven / cyclical).
+    # company_type_confidence: "clear" | "borderline" (borderline routes to the
+    # default mature menu). routing_rationale: human-readable why-this-menu.
+    # methods_used: the anchor method labels that entered the blend.
+    # excluded_anchors: computed-but-not-blended anchors (PE for growth/project,
+    # cycle-distorted trailing-PE for cyclical) each with {name, value, basis,
+    # flag}. ev_s_value / ev_ebitda_value / pb_ps_value carry the routed extra
+    # anchors. peer_basis: "growth_matched" | "sector_fallback" | "".
+    # backlog_note: honest note when backlog coverage (the right project_driven
+    # metric) is unavailable on free sources.
+    company_type: str = ""
+    company_type_confidence: str = ""
+    routing_rationale: str = ""
+    methods_used: list = field(default_factory=list)
+    excluded_anchors: list = field(default_factory=list)
+    ev_s_value: Optional[float] = None
+    ev_ebitda_value: Optional[float] = None
+    pb_ps_value: Optional[float] = None
+    peer_basis: str = ""
+    backlog_note: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -170,42 +309,108 @@ def build_app_fair_value(
     dcf_note: str = "",
     relative_basis: str = "",
     peer_pe_basis: str = "",
+    *,
+    company_type: str = "",
+    company_type_confidence: str = "",
+    routing_rationale: str = "",
+    ev_s_value: Optional[float] = None,
+    ev_s_basis: str = "",
+    ev_ebitda_value: Optional[float] = None,
+    ev_ebitda_basis: str = "",
+    pb_ps_value: Optional[float] = None,
+    pb_ps_basis: str = "",
+    peer_basis: str = "",
+    backlog_note: str = "",
 ) -> AppFairValue:
-    """Assemble an :class:`AppFairValue` from the three source estimates (pure).
+    """Assemble an :class:`AppFairValue` from the routed anchor set (pure).
+
+    **Method router (Valuation Refactor v1, Task 2):** ``company_type`` selects a
+    :data:`METHOD_MENUS` entry that decides which anchors enter the blend. The
+    default (``""`` / unknown) is ``mature_profitable`` — DCF + relative-PE +
+    analyst with the EXACT prior discount / weight / premium factors, so the
+    legacy path is byte-identical. Other types route in EV/S, EV/EBITDA, or a
+    PB/PS band and EXCLUDE the inappropriate anchors (e.g. trailing-PE garbage for
+    a project-driven company), recording the excluded ones in ``excluded_anchors``
+    with the reason (``excluded`` / ``cycle_distorted``) for transparency.
 
     Always returns a well-formed result with
-    ``fair_value_low <= fair_value_mid <= fair_value_high``. When all three
-    sources are ``None`` the band is anchored on ``current_price``
-    (0.85 / 1.00 / 1.15) and confidence is ``low`` (``blend_state="no_anchor"``).
+    ``fair_value_low <= fair_value_mid <= fair_value_high``. When the menu
+    produced no usable anchor the band is anchored on ``current_price``
+    (0.85 / 1.00 / 1.15), confidence ``low``, ``blend_state="no_anchor"``.
 
-    **Anchor consistency gate (Task 1):** before blending, the spread across the
-    available raw anchors is measured (``anchor_dispersion`` = max/min). When two
-    or more anchors disagree by more than :data:`ANCHOR_DISPERSION_THRESHOLD`
-    they are NOT blended — the band collapses to ``0.0`` (so no consumer mistakes
-    it for precision), ``confidence`` is forced ``low``, and ``blend_state`` is
-    ``anchors_irreconcilable``. The ``anchors`` list always carries each present
-    anchor with its value + basis for honest side-by-side display.
+    **Anchor consistency gate (stop-the-bleed, Task 1) runs LAST** on whatever
+    the menu produced: the spread across the blended anchors is measured
+    (``anchor_dispersion`` = max/min); when they disagree by more than
+    :data:`ANCHOR_DISPERSION_THRESHOLD` they are NOT blended — the band collapses
+    to ``0.0``, ``confidence`` is forced ``low``, ``blend_state`` is
+    ``anchors_irreconcilable``. Routing reduces irreconcilables; the gate still
+    catches the rest.
     """
     cp = _finite_pos(current_price) or 0.0
     dcf = _finite_pos(dcf_value)
     rel = _finite_pos(relative_value)
     ana = _finite_pos(analyst_target)
+    ev_s = _finite_pos(ev_s_value)
+    ev_ebitda = _finite_pos(ev_ebitda_value)
+    pb_ps = _finite_pos(pb_ps_value)
     try:
         a_count = int(analyst_count or 0)
     except (TypeError, ValueError):
         a_count = 0
 
-    # --- Side-by-side anchor list + dispersion (unit-sane positive anchors) -
+    # Candidate anchors keyed by menu key: (value, display_basis).
+    candidates = {
+        "dcf": (dcf, (dcf_source or "dcf")),
+        "relative_pe": (rel, (relative_basis or "relative")),
+        "analyst": (ana, f"analyst (n={a_count})"),
+        "ev_s": (ev_s, (ev_s_basis or "EV/S")),
+        "ev_ebitda": (ev_ebitda, (ev_ebitda_basis or "EV/EBITDA")),
+        "pb_ps_band": (pb_ps, (pb_ps_basis or "PB/PS band")),
+    }
+
+    menu_key = company_type if company_type in METHOD_MENUS else "mature_profitable"
+    menu = METHOD_MENUS[menu_key]
+
+    # Effective blend keys = menu.blend (+ blend_if_present whose value exists).
+    blend_keys = list(menu.get("blend", []))
+    for k in menu.get("blend_if_present", []):
+        if candidates.get(k, (None, ""))[0] is not None and k not in blend_keys:
+            blend_keys.append(k)
+
+    # --- Blended anchor list (present only), in menu order ------------------
     anchors: list = []
-    if dcf is not None:
-        anchors.append({"name": "dcf", "value": round(dcf, 2),
-                        "basis": (dcf_source or "dcf")})
-    if rel is not None:
-        anchors.append({"name": "relative", "value": round(rel, 2),
-                        "basis": (relative_basis or "relative")})
-    if ana is not None:
-        anchors.append({"name": "analyst", "value": round(ana, 2),
-                        "basis": f"analyst (n={a_count})"})
+    for k in blend_keys:
+        v, basis = candidates.get(k, (None, ""))
+        if v is None:
+            continue
+        anchors.append({
+            "name": _ANCHOR_DISPLAY.get(k, k),
+            "value": round(v, 2),
+            "basis": basis,
+            "method": _ANCHOR_FACTORS[k][3],
+        })
+    methods_used = [a["method"] for a in anchors]
+    _blend_names = {a["name"] for a in anchors}
+
+    # --- Excluded / flagged anchors (computed but NOT blended) --------------
+    excluded_anchors: list = []
+    _flagged = [(k, "excluded") for k in menu.get("excluded", [])]
+    _flagged += [(k, "cycle_distorted") for k in menu.get("cycle_distorted", [])]
+    for k, flag in _flagged:
+        v, basis = candidates.get(k, (None, ""))
+        if v is None:
+            continue
+        name = _ANCHOR_DISPLAY.get(k, k)
+        if name in _blend_names:
+            continue
+        excluded_anchors.append({"name": name, "value": round(v, 2),
+                                 "basis": basis, "flag": flag})
+
+    # A routing tag is shown only for a non-default routed type (the default
+    # mature path keeps the legacy methodology wording byte-for-byte).
+    _route_tag = f"[{company_type}] " if company_type else ""
+
+    # --- Anchor consistency gate over the BLENDED set ----------------------
     anchor_values = [a["value"] for a in anchors]
     anchor_dispersion: Optional[float] = None
     if len(anchor_values) >= 2:
@@ -215,13 +420,26 @@ def build_app_fair_value(
     irreconcilable = (anchor_dispersion is not None
                       and anchor_dispersion > ANCHOR_DISPERSION_THRESHOLD)
 
+    _common = dict(
+        company_type=company_type,
+        company_type_confidence=company_type_confidence,
+        routing_rationale=routing_rationale,
+        methods_used=methods_used,
+        excluded_anchors=excluded_anchors,
+        ev_s_value=(round(ev_s, 2) if ev_s is not None else None),
+        ev_ebitda_value=(round(ev_ebitda, 2) if ev_ebitda is not None else None),
+        pb_ps_value=(round(pb_ps, 2) if pb_ps is not None else None),
+        peer_basis=peer_basis,
+        backlog_note=backlog_note,
+    )
+
     if irreconcilable:
         # Do NOT blend irreconcilable anchors into a fake band. Present each
         # anchor separately (anchors list), force low confidence, suppress the
         # range. Downstream LONG entry logic degrades to "technical only".
         parts = ", ".join(f"{a['name']} ${a['value']:.2f}" for a in anchors)
         methodology = (
-            "Anchors irreconcilable (dispersion "
+            _route_tag + "Anchors irreconcilable (dispersion "
             f"{anchor_dispersion:.1f}× > {ANCHOR_DISPERSION_THRESHOLD:.0f}×): "
             f"{parts}. Not blended — each shown separately. / "
             f"估值锚不一致（离散度 {anchor_dispersion:.1f}× > "
@@ -247,40 +465,23 @@ def build_app_fair_value(
             anchors=anchors,
             relative_basis=relative_basis,
             peer_pe_basis=peer_pe_basis,
+            **_common,
         )
 
-    # --- fair_value_low: min of discounted non-None sources ----------------
-    low_candidates = []
-    if dcf is not None:
-        low_candidates.append(dcf * 0.85)
-    if rel is not None:
-        low_candidates.append(rel * 0.90)
-    if ana is not None:
-        low_candidates.append(ana * 0.80)
+    # --- low / mid / high via per-anchor factors over the blended set ------
+    low_candidates, high_candidates = [], []
+    mid_num = mid_den = 0.0
+    for k in blend_keys:
+        v, _ = candidates.get(k, (None, ""))
+        if v is None:
+            continue
+        lf, mw, hf, _lbl = _ANCHOR_FACTORS[k]
+        low_candidates.append(v * lf)
+        high_candidates.append(v * hf)
+        mid_num += v * mw
+        mid_den += mw
     fair_value_low = min(low_candidates) if low_candidates else (cp * 0.85 if cp else 0.0)
-
-    # --- fair_value_mid: weighted average of raw non-None sources ----------
-    mid_num = 0.0
-    mid_den = 0.0
-    if dcf is not None:
-        mid_num += dcf * _W_DCF
-        mid_den += _W_DCF
-    if rel is not None:
-        mid_num += rel * _W_RELATIVE
-        mid_den += _W_RELATIVE
-    if ana is not None:
-        mid_num += ana * _W_ANALYST
-        mid_den += _W_ANALYST
     fair_value_mid = (mid_num / mid_den) if mid_den > 0 else (cp if cp else 0.0)
-
-    # --- fair_value_high: max of premium non-None sources ------------------
-    high_candidates = []
-    if dcf is not None:
-        high_candidates.append(dcf * 1.10)
-    if rel is not None:
-        high_candidates.append(rel * 1.05)
-    if ana is not None:
-        high_candidates.append(ana * 1.05)
     fair_value_high = max(high_candidates) if high_candidates else (cp * 1.15 if cp else 0.0)
 
     # Defensive ordering guarantee (the math above already preserves it, but
@@ -290,7 +491,7 @@ def build_app_fair_value(
     fair_value_high = round(max(fair_value_high, fair_value_mid), 2)
 
     # --- confidence --------------------------------------------------------
-    source_count = sum(v is not None for v in (dcf, rel, ana))
+    source_count = len(anchors)
     spread = ((fair_value_high - fair_value_low) / fair_value_mid) if fair_value_mid > 0 else 1.0
     if source_count == 3 and spread < 0.40:
         confidence = "high"
@@ -301,24 +502,19 @@ def build_app_fair_value(
 
     upside_pct = ((fair_value_mid - cp) / cp) if cp > 0 else 0.0
 
-    used = []
-    if dcf is not None:
-        used.append(f"DCF [{dcf_source}]" if dcf_source else "DCF")
-    if rel is not None:
-        used.append("relative (sector P/E)")
-    if ana is not None:
-        used.append(f"analyst target (n={a_count})")
-    if used:
-        methodology = "Fair value blends " + ", ".join(used) + "."
+    if methods_used:
+        methodology = _route_tag + "Fair value blends " + ", ".join(methods_used) + "."
     else:
         methodology = (
-            "No DCF / relative / analyst inputs available — band anchored on "
-            "current price (low confidence)."
+            _route_tag + "No usable valuation anchors for this company type — band "
+            "anchored on current price (low confidence)."
         )
     if dcf is None and dcf_note:
         methodology = methodology + " " + dcf_note
+    if backlog_note:
+        methodology = methodology + " " + backlog_note
 
-    blend_state = _BLEND_OK if source_count >= 1 else _BLEND_NONE
+    blend_state = _BLEND_OK if anchors else _BLEND_NONE
 
     return AppFairValue(
         ticker=(ticker or "").upper().strip(),
@@ -340,6 +536,7 @@ def build_app_fair_value(
         anchors=anchors,
         relative_basis=relative_basis,
         peer_pe_basis=peer_pe_basis,
+        **_common,
     )
 
 
@@ -369,6 +566,22 @@ def _fetch_raw(ticker: str) -> dict:
         "analyst_mean": None,
         "analyst_count": 0,
         "live": False,
+        # --- Method-router classifier / extra-anchor inputs (Valuation Refactor
+        # v1). All read from the SAME tk.info dict already fetched above — no new
+        # per-ticker network. Any missing piece stays None.
+        "industry": None,
+        "revenue_growth": None,
+        "earnings_growth": None,
+        "profit_margin": None,
+        "operating_margin": None,
+        "market_cap": None,
+        "enterprise_value": None,
+        "total_revenue": None,
+        "total_debt": None,
+        "total_cash": None,
+        "book_value": None,
+        "price_to_book": None,
+        "price_to_sales": None,
     }
     try:
         import yfinance as yf
@@ -379,6 +592,21 @@ def _fetch_raw(ticker: str) -> dict:
             out["live"] = True
 
         out["sector"] = info.get("sector")
+        # Classifier / extra-anchor inputs (same info dict; no extra fetch).
+        out["industry"] = info.get("industry")
+        out["revenue_growth"] = _finite(info.get("revenueGrowth"))
+        out["earnings_growth"] = _finite(info.get("earningsGrowth"))
+        out["profit_margin"] = _finite(info.get("profitMargins"))
+        out["operating_margin"] = _finite(info.get("operatingMargins"))
+        out["market_cap"] = _finite_pos(info.get("marketCap"))
+        out["enterprise_value"] = _finite(info.get("enterpriseValue"))
+        out["total_revenue"] = _finite_pos(info.get("totalRevenue"))
+        out["total_debt"] = _finite(info.get("totalDebt"))
+        out["total_cash"] = _finite(info.get("totalCash"))
+        out["book_value"] = _finite(info.get("bookValue"))  # per-share
+        out["price_to_book"] = _finite_pos(info.get("priceToBook"))
+        out["price_to_sales"] = _finite_pos(
+            info.get("priceToSalesTrailing12Months"))
         out["trailing_eps"] = _finite(info.get("trailingEps"))
         # Forward consensus EPS (preferred basis for the relative anchor, Task 2).
         out["forward_eps"] = _finite(info.get("forwardEps"))
@@ -521,16 +749,158 @@ def _compute_dcf_per_share(raw: dict) -> Optional[float]:
     return round(value, 2)
 
 
-def _compute_cached(ticker: str, current_price: float,
-                    dcf_override: Optional[float] = None) -> AppFairValue:
-    """Cached worker (fail-closed). Separated so ``st.cache_data`` can wrap it.
+# ---------------------------------------------------------------------------
+# Routed extra-anchor helpers (Valuation Refactor v1, Task 2)
+# ---------------------------------------------------------------------------
 
-    ``dcf_override`` (per-share, > 0) replaces the internal Gordon-growth DCF —
-    used by the Equity page "Update Valuation" action to feed a user-adjusted DCF
-    intrinsic value from the Financials tab.
+
+def _median(vals: list) -> Optional[float]:
+    nums = sorted(float(v) for v in vals if _finite(v) is not None)
+    if not nums:
+        return None
+    n = len(nums)
+    mid = n // 2
+    return nums[mid] if n % 2 == 1 else (nums[mid - 1] + nums[mid]) / 2.0
+
+
+def _rule_of_40_multiplier(score: Optional[float]) -> float:
+    """Rule-of-40 quality modifier on a growth multiple (bounded).
+
+    ``score`` = revenue_growth + fcf_margin (fractions). A score above the 40%
+    target earns a premium on the multiple; below it, a discount. Bounded to
+    [``_RULE_OF_40_MIN``, ``_RULE_OF_40_MAX``] so it never dominates the anchor.
     """
-    raw = _fetch_raw(ticker)
+    s = _finite(score)
+    if s is None:
+        return 1.0
+    mult = 1.0 + (s - _RULE_OF_40_TARGET) * _RULE_OF_40_SENSITIVITY
+    return round(max(_RULE_OF_40_MIN, min(_RULE_OF_40_MAX, mult)), 4)
 
+
+def _compute_ev_s(raw: dict, *, peer_ps: Optional[float] = None,
+                  rule_of_40_score: Optional[float] = None) -> tuple:
+    """Forward EV/S anchor, per share (equity-level P/S proxy; fail-closed).
+
+    ``fair_price = target_ps × (revenue / shares)`` where ``target_ps`` is the
+    growth-matched peer median P/S when provided, else the sector-median P/S
+    fallback. A Rule-of-40 multiplier (growth_profitable) adjusts the multiple.
+    Uses an equity-level P/S (not a true EV/S) because the peer table supplies
+    P/S and this needs no net-debt bridge — documented honestly in the basis.
+    Returns ``(value, basis)`` or ``(None, "")``.
+    """
+    revenue = _finite_pos(raw.get("total_revenue"))
+    shares = _finite_pos(raw.get("shares"))
+    if revenue is None or shares is None:
+        return None, ""
+    if peer_ps is not None and peer_ps > 0:
+        target_ps = float(peer_ps)
+        basis = "peer P/S (growth-matched)"
+    else:
+        target_ps = get_sector_median_ps(raw.get("sector"))
+        basis = "sector P/S (fallback)"
+    if rule_of_40_score is not None:
+        mult = _rule_of_40_multiplier(rule_of_40_score)
+        target_ps = target_ps * mult
+        basis = f"{basis} ×R40 {mult:.2f}"
+    value = target_ps * (revenue / shares)
+    if value != value or value <= 0:
+        return None, ""
+    return round(value, 2), basis
+
+
+def _compute_ev_ebitda(raw: dict, *, peer_ev_ebitda: Optional[float] = None) -> tuple:
+    """Forward EV/EBITDA anchor, per share (fail-closed).
+
+    ``fair_ev = target × EBITDA``; ``fair_equity = fair_ev − net_debt``;
+    ``per_share = fair_equity / shares``. ``net_debt`` prefers
+    ``total_debt − total_cash``, else ``enterprise_value − market_cap`` (the EV
+    bridge), else ``0``. ``target`` is the growth-matched peer median EV/EBITDA
+    when provided, else the sector-median fallback. Returns ``(value, basis)`` or
+    ``(None, "")``.
+    """
+    ebitda = _finite_pos(raw.get("ebitda"))
+    shares = _finite_pos(raw.get("shares"))
+    if ebitda is None or shares is None:
+        return None, ""
+    if peer_ev_ebitda is not None and peer_ev_ebitda > 0:
+        target = float(peer_ev_ebitda)
+        basis = "peer EV/EBITDA (growth-matched)"
+    else:
+        target = get_sector_median_ev_ebitda(raw.get("sector"))
+        basis = "sector EV/EBITDA (fallback)"
+    fair_ev = target * ebitda
+    net_debt: Optional[float] = None
+    td = _finite(raw.get("total_debt"))
+    tc = _finite(raw.get("total_cash"))
+    if td is not None and tc is not None:
+        net_debt = td - tc
+    else:
+        ev = _finite(raw.get("enterprise_value"))
+        mc = _finite_pos(raw.get("market_cap"))
+        if ev is not None and mc is not None:
+            net_debt = ev - mc
+    if net_debt is None:
+        net_debt = 0.0
+    value = (fair_ev - net_debt) / shares
+    if value != value or value <= 0:
+        return None, ""
+    return round(value, 2), basis
+
+
+def _compute_pb_ps_band(raw: dict, *, pb_history: Optional[list] = None,
+                        ps_history: Optional[list] = None) -> tuple:
+    """PB/PS band anchor vs the ticker's OWN 5y history (fail-closed).
+
+    Needs a historical multiple series (``pb_history`` of price/book or
+    ``ps_history`` of price/sales) — free ``info`` only carries the current
+    multiple, so on the routed network-free path this returns ``(None, "")`` and
+    the caller emits a cyclical note. When a series is injected (tests / a richer
+    source) the mid-cycle multiple is the series median: PB band uses
+    ``median_pb × book_value_per_share``; PS band uses
+    ``median_ps × (revenue / shares)``. Returns ``(value, basis)`` or ``(None, "")``.
+    """
+    bvps = _finite_pos(raw.get("book_value"))
+    if pb_history and bvps is not None:
+        med = _median(pb_history)
+        if med is not None and med > 0:
+            value = med * bvps
+            if value == value and value > 0:
+                return round(value, 2), "PB band (5y median × BVPS)"
+    if ps_history:
+        revenue = _finite_pos(raw.get("total_revenue"))
+        shares = _finite_pos(raw.get("shares"))
+        if revenue is not None and shares is not None:
+            med = _median(ps_history)
+            if med is not None and med > 0:
+                value = med * (revenue / shares)
+                if value == value and value > 0:
+                    return round(value, 2), "PS band (5y median × sales/share)"
+    return None, ""
+
+
+# ---------------------------------------------------------------------------
+# compute_app_fair_value — cached, fail-closed, routed
+# ---------------------------------------------------------------------------
+
+
+def _assemble_fair_value(ticker: str, current_price: float,
+                         dcf_override: Optional[float], raw: dict,
+                         peers: Optional[list] = None) -> AppFairValue:
+    """Classify the company, route the anchor menu, and assemble the band (pure).
+
+    Computes the DCF / relative-PE / analyst anchors (unchanged), classifies the
+    company via :mod:`lib.valuation_router`, selects the method menu, and computes
+    the routed extra anchors (EV/S, EV/EBITDA, PB/PS band) the menu needs. When
+    ``peers`` (already-fetched peer ``info`` dicts) is supplied, growth-matched
+    peer multiples drive the EV anchors; otherwise the sector-median fallback is
+    used and ``peer_basis="sector_fallback"``. The dispersion gate still runs LAST
+    inside :func:`build_app_fair_value`.
+    """
+    from lib.valuation_router import (
+        classify_company, select_method_menu, match_growth_profile_peers,
+    )
+
+    # --- DCF (unchanged) ---------------------------------------------------
     if dcf_override is not None and dcf_override > 0:
         dcf_value = round(float(dcf_override), 2)
         dcf_source = "user DCF (Financials tab)"
@@ -551,10 +921,7 @@ def _compute_cached(ticker: str, current_price: float,
                     "DCF 无法计算"
                 )
 
-    # relative_value = sector_median_pe × EPS. Prefer FORWARD consensus EPS
-    # (Task 2); fall back to trailing EPS with a basis flag. The sector median
-    # P/E is a trailing-basis hardcoded map, so a forward-EPS relative is flagged
-    # peer_pe_basis="mixed" (forward earnings × trailing multiple).
+    # --- relative-PE anchor (Task 2 forward basis; unchanged) --------------
     relative_value: Optional[float] = None
     relative_basis = ""
     peer_pe_basis = ""
@@ -569,6 +936,88 @@ def _compute_cached(ticker: str, current_price: float,
     # analyst_target = targetMedianPrice if available else targetMeanPrice
     analyst_target = raw.get("analyst_median") or raw.get("analyst_mean")
 
+    # --- Classify + route (Task 1 / Task 2) --------------------------------
+    classification = classify_company(
+        ticker=ticker,
+        sector=raw.get("sector"),
+        industry=raw.get("industry"),
+        revenue_growth=raw.get("revenue_growth"),
+        profit_margin=raw.get("profit_margin"),
+        operating_margin=raw.get("operating_margin"),
+        fcf=raw.get("fcf_ttm"),
+        market_cap=raw.get("market_cap"),
+    )
+    menu_key = select_method_menu(classification)
+    menu = METHOD_MENUS.get(menu_key, METHOD_MENUS["mature_profitable"])
+
+    # --- Routed extra anchors ---------------------------------------------
+    ev_s_value = ev_ebitda_value = pb_ps_value = None
+    ev_s_basis = ev_ebitda_basis = pb_ps_basis = ""
+    peer_basis = ""
+    backlog_note = ""
+
+    needs_ev_s = "ev_s" in menu.get("blend", [])
+    needs_ev_ebitda = "ev_ebitda" in menu.get("blend", [])
+    needs_pb_ps = "pb_ps_band" in menu.get("blend", [])
+
+    # Growth-matched peer multiples (Task 3) come from already-fetched peer info
+    # dicts. No new per-ticker network — peers is None on the cached path.
+    peer_ps = None
+    peer_ev_ebitda = None
+    if peers and (needs_ev_s or needs_ev_ebitda):
+        target_profile = {
+            "ticker": ticker, "sector": raw.get("sector"),
+            "revenue_growth": raw.get("revenue_growth"),
+            "market_cap": raw.get("market_cap"),
+        }
+        if needs_ev_s:
+            pm = match_growth_profile_peers(
+                target_profile, peers,
+                multiple_field="priceToSalesTrailing12Months")
+            peer_ps = pm.median_multiple
+            peer_basis = pm.peer_basis
+        if needs_ev_ebitda:
+            pm = match_growth_profile_peers(
+                target_profile, peers, multiple_field="enterpriseToEbitda")
+            peer_ev_ebitda = pm.median_multiple
+            peer_basis = pm.peer_basis
+
+    if needs_ev_s:
+        r40 = None
+        if menu_key == "growth_profitable":
+            rg = _finite(raw.get("revenue_growth"))
+            fcf = _finite(raw.get("fcf_ttm"))
+            rev = _finite_pos(raw.get("total_revenue"))
+            if rg is not None and fcf is not None and rev:
+                r40 = rg + (fcf / rev)
+        ev_s_value, ev_s_basis = _compute_ev_s(
+            raw, peer_ps=peer_ps, rule_of_40_score=r40)
+        if not peer_basis:
+            peer_basis = "growth_matched" if peer_ps is not None else "sector_fallback"
+
+    if needs_ev_ebitda:
+        ev_ebitda_value, ev_ebitda_basis = _compute_ev_ebitda(
+            raw, peer_ev_ebitda=peer_ev_ebitda)
+        if not peer_basis:
+            peer_basis = "growth_matched" if peer_ev_ebitda is not None else "sector_fallback"
+
+    if needs_pb_ps:
+        pb_ps_value, pb_ps_basis = _compute_pb_ps_band(raw)
+
+    if menu.get("backlog_metric") and not pb_ps_value:
+        backlog_note = (
+            "Backlog coverage is the right metric for project-driven names but "
+            "is unavailable on free sources / 在建订单覆盖率是项目型公司的合适指标，"
+            "但免费数据源不可得"
+        )
+
+    # Honest DCF reason when the menu EXCLUDES DCF for this company type.
+    if "dcf" in menu.get("excluded", []):
+        dcf_note = (
+            f"DCF excluded for {menu_key} companies (method not appropriate) / "
+            f"{menu_key} 类公司不适用 DCF"
+        )
+
     data_source = _LIVE if raw.get("live") else _FIXTURE
     return build_app_fair_value(
         ticker=ticker,
@@ -582,18 +1031,48 @@ def _compute_cached(ticker: str, current_price: float,
         dcf_note=dcf_note,
         relative_basis=relative_basis,
         peer_pe_basis=peer_pe_basis,
+        company_type=classification.company_type,
+        company_type_confidence=classification.confidence,
+        routing_rationale=classification.rationale,
+        ev_s_value=ev_s_value,
+        ev_s_basis=ev_s_basis,
+        ev_ebitda_value=ev_ebitda_value,
+        ev_ebitda_basis=ev_ebitda_basis,
+        pb_ps_value=pb_ps_value,
+        pb_ps_basis=pb_ps_basis,
+        peer_basis=peer_basis,
+        backlog_note=backlog_note,
     )
 
 
+def _compute_cached(ticker: str, current_price: float,
+                    dcf_override: Optional[float] = None) -> AppFairValue:
+    """Cached worker (fail-closed). Separated so ``st.cache_data`` can wrap it.
+
+    ``dcf_override`` (per-share, > 0) replaces the internal Gordon-growth DCF —
+    used by the Equity page "Update Valuation" action to feed a user-adjusted DCF
+    intrinsic value from the Financials tab. Uses the sector-median fallback for
+    routed peer multiples (``peers=None``) so the cache key stays hashable.
+    """
+    raw = _fetch_raw(ticker)
+    return _assemble_fair_value(ticker, current_price, dcf_override, raw, peers=None)
+
+
 def compute_app_fair_value(ticker: str, current_price: float, *,
-                           dcf_override: Optional[float] = None) -> AppFairValue:
+                           dcf_override: Optional[float] = None,
+                           peers: Optional[list] = None) -> AppFairValue:
     """Compute the :class:`AppFairValue` for ``ticker`` (yfinance only; fail-closed).
 
     Cached TTL=3600 keyed on ``(ticker, current_price, dcf_override)``. When
     ``dcf_override`` (a per-share intrinsic value, > 0) is supplied it replaces the
-    internal DCF (e.g. a user-adjusted DCF from the Financials tab). On ANY
-    failure a well-formed ``data_source="fixture"`` result anchored on
-    ``current_price`` is returned — this function never raises.
+    internal DCF (e.g. a user-adjusted DCF from the Financials tab).
+
+    When ``peers`` (already-fetched peer ``info`` dicts from the Equity page peer
+    table) is supplied, growth-matched peer multiples drive the routed EV anchors;
+    this path is NOT cached (the list is unhashable) and re-uses the page's peers
+    — no new per-ticker network. On ANY failure a well-formed
+    ``data_source="fixture"`` result anchored on ``current_price`` is returned —
+    this function never raises.
     """
     t = (ticker or "").upper().strip()
     cp = _finite_pos(current_price) or 0.0
@@ -605,6 +1084,8 @@ def compute_app_fair_value(ticker: str, current_price: float, *,
         except (TypeError, ValueError):
             ov = None
     try:
+        if peers:
+            return _assemble_fair_value(t, round(cp, 4), ov, _fetch_raw(t), peers=peers)
         return _compute_cached(t, round(cp, 4), ov)
     except Exception:  # noqa: BLE001 — fully fail-closed
         return build_app_fair_value(
