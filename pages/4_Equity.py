@@ -273,9 +273,16 @@ with ov_top_slot:
 
         with st.spinner(t("p4_loading_peers")):
             peer_data = []
+            # Raw peer info dicts (already fetched here) — reused by the routed
+            # valuation for growth-profile peer matching (no new per-ticker
+            # network). Each carries sector / revenueGrowth / marketCap /
+            # priceToSalesTrailing12Months / enterpriseToEbitda for the matcher.
+            peer_infos = []
             for tk in all_comp[:8]:
                 try:
                     i = load_info(tk)
+                    if tk != ticker:
+                        peer_infos.append({"ticker": tk, **i})
                     peer_data.append({
                         "Ticker":        tk,
                         "P/S":           i.get("priceToSalesTrailing12Months") or 0,
@@ -649,12 +656,57 @@ def _macro_regime_str_p4() -> str:
 
 
 if _fv_key not in st.session_state:
-    st.session_state[_fv_key] = compute_app_fair_value(ticker, price)
+    # Pass the already-fetched peer info dicts so the routed valuation can use
+    # growth-matched peer multiples for the EV anchors (Task 3). Falls back to
+    # sector-median multiples when peers are unavailable.
+    _peers_for_val = globals().get("peer_infos") or None
+    st.session_state[_fv_key] = compute_app_fair_value(
+        ticker, price, peers=_peers_for_val)
 _fv = st.session_state[_fv_key]
 
 _fv_irreconcilable = getattr(_fv, "blend_state", "blended") == "anchors_irreconcilable"
 
+
+def _render_company_type_badge(_fv) -> None:
+    """Render the method-router badge: company type + methods used + excluded
+    anchors (Valuation Refactor v1, Task 4). Bilingual; fail-soft."""
+    _ctype = getattr(_fv, "company_type", "") or ""
+    if not _ctype:
+        return
+    _type_label = t(f"cockpit_fv_type_{_ctype}")
+    _conf = getattr(_fv, "company_type_confidence", "") or ""
+    _badge = f"🏷️ {t('cockpit_fv_company_type')}: **{_type_label}**"
+    if _conf == "borderline":
+        _badge += f"  · _{t('cockpit_fv_borderline')}_"
+    _peer_basis = getattr(_fv, "peer_basis", "") or ""
+    if _peer_basis:
+        _pb_label = (t("cockpit_fv_peer_growth_matched")
+                     if _peer_basis == "growth_matched"
+                     else t("cockpit_fv_peer_sector_fallback"))
+        _badge += f"  · {t('cockpit_fv_peer_basis')}: {_pb_label}"
+    st.markdown(_badge)
+    _blended = getattr(_fv, "anchors", []) or []
+    if _blended:
+        _mparts = [f"{str(a.get('name', '')).upper()} ${float(a.get('value', 0.0)):.2f} "
+                   f"({a.get('method', a.get('basis', ''))})" for a in _blended]
+        st.caption(f"{t('cockpit_fv_methods_used')}: " + " · ".join(_mparts))
+    _routing = getattr(_fv, "routing_rationale", "") or ""
+    if _routing:
+        st.caption(f"{t('cockpit_fv_routing')}: {_routing}")
+    _excluded = getattr(_fv, "excluded_anchors", []) or []
+    if _excluded:
+        _parts = []
+        for _a in _excluded:
+            _flag = _a.get("flag", "")
+            _flbl = (t("cockpit_fv_flag_cycle_distorted")
+                     if _flag == "cycle_distorted" else t("cockpit_fv_flag_excluded"))
+            _parts.append(f"{str(_a.get('name', '')).upper()} "
+                          f"${float(_a.get('value', 0.0)):.2f} ({_flbl})")
+        st.caption(f"{t('cockpit_fv_excluded')}: " + " · ".join(_parts))
+
+
 with fv_slot.container().expander(t("cockpit_fv_header"), expanded=True):
+    _render_company_type_badge(_fv)
     if _fv.fair_value_mid <= 0 and not _fv_irreconcilable:
         st.info(t("cockpit_fv_na"))
     elif _fv_irreconcilable:
