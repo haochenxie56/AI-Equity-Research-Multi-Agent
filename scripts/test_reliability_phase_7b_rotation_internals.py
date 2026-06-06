@@ -1362,29 +1362,18 @@ _EARN_REASONS = {"no_reports_in_window", "finnhub_unavailable", "partial_frame_c
 # Canonical fragility_snapshot key set — derived from the CODE, so a field added to
 # the snapshot automatically appears here and MUST be classified below.
 _SNAP_KEYS = set(mi.fragility_snapshot(mi.FragilityReading(), "2000-01-01").keys())
-# Macro table row → trigger codes (mirrors pages/8 _render_market_internals rows).
-_TABLE_TRIGGERS = [
-    ("distribution_days_elevated", "distribution_days_high"),    # SPY
-    ("distribution_days_elevated", "distribution_days_high"),    # QQQ
-    ("breadth_weak",),                                           # >SMA20
-    (),                                                          # >SMA50
-    ("breadth_narrowing",),                                      # slope
-    ("weak_bounce",),                                            # weak_bounce
-    ("good_news_sold_elevated", "good_news_sold_high"),          # good-news-sold
-    ("leading_theme_volume_shrinking",),                         # vol
-    ("offense_defense_defensive", "offense_defense_defensive_strong"),  # offense/defense
-]
-
-
-def _lvl_token(level):
-    """The level as it renders INSIDE the badge span (`>normal</span>`), not a bare
-    substring. Item 2b added a one-line explainer caption near the banner AND on the
-    Macro block that names all three levels ("normal = … elevated = … high = …"), so a
-    bare-word level check would match the explainer text and (a) pass vacuously and
-    (b) break the diverged-level negative control. Pinning the badge-wrapped form keeps
-    the assertion on the actual badge surface — and EN badge text is the raw level word
-    (Item 2 is ZH-only), so this is unchanged for the rendered EN production string."""
-    return f">{level}</span>"
+def _lvl_token(level, lang="en"):
+    """The level as it renders INSIDE the badge span (`>normal</span>` in EN,
+    `>警戒</span>` in ZH), not a bare substring. The Item 2b explainer caption near the
+    banner AND on the Macro block names all three level WORDS, so a bare-word check
+    would match the caption and (a) pass vacuously and (b) break the diverged-level
+    control. Pinning the badge-wrapped, LOCALIZED token — read from the SAME translation
+    table the page renders with, so it never drifts — keeps the assertion on the actual
+    badge surface in EVERY language. Default lang='en' keeps the full-field FIELD_RENDER
+    / _expected_tokens checks (single-language) unchanged."""
+    badge = _uiu.TRANSLATIONS.get(lang, _uiu.TRANSLATIONS["en"]).get(
+        f"cockpit_frag_lvl_{level}", level)
+    return f">{badge}</span>"
 
 
 def _dd_banner(m):
@@ -1458,7 +1447,8 @@ FIELD_RENDER = {
     # (component degrades surface as n/a values, asserted via their own fields).
     "fragility_degraded": lambda m: [("macro", r) for r in (m.get("fragility_degraded") or [])
                                      if r in _EARN_REASONS],
-    # ✅ markers in the Macro table — checked via _triggered_parity, not a token.
+    # ✅ markers in the Macro table — checked per-ROW via _triggered_row_mismatches
+    # (ROW_TRIGGERS), not as a text token.
     "fragility_triggered": lambda m: [],
 }
 
@@ -1473,6 +1463,24 @@ EXCLUSIONS = {
     "rolling_window": "config echo (window length); the trend renders the series itself, length implicit",
     "leading_theme_breadth_narrowing": "scaffolded component (always False, no history); no table row, folded into degraded",
     "earnings_evaluated": "internal count behind good_news_sold; surfaces render good_news_sold + skipped, not evaluated",
+}
+
+# Macro internals table: component-ROW label → the trigger code(s) that put a ✅ in
+# that row. Keyed by the rendered `mi_component` cell (EN — the per-row triggered parity
+# runs single-language alongside the full-field check). Mirrors the row labels/order
+# pages/8 `_render_market_internals` builds. The >SMA50 row carries no trigger (empty
+# tuple) → it can never show ✅. Used by `_triggered_row_mismatches`: total-count parity
+# is fooled by swapping one triggered component for another of equal count; per-row is not.
+ROW_TRIGGERS = {
+    _EN["cockpit_frag_dist"] + " SPY": ("distribution_days_elevated", "distribution_days_high"),
+    _EN["cockpit_frag_dist"] + " QQQ": ("distribution_days_elevated", "distribution_days_high"),
+    _EN["cockpit_frag_breadth"] + " >SMA20": ("breadth_weak",),
+    _EN["cockpit_frag_breadth"] + " >SMA50": (),
+    _EN["mi_c_slope"]: ("breadth_narrowing",),
+    _EN["mi_c_weak_bounce"]: ("weak_bounce",),
+    _EN["cockpit_frag_gns"]: ("good_news_sold_elevated", "good_news_sold_high"),
+    _EN["mi_c_vol"]: ("leading_theme_volume_shrinking",),
+    _EN["mi_c_od"]: ("offense_defense_defensive", "offense_defense_defensive_strong"),
 }
 
 
@@ -1503,8 +1511,10 @@ def _collect(at):
     return " ".join(parts)
 
 
-def _internals_table(at):
-    """The Macro internals component table (the st.table with the mi_triggered col)."""
+def _internals_table(at, lang="en"):
+    """The Macro internals component table (the st.table with the mi_triggered col),
+    located by its localized column headers so a ZH render is found too."""
+    _T = _uiu.TRANSLATIONS.get(lang, _uiu.TRANSLATIONS["en"])
     try:
         for el in getattr(at, "table", []):
             v = getattr(el, "value", None)
@@ -1512,7 +1522,7 @@ def _internals_table(at):
                 cols = list(v.columns)
             except Exception:  # noqa: BLE001
                 continue
-            if _EN["mi_triggered"] in cols and _EN["mi_component"] in cols:
+            if _T["mi_triggered"] in cols and _T["mi_component"] in cols:
                 return v
     except Exception:  # noqa: BLE001
         pass
@@ -1557,21 +1567,40 @@ def _missing(meta, R):
     return out
 
 
-def _triggered_parity(meta, R):
-    """(expected_fires, actual_✅) — the Macro table ✅ count vs _meta.fragility_triggered."""
+def _triggered_row_mismatches(meta, table):
+    """Per-ROW ✅ parity. For EVERY component row in the Macro table, its ✅/— marker
+    must match whether that row's trigger code is in _meta.fragility_triggered. The old
+    check compared only TOTAL ✅ counts, so swapping one triggered component for another
+    with the same row count passed falsely; this binds each row independently. Returns
+    [(label, expected, actual)] — empty iff every mapped row agrees (and is present)."""
+    if table is None:
+        return [("__table_missing__", True, None)]
+    cols = list(table.columns)
+    if _EN["mi_component"] not in cols or _EN["mi_triggered"] not in cols:
+        return [("__cols_missing__", True, None)]
     trig = set(meta.get("fragility_triggered") or [])
-    expected = sum(1 for keys in _TABLE_TRIGGERS if set(keys) & trig)
-    actual = None
-    if R.table is not None and _EN["mi_triggered"] in list(R.table.columns):
-        actual = sum(1 for v in R.table[_EN["mi_triggered"]].tolist() if str(v) == "✅")
-    return expected, actual
+    out, seen = [], set()
+    for _i, row in table.iterrows():
+        label = str(row[_EN["mi_component"]])
+        if label not in ROW_TRIGGERS:
+            continue
+        seen.add(label)
+        expected = bool(set(ROW_TRIGGERS[label]) & trig)
+        actual = str(row[_EN["mi_triggered"]]) == "✅"
+        if expected != actual:
+            out.append((label, expected, actual))
+    for label in sorted(set(ROW_TRIGGERS) - seen):  # every mapped row must render
+        out.append((label, "row-expected", "row-missing"))
+    return out
 
 
-def _run_parity(earnings_cal_fn):
-    """Drive the REAL refresh once, then render BOTH pages from that refresh's
-    session reading. Returns a namespace with the cockpit banner blob, the Macro
-    blob + internals table/cells, the _meta the refresh wrote, and the clock-warning
-    flag — all from ONE refresh, so every surface is asserted against ONE _meta."""
+def _run_parity(earnings_cal_fn, lang="en"):
+    """Drive the REAL refresh once (in `lang`), then render BOTH pages from that
+    refresh's session reading. Returns a namespace with the cockpit banner blob, the
+    Macro blob + internals table/cells, the _meta the refresh wrote, and the
+    clock-warning flag — all from ONE refresh, so every surface is asserted against ONE
+    _meta. `lang` parameterizes both pages so the badge-token level-divergence controls
+    can run bilingually (the ZH badge text is 正常/警戒/警报)."""
     import streamlit as _stp
     _stp.page_link = lambda *a, **k: None
     from streamlit.testing.v1 import AppTest as _ATp
@@ -1581,7 +1610,7 @@ def _run_parity(earnings_cal_fn):
     with _parity_patches(_tmp, earnings_cal_fn):
         _a = _ATp.from_file(os.path.join(_REPO_ROOT, "pages/7_Investment_Cockpit.py"),
                             default_timeout=120)
-        _a.session_state["language"] = "en"
+        _a.session_state["language"] = lang
         # Seed a valid regime so Section A (which hosts the internals banner) renders;
         # the offline macro step fails-closed and PRESERVES this seed (never clears).
         _a.session_state["macro_regime_result"] = {
@@ -1611,12 +1640,12 @@ def _run_parity(earnings_cal_fn):
             if "cockpit_fragility_series" in _a.session_state else []
         _m = _ATp.from_file(os.path.join(_REPO_ROOT, "pages/8_Macro_Dashboard.py"),
                             default_timeout=120)
-        _m.session_state["language"] = "en"
+        _m.session_state["language"] = lang
         _m.session_state["cockpit_fragility"] = _cf
         _m.session_state["cockpit_fragility_series"] = _cfs
         _m.run()
         R.macro = _collect(_m)
-        R.table = _internals_table(_m)
+        R.table = _internals_table(_m, lang)
         R.cells = _internals_cells(R.table)
     return R
 
@@ -1653,10 +1682,29 @@ try:
     _missA = _missing(_RA.meta, _RA)
     check("18.11 FULL PARITY (lit): every surfaced _meta field renders (banner+macro)",
           _missA == [], f"missing={_missA[:8]}")
-    _expF, _actF = _triggered_parity(_RA.meta, _RA)
-    check("18.12 triggered ✅-marker parity (Macro table == _meta.fragility_triggered)",
-          _actF is not None and _expF == _actF,
-          f"expected_fires={_expF} actual_✅={_actF} trig={_RA.meta.get('fragility_triggered')}")
+    _trigmis = _triggered_row_mismatches(_RA.meta, _RA.table)
+    check("18.12 per-ROW triggered ✅ parity (each Macro row ⟺ its code in _meta)",
+          _trigmis == [],
+          f"mismatches={_trigmis[:6]} trig={_RA.meta.get('fragility_triggered')}")
+    # Negative control (Item 1): swapping a triggered code for an UNtriggered one of
+    # EQUAL count keeps the total ✅ count unchanged but moves which row fires — the
+    # old count-only check passed this, per-row must FAIL it. Synthesized so it holds
+    # regardless of which components the live mock happens to fire: a faithful table
+    # with exactly the good-news-sold row triggered, then a 1-for-1 code swap.
+    _gns_lbl = _EN["cockpit_frag_gns"]
+    _syn_tbl = pd.DataFrame([
+        {_EN["mi_component"]: _lbl, _EN["mi_value"]: "0",
+         _EN["mi_triggered"]: ("✅" if _lbl == _gns_lbl else "—"), _EN["mi_degrade"]: ""}
+        for _lbl in ROW_TRIGGERS])
+    check("18.21 per-row triggered parity HOLDS on a faithful table",
+          _triggered_row_mismatches({"fragility_triggered": ["good_news_sold_high"]},
+                                    _syn_tbl) == [])
+    _swapmis = _triggered_row_mismatches({"fragility_triggered": ["weak_bounce"]}, _syn_tbl)
+    check("18.21b per-row triggered parity FAILS on an equal-count code swap "
+          "(count-only check would pass)",
+          any(l == _gns_lbl for l, _e, _a in _swapmis)
+          and any(l == _EN["mi_c_weak_bounce"] for l, _e, _a in _swapmis),
+          f"swap_mismatches={_swapmis}")
     check("18.13 clock-warning parity (banner ⟺ _meta.clock_suspect)",
           _RA.clock_warn == bool(_RA.meta.get("clock_suspect")),
           f"banner_warn={_RA.clock_warn} meta={_RA.meta.get('clock_suspect')}")
@@ -1733,6 +1781,26 @@ try:
     _diverged_gns = {**_RA.meta, "good_news_sold": (_RA.meta.get("good_news_sold") or 0) + 7}
     check("18.8 parity FAILS on a diverged component value (number mismatch caught)",
           not _parity_holds(_RA.banner, _diverged_gns))
+
+    # --- Item 2: badge-token level controls run in BOTH languages. The level explainer
+    # caption (Item 2b) names all three level WORDS next to the banner, so a loose
+    # substring token would false-pass; pinning the LOCALIZED badge token
+    # `>{badge}</span>` (ZH badge text 正常/警戒/警报, read from the production translation
+    # table) keeps the control honest in EVERY language. CHOICE: full-field / full-banner
+    # parity (18.4/18.6/18.10/18.11/18.16/18.17) stays EN-only for runtime (one extra ZH
+    # refresh would re-drive the whole pipeline); the badge-token LEVEL controls below are
+    # PERMANENT in en + zh — that is exactly where a loose token could silently diverge.
+    _RZH = _run_parity(_lit_cal, lang="zh")
+    for _L, _RL in (("en", _RA), ("zh", _RZH)):
+        _lv = str(_RL.meta.get("fragility_level", "normal"))
+        check(f"18.22[{_L}] LIVE: the actual level badge token renders on the banner",
+              _RL.exc == "" and _lvl_token(_lv, _L) in _RL.banner,
+              f"token={_lvl_token(_lv, _L)} exc={_RL.exc[:120]} || {_RL.banner[:200]}")
+        _div = "high" if _lv != "high" else "normal"
+        check(f"18.23[{_L}] parity FAILS on a diverged level (badge-token bound; the "
+              f"explainer caption names all three level words but never wraps a badge)",
+              _lvl_token(_div, _L) not in _RL.banner,
+              f"diverged_token={_lvl_token(_div, _L)} unexpectedly present || {_RL.banner[:200]}")
 except Exception as _e:  # noqa: BLE001 — AppTest unavailable counts as a failure
     import traceback as _tb_p
     check("18.1 banner↔_meta parity harness ran", False,
