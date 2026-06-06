@@ -463,3 +463,84 @@ the test FAILS when banner and `_meta` diverge (mutated level; mutated component
 value). The three historical mismatches (nested components, vintage split, dead
 earnings arg) each render a banner that disagrees with `_meta` → each would fail
 this check. The live-path verification rule is recorded in `CLAUDE.md`.
+
+---
+
+## Round 4 — good-news-sold scoped to the SCAN universe (market signal)
+
+### Decision
+
+good-news-sold is a **market-internals** signal (are beats getting sold across the
+tape?), so its universe is the broad **scan** universe — the same set the candidate
+generator scanned this refresh (`SP500_TOP_100` + selected theme constituents +
+hand-offs, ~100–150 tickers) — NOT the ranked top-N. Scoping it to the top-20
+momentum candidates was a **call-site artifact**: those names rarely have a fresh
+print, so the component read `no_reports_in_window` almost every day (the round-3
+diagnosis: closest report 10 days out among 20 names). The original motivating case
+(a strong report SOLD, e.g. AVGO) lives in the broad scan set, not necessarily in
+the day's top candidates.
+
+### Implementation (network-free, explicit scope)
+
+- **Scope is published, not re-derived.** `generate_candidates` publishes the exact
+  universe it scanned to `st.session_state["cockpit_scan_universe"]`
+  (`_publish_scan_universe`); the Cockpit passes that object as
+  `compute_market_fragility(earnings_universe=…)`. Passing the generator's own
+  object (not a freshly rebuilt list) prevents drift between the scanned set and the
+  earnings scope. Breadth keeps using the ranked `universe` (unchanged).
+- **Cache-only earnings loader.** The scan fetched 1y OHLCV only for Layer-1
+  survivors, so the earnings loader is `earnings_frame_loader =
+  cache_manager.load(tk, "ohlcv_1y_1d")` — a cache-resident read that returns `None`
+  on a miss and NEVER triggers a network fetch. (`get_ohlcv` persists every fetched
+  1y frame under that key, so survivors are cache-resident in-process.)
+- **Skipped + partial coverage.** A report-ticker in the scan universe + lookback
+  window whose frame is not cache-resident is **skipped and counted**
+  (`earnings_skipped`, `_count_frameless_in_window`). The degrade-reason vocabulary
+  gains **`partial_frame_coverage`**, used when `skipped > evaluated` — distinct from
+  `no_reports_in_window` (which means there were no in-window scan-universe reports
+  at all). `partial_frame_coverage` can co-exist with a reported number (evaluated >
+  0 but skipped still exceeded it); the banner appends the reason in that case
+  (`good-news-sold: 2 (partial_frame_coverage)`), and the Macro Dashboard table
+  shows the reason + `skipped=N`.
+- **Implausibility bound rescoped.** `earnings_evaluated > |scan universe|` →
+  `implausible_count` (the 39/92 leak backstop now checks the scan-universe size).
+- **Rolling as-of replay uses the same scope.** The single `_reaction_records` call
+  (scan-universe-filtered, cache-only loader) feeds both the live count and the
+  rolling raw series, so live and as-of counts are consistent by construction.
+- **Backward compatible.** `earnings_universe` / `earnings_frame_loader` default to
+  `universe` / `frame_loader`, so existing callers/tests keep the breadth-universe
+  scope with no skips.
+
+### Tests
+
+§17c pins the rescope deterministically (non-top-N evaluated; frameless →
+`partial_frame_coverage`; empty → `no_reports_in_window`; implausible bound on scan
+size; backward-compat; publish normalization). §18 extends the end-to-end parity
+harness: the mocked `generate_candidates` PUBLISHES the scan universe via the real
+`_publish_scan_universe`, the earnings loader is a mocked `cache_manager.load`, and a
+SCAN ticker that is **not** in the top-N (`SCANX`) is evaluated on the live banner +
+`_meta`; a separate scenario drives `partial_frame_coverage`. This is exactly the
+call-site class of bug the parity test exists to catch.
+
+### Live verification (real `_run_refresh`, 2026-06-06)
+
+Driven via `pages/7_Investment_Cockpit.py::_run_refresh` under AppTest (clicking the
+`cockpit_refresh_all` button) against LIVE network, snapshot dir redirected to a temp
+path (non-destructive):
+
+- **Scope works.** Over a **100-ticker** scan universe the refresh evaluated
+  **4** reports → **good_news_sold = 1**, `earnings_skipped = 0`,
+  `earnings_degrade_reason = ""`, banner `good-news-sold: 1`, raw/effective level
+  `elevated`. An isolated probe of the bulk calendar returned 270 market reports,
+  **13 in the scan universe** (AVGO, NVDA, CRM, PANW, COST, INTU, …) — the
+  broad-market names the old top-20 scope structurally missed. (Effective level read
+  `elevated` here only because the temp snapshot dir carried no hysteresis history;
+  the earnings reading is the focus and is unaffected.)
+- **Cold-cache caveat (operational).** On the FIRST refresh of a cold cache the bulk
+  earnings-calendar call competes with the scan's ~450 per-ticker Finnhub calls
+  (Track B insider/news/analyst × universe) and is rate-limited → `finnhub_unavailable`
+  even with the round-3 single retry. The endpoint itself is healthy (the isolated
+  probe succeeds), and the SECOND refresh — Track B now cached in-process, rate
+  window reset — gets the calendar call through. Follow-up (not this round): issue
+  the single bulk calendar call BEFORE the Track B fan-out, or widen the backoff, so
+  a cold-cache refresh evaluates earnings on the first pass.

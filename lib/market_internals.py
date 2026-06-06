@@ -134,6 +134,10 @@ class FragilityComponents:
     leading_theme_volume_shrinking: bool = False
     good_news_sold: Optional[int] = None
     earnings_evaluated: int = 0
+    # Report-tickers in the (scan) universe + lookback window whose OHLCV frame was
+    # NOT cache-resident this refresh, so their reaction could not be evaluated
+    # network-free. skipped > evaluated → partial_frame_coverage degrade reason.
+    earnings_skipped: int = 0
     weak_bounce: Optional[bool] = None
     offense_defense_direction: str = ""
     offense_defense_magnitude: str = ""
@@ -158,9 +162,13 @@ class FragilityReading:
     adjacency_degraded: bool = False
     # WHY the earnings-reaction component degraded (Item 2): "" = evaluated;
     # "finnhub_unavailable" (the calendar call failed / no key) vs
-    # "no_reports_in_window" (call succeeded, nothing in window) vs
-    # "earnings_source_absent" (no calendar source supplied) — distinct situations
-    # we need to tell apart in snapshot history.
+    # "no_reports_in_window" (call succeeded, nothing in the scan universe + window)
+    # vs "partial_frame_coverage" (scan-universe reports WERE in window but their
+    # frames were not cache-resident, so skipped > evaluated — the network-free
+    # cost of the broad scan scope) vs "earnings_source_absent" (no calendar source
+    # supplied) vs "implausible_count" — distinct situations we tell apart in
+    # snapshot history. Note: partial_frame_coverage can co-exist with a reported
+    # number (evaluated > 0 but skipped still exceeded it).
     earnings_degrade_reason: str = ""
     # How hysteresis resolved the effective level (Task A): "rolling" = from raw
     # readings recomputed for past trading days (the intended "condition held N
@@ -728,6 +736,7 @@ def fragility_snapshot(reading: FragilityReading, date_str: str) -> dict:
         "leading_theme_volume_shrinking": c.leading_theme_volume_shrinking,
         "good_news_sold": c.good_news_sold,
         "earnings_evaluated": c.earnings_evaluated,
+        "earnings_skipped": c.earnings_skipped,
         "weak_bounce": c.weak_bounce,
         "offense_defense_direction": c.offense_defense_direction,
         "offense_defense_magnitude": c.offense_defense_magnitude,
@@ -966,6 +975,44 @@ def _earnings_components_asof(reaction_records, bench_dates, as_of, cfg):
     return count_good_news_sold(in_window, cfg["good_news_sold_reaction_pp"])
 
 
+def _count_frameless_in_window(reports, frame_loader, bench_dates, as_of, cfg,
+                               universe=None):
+    """Coverage tally for the broad (scan-universe) earnings scope: how many
+    report-tickers are in ``universe`` AND fall in the lookback window AS OF
+    ``as_of`` but whose OHLCV frame is NOT cache-resident (``frame_loader`` returns
+    None/empty), so their reaction could not be evaluated network-free. These are
+    the "skipped" reports behind ``partial_frame_coverage``. Window logic mirrors
+    :func:`_earnings_components_asof` exactly, so skipped + evaluated partition the
+    same in-window report set."""
+    uni = {str(t).upper().strip() for t in (universe or [])}
+    window = int(cfg["earnings_lookback_sessions"])
+    today_d = _parse_iso(as_of) or (bench_dates[-1] if bench_dates else None)
+    if today_d is None:
+        return 0
+    skipped = 0
+    for rep in reports or []:
+        tk = str((rep.get("ticker") if isinstance(rep, dict) else "") or "").upper().strip()
+        if uni and tk not in uni:
+            continue
+        direction = rep.get("direction") if isinstance(rep, dict) else None
+        rd = _parse_iso(rep.get("report_date") if isinstance(rep, dict) else None)
+        if not tk or direction is None or rd is None:
+            continue
+        rxn = next((d for d in bench_dates if d > rd), None)
+        if rxn is None or rxn > today_d:
+            continue
+        sessions_since = sum(1 for bd in bench_dates if rxn < bd <= today_d)
+        if sessions_since > window:
+            continue
+        try:
+            df = frame_loader(tk) if frame_loader is not None else None
+        except Exception:  # noqa: BLE001
+            df = None
+        if df is None or (hasattr(df, "empty") and df.empty):
+            skipped += 1
+    return skipped
+
+
 def _replay_hysteresis(raw_chrono: list, cfg: dict):
     """Replay hysteresis over a CONTIGUOUS recomputed raw series (chronological).
 
@@ -1126,6 +1173,7 @@ def compute_market_fragility(*, universe=None, frame_loader=None,
                              benchmark_loader=None, sector_loader=None,
                              themes=None, earnings_reactions=None,
                              earnings_calendar_fn=None,
+                             earnings_universe=None, earnings_frame_loader=None,
                              snapshot_dir=None, today_str: str = "",
                              config: Optional[dict] = None) -> FragilityReading:
     """Best-effort, network-free orchestration of the fragility components.
@@ -1134,10 +1182,23 @@ def compute_market_fragility(*, universe=None, frame_loader=None,
     independently (and is listed in ``reading.degraded``) when its data is absent.
     ``frame_loader(ticker)`` and ``benchmark_loader(ticker)`` return cached OHLCV
     frames (cache-only on the ranking path); ``snapshot_dir`` is read for the
-    hysteresis history. This NEVER touches the frozen regime classifier."""
+    hysteresis history. This NEVER touches the frozen regime classifier.
+
+    Earnings scope (round 4): good-news-sold is a MARKET-internals signal, so its
+    universe is the broad **scan** universe (``earnings_universe``, ~100-150
+    tickers the candidate generator scanned this refresh), NOT the ranked top-N
+    breadth ``universe``. Because the scan did not fetch 1y frames for every
+    name, ``earnings_frame_loader`` is a CACHE-ONLY loader: report-tickers without
+    a cache-resident frame are skipped+counted (``partial_frame_coverage`` when
+    skipped > evaluated) rather than fetched. Both default to ``universe`` /
+    ``frame_loader`` for backward compatibility (breadth-universe scope, no skips)."""
     cfg = config or INTERNALS_CONFIG
     degraded: list = []
     comp = FragilityComponents()
+    # Earnings (good-news-sold) runs over the SCAN universe with a cache-only
+    # loader; both fall back to the breadth universe / loader for old callers/tests.
+    _earn_uni = earnings_universe if earnings_universe is not None else universe
+    _earn_loader = earnings_frame_loader if earnings_frame_loader is not None else frame_loader
 
     # (c) distribution days on SPY/QQQ + (d) weak bounce on SPY.
     bl = benchmark_loader or frame_loader
@@ -1203,25 +1264,37 @@ def compute_market_fragility(*, universe=None, frame_loader=None,
                                        if earnings_calendar_fn is not None
                                        else "earnings_source_absent")
         elif bench_dates:
+            _asof = today_str or str(bench_dates[-1])
             reaction_records = _reaction_records(
-                reports, frame_loader, bench_dates, today_str, cfg, universe=universe)
+                reports, _earn_loader, bench_dates, today_str, cfg, universe=_earn_uni)
             gns, ev = _earnings_components_asof(reaction_records, bench_dates,
-                                                today_str or str(bench_dates[-1]), cfg)
+                                                _asof, cfg)
+            # Network-free coverage tally: scan-universe reports IN the window whose
+            # frame was not cache-resident (skipped, not fetched).
+            comp.earnings_skipped = _count_frameless_in_window(
+                reports, _earn_loader, bench_dates, _asof, cfg, universe=_earn_uni)
             if ev:
                 comp.good_news_sold, comp.earnings_evaluated = gns, ev
+                # Thin coverage is a NOTE on a real reading, not a full degrade.
+                if comp.earnings_skipped > ev:
+                    earnings_degrade_reason = "partial_frame_coverage"
+            elif comp.earnings_skipped > 0:
+                # Reports WERE in window but no frame could be loaded → distinct
+                # from "nothing in the window" (do not overload no_reports_in_window).
+                earnings_degrade_reason = "partial_frame_coverage"
             else:
                 earnings_degrade_reason = "no_reports_in_window"
         else:
             # No benchmark calendar → today-only fallback (round-3 path).
             earnings_reactions, earnings_degrade_reason = build_earnings_reactions(
-                universe, frame_loader, earnings_calendar_fn, today_str, cfg)
+                _earn_uni, _earn_loader, earnings_calendar_fn, today_str, cfg)
     if earnings_reactions and comp.earnings_evaluated == 0:
         gns, ev = count_good_news_sold(earnings_reactions, cfg["good_news_sold_reaction_pp"])
         comp.good_news_sold, comp.earnings_evaluated = gns, ev
-    # Sanity bound (round 2): more reports evaluated than the universe has tickers
-    # is impossible within the lookback window → degrade with a distinct reason
-    # rather than report a wrong figure (the good_news_sold=39 market-wide leak).
-    _uni_n = len(set(str(t).upper().strip() for t in (universe or [])))
+    # Sanity bound (round 2, rescoped round 4): more reports evaluated than the SCAN
+    # universe has tickers is impossible within the lookback window → degrade with a
+    # distinct reason rather than report a wrong figure (the 39/92 market-wide leak).
+    _uni_n = len(set(str(t).upper().strip() for t in (_earn_uni or [])))
     if _uni_n and comp.earnings_evaluated > _uni_n:
         comp.good_news_sold, comp.earnings_evaluated = None, 0
         earnings_degrade_reason = "implausible_count"

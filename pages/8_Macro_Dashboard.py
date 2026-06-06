@@ -1541,7 +1541,11 @@ def _render_market_internals() -> None:
         _row(t("mi_c_weak_bounce"), frag.get("weak_bounce"), ("weak_bounce",)),
         _row(t("cockpit_frag_gns"), frag.get("good_news_sold"),
              ("good_news_sold_elevated", "good_news_sold_high"),
-             earn_reason if frag.get("good_news_sold") is None else ""),
+             # Show the reason whenever present — including partial_frame_coverage
+             # on a reported number (skipped > evaluated under the scan scope).
+             (earn_reason + (f" (skipped={frag.get('earnings_skipped')})"
+                             if frag.get("earnings_skipped") else "")
+              ) if earn_reason else ""),
         _row(t("mi_c_vol"), frag.get("leading_theme_volume_shrinking"),
              ("leading_theme_volume_shrinking",)),
         _row(t("mi_c_od"),

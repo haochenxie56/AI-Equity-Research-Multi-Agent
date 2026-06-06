@@ -274,6 +274,7 @@ def _run_refresh() -> None:
         _frag_level = "normal"
         try:
             from datetime import timedelta as _timedelta
+            from lib import cache_manager as _cmgr
             from lib import market_internals as _mi
             from lib.opportunity_ranker import SNAPSHOT_DIR as _snap_dir
             from lib.signal_engine import fetch_earnings_reactions_calendar as _earn_cal
@@ -287,8 +288,16 @@ def _run_refresh() -> None:
             # vintage; compute_market_fragility flags vintage_mismatch + degrades to
             # the snapshot path if they ever disagree.
             _ohlcv = lambda tk: _load_ohlcv(tk, "1y")  # noqa: E731
+            # Round 4 — good-news-sold is a MARKET signal: scope it to the SCAN
+            # universe (the exact set the candidate generator scanned this refresh),
+            # not the ranked top-20. Frames for the scan universe were only fetched
+            # for Layer-1 survivors, so the earnings loader is CACHE-ONLY
+            # (cache_manager.load → None on a miss, never a network fetch); report-
+            # tickers without a cached frame are skipped+counted (partial coverage).
+            _scan_uni = st.session_state.get("cockpit_scan_universe") or _tickers
+            _earn_ohlcv = lambda tk: _cmgr.load(tk, "ohlcv_1y_1d")  # noqa: E731
             # Item 2 — earnings-reaction: ONE bulk Finnhub earnings-calendar call
-            # (skippable/degradable); reaction read from the SAME frames.
+            # (skippable/degradable); reaction read from cache-resident frames.
             _today = datetime.now().strftime("%Y-%m-%d")
             _from = (datetime.now() - _timedelta(days=20)).strftime("%Y-%m-%d")
             _earn_cal_fn = lambda: _earn_cal(_from, _today)  # noqa: E731
@@ -297,6 +306,7 @@ def _run_refresh() -> None:
                 benchmark_loader=_ohlcv,
                 themes=_themes_list, snapshot_dir=_snap_dir,
                 earnings_calendar_fn=_earn_cal_fn,
+                earnings_universe=_scan_uni, earnings_frame_loader=_earn_ohlcv,
                 today_str=_today)
             _frag_level = _fragility.level
             # Store the FLAT snapshot (the SAME object written to _meta) so the
@@ -511,13 +521,14 @@ else:
         else:
             _bits.append(f"{t('cockpit_frag_breadth')} {int(_b20*100)}%")
         _gns = _frag.get("good_news_sold")
+        # Always show WHY on screen when a reason is present (the same
+        # earnings_degrade_reason carried in the _meta) so a report/UI divergence is
+        # self-explanatory: dark → "无数据 (no_reports_in_window)"; a real reading
+        # under thin coverage → "2 (partial_frame_coverage)".
+        _greason = str(_frag.get("earnings_degrade_reason") or "")
         if _gns is not None:
-            _gns_txt = f"{_gns}"
+            _gns_txt = f"{_gns}" + (f" ({_greason})" if _greason else "")
         else:
-            # When the earnings component is dark, say WHY on screen (the same
-            # earnings_degrade_reason carried in the _meta) so a report/UI
-            # divergence is self-explanatory: "无数据 (no_reports_in_window)".
-            _greason = str(_frag.get("earnings_degrade_reason") or "")
             _gns_txt = f"{_na} ({_greason})" if _greason else _na
         _bits.append(f"{t('cockpit_frag_gns')}: {_gns_txt}")
         st.markdown(

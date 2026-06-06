@@ -1147,6 +1147,103 @@ finally:
 
 
 # ===========================================================================
+# 17c. Earnings rescope to the SCAN universe with a cache-only loader (round 4).
+# ===========================================================================
+_idxc = pd.bdate_range(end="2026-06-05", periods=40)
+_rdc = str(_idxc[-3].date())  # report 2 sessions before the last bday
+
+
+def _frame_c(sold=False):
+    closes = [100.0] * 40
+    if sold:
+        closes[-2] = 96.0   # beat sold next session (-4%)
+    return pd.DataFrame({"Close": closes, "Volume": [1e6] * 40}, index=_idxc)
+
+
+def _bench_loader_c(tk):
+    return _frame_c(False)          # SPY/QQQ + top-N breadth names
+
+
+def _earn_loader_c(tk):
+    """Cache-ONLY earnings loader: SCANX is cache-resident (and sold), NOFRAME is a
+    cache miss (returns None → skipped, never fetched)."""
+    tk = str(tk).upper().strip()
+    if tk == "SCANX":
+        return _frame_c(True)
+    if tk in ("SPY", "QQQ"):
+        return _frame_c(False)
+    return None
+
+# (a) a report-ticker in the SCAN universe but NOT the breadth top-N is evaluated.
+_fc = mi.compute_market_fragility(
+    universe=["TOPA", "TOPB"], frame_loader=_bench_loader_c,
+    benchmark_loader=_bench_loader_c,
+    earnings_universe=["TOPA", "TOPB", "SCANX"], earnings_frame_loader=_earn_loader_c,
+    earnings_calendar_fn=lambda: [{"ticker": "SCANX", "report_date": _rdc,
+                                   "direction": "beat"}],
+    today_str="2026-06-05")
+check("17c.1 earnings_universe scopes good-news-sold to the scan set (non-top-N evaluated)",
+      _fc.components.earnings_evaluated == 1 and _fc.components.good_news_sold == 1
+      and _fc.components.earnings_skipped == 0 and _fc.earnings_degrade_reason == "")
+
+# (b) a scan-universe report whose frame is NOT cache-resident → skipped + partial.
+_fp = mi.compute_market_fragility(
+    universe=["TOPA", "TOPB"], frame_loader=_bench_loader_c,
+    benchmark_loader=_bench_loader_c,
+    earnings_universe=["TOPA", "TOPB", "NOFRAME"], earnings_frame_loader=_earn_loader_c,
+    earnings_calendar_fn=lambda: [{"ticker": "NOFRAME", "report_date": _rdc,
+                                   "direction": "beat"}],
+    today_str="2026-06-05")
+check("17c.2 frameless in-window report → skipped + partial_frame_coverage (distinct)",
+      _fp.components.good_news_sold is None and _fp.components.earnings_skipped >= 1
+      and _fp.earnings_degrade_reason == "partial_frame_coverage"
+      and "partial_frame_coverage" in _fp.degraded)
+
+# (c) no scan-universe reports in window → no_reports_in_window (NOT partial).
+_fn = mi.compute_market_fragility(
+    universe=["TOPA", "TOPB"], frame_loader=_bench_loader_c,
+    benchmark_loader=_bench_loader_c,
+    earnings_universe=["TOPA", "TOPB", "SCANX"], earnings_frame_loader=_earn_loader_c,
+    earnings_calendar_fn=lambda: [], today_str="2026-06-05")
+check("17c.3 empty calendar over scan universe → no_reports_in_window (skipped=0)",
+      _fn.components.good_news_sold is None and _fn.components.earnings_skipped == 0
+      and _fn.earnings_degrade_reason == "no_reports_in_window")
+
+# (d) the implausibility bound now checks against the SCAN universe size.
+_fi = mi.compute_market_fragility(
+    universe=["X"], earnings_universe=["A", "B", "C"],
+    frame_loader=lambda tk: _frame_c(False), benchmark_loader=_bench_loader_c,
+    earnings_reactions=[{"direction": "beat", "next_session_return": -0.02}
+                        for _ in range(5)],  # 5 evaluated > scan universe 3
+    today_str="2026-06-05")
+check("17c.4 implausible_count bounds against the SCAN universe size",
+      _fi.components.earnings_evaluated == 0 and _fi.components.good_news_sold is None
+      and "implausible_count" in _fi.degraded)
+
+# (e) backward-compat: no earnings_universe → breadth universe + loader, no skips.
+_fb4 = mi.compute_market_fragility(
+    universe=["SCANX"], frame_loader=_earn_loader_c, benchmark_loader=_bench_loader_c,
+    earnings_calendar_fn=lambda: [{"ticker": "SCANX", "report_date": _rdc,
+                                   "direction": "beat"}],
+    today_str="2026-06-05")
+check("17c.5 backward-compat: earnings falls back to the breadth universe + loader",
+      _fb4.components.earnings_evaluated == 1 and _fb4.components.good_news_sold == 1
+      and _fb4.components.earnings_skipped == 0 and _fb4.earnings_degrade_reason == "")
+
+# (f) the published scan universe is the exact object the generator used.
+import lib.candidate_generator as _cg4  # noqa: E402
+try:
+    import streamlit as _st_cg
+    _st_cg.session_state.clear()
+    _cg4._publish_scan_universe(["aapl", " MU ", "", "nvda"])
+    _pub = _st_cg.session_state.get("cockpit_scan_universe")
+    check("17c.6 _publish_scan_universe normalizes + drops blanks",
+          _pub == ["AAPL", "MU", "NVDA"], str(_pub))
+except Exception as _e:  # noqa: BLE001
+    check("17c.6 _publish_scan_universe ran", False, str(_e))
+
+
+# ===========================================================================
 # 18. Banner ↔ _meta PARITY — drive the REAL Cockpit refresh end to end.
 # ===========================================================================
 # Root cause of the recurring report/UI mismatches: verification reconstructed the
@@ -1168,34 +1265,56 @@ import ui_utils as _uiu  # noqa: E402
 _EN = _uiu.TRANSLATIONS["en"]
 
 
-def _parity_frames():
-    """Synthetic OHLCV keyed by ticker on ONE business-day calendar ending at the
-    last bday <= now (mirrors the Saturday-after-midnight live situation). 'AAA'
-    carries a planted beat-sold-next-session reaction; the rest gently rise."""
-    _now = _dt2.now()
-    _idx = pd.bdate_range(end=_now, periods=60)
-    _report_date = str(_idx[-3].date())  # report 2 sessions before the last bday
+# Scan-universe scope (round 4): good-news-sold runs over the SCAN universe the
+# candidate generator published this refresh — NOT the ranked top-N. The earnings
+# loader is CACHE-ONLY (cache_manager.load); a scan ticker NOT in the top-N but WITH
+# a cached frame must be evaluated, and a scan ticker WITHOUT a cached frame must be
+# skipped+counted (partial_frame_coverage). This is exactly the call-site class of
+# bug the parity test exists to catch, so §18 drives it end to end.
+_TOPN = ("TOPA", "TOPB")                 # ranked candidates (breadth universe)
+_SCAN = ("TOPA", "TOPB", "SCANX", "NOFRAME")  # full scan universe
+_CACHE_RESIDENT = {"TOPA", "TOPB", "SPY", "QQQ", "SCANX"}  # NOFRAME absent on purpose
 
-    def _loader(tk):
-        tk = str(tk).upper().strip()
-        if tk == "AAA":  # beat printed at idx[-3]; next session (idx[-2]) sells off
-            closes = [100.0 + i * 0.1 for i in range(60)]
-            closes[-2] = closes[-3] * 0.96  # -4% reaction → good-news-sold
-            closes[-1] = closes[-2] * 1.001
-        else:
-            closes = [50.0 + i * 0.2 for i in range(60)]
-        vols = [1e6 + (i % 5) * 1e5 for i in range(60)]
-        return pd.DataFrame({"Close": closes, "Volume": vols}, index=_idx)
 
-    return _loader, _report_date
+def _parity_idx():
+    return pd.bdate_range(end=_dt2.now(), periods=60)
+
+
+def _report_date():
+    return str(_parity_idx()[-3].date())  # report 2 sessions before the last bday
+
+
+def _parity_frame(sold=False):
+    idx = _parity_idx()
+    closes = [100.0 + i * 0.1 for i in range(len(idx))]
+    if sold:  # beat printed at idx[-3]; next session (idx[-2]) sells off → sold
+        closes[-2] = closes[-3] * 0.96
+        closes[-1] = closes[-2] * 1.001
+    vols = [1e6 + (i % 5) * 1e5 for i in range(len(idx))]
+    return pd.DataFrame({"Close": closes, "Volume": vols}, index=idx)
+
+
+def _breadth_loader(tk):
+    """ui_utils.load_ohlcv stand-in: serves the top-N breadth names + benchmarks."""
+    return _parity_frame(sold=False)
+
+
+def _cache_loader(tk, *a, **k):
+    """cache_manager.load stand-in (the cache-ONLY earnings loader): returns a frame
+    only for cache-resident tickers (SCANX carries the beat-sold reaction); a miss
+    returns None so the report is skipped, never fetched."""
+    tk = str(tk).upper().strip()
+    if tk not in _CACHE_RESIDENT:
+        return None
+    return _parity_frame(sold=(tk == "SCANX"))
 
 
 def _parity_patches(snap_dir, earnings_cal_fn):
     """ExitStack of patches over the refresh's network leaves only — the REAL
-    compute_market_fragility / fragility_snapshot / write_daily_snapshot run."""
-    _loader, _ = _parity_frames()
-    _cands = [SimpleNamespace(ticker=tk) for tk in ("AAA", "BBB", "CCC", "DDD")]
-
+    compute_market_fragility / fragility_snapshot / write_daily_snapshot run. The
+    mocked generate_candidates PUBLISHES the scan universe via the real
+    _publish_scan_universe, so the generator→session_state→call-site wiring is
+    exercised, not bypassed."""
     def _boom(*a, **k):
         raise RuntimeError("offline")
 
@@ -1206,10 +1325,14 @@ def _parity_patches(snap_dir, earnings_cal_fn):
     import lib.anchor_cache as _ac
     import lib.opportunity_ranker as _orr
     import lib.signal_engine as _se
+    import lib.cache_manager as _cm2
+
+    def _fake_generate(*a, **k):
+        _cg._publish_scan_universe(list(_SCAN))   # real publish → cockpit_scan_universe
+        return [SimpleNamespace(ticker=tk) for tk in _TOPN]
 
     stack = _ctx.ExitStack()
-    stack.enter_context(_mock.patch.object(_cg, "generate_candidates",
-                                           lambda *a, **k: list(_cands)))
+    stack.enter_context(_mock.patch.object(_cg, "generate_candidates", _fake_generate))
     stack.enter_context(_mock.patch.object(_tbm, "compute_all_themes",
                                            lambda *a, **k: []))
     stack.enter_context(_mock.patch.object(_md, "fetch_all_macro", _boom))
@@ -1225,7 +1348,8 @@ def _parity_patches(snap_dir, earnings_cal_fn):
                                            lambda *a, **k: []))
     stack.enter_context(_mock.patch.object(_orr, "SNAPSHOT_DIR", snap_dir))
     stack.enter_context(_mock.patch.object(_uiu, "load_ohlcv",
-                                           lambda tk, *a, **k: _loader(tk)))
+                                           lambda tk, *a, **k: _breadth_loader(tk)))
+    stack.enter_context(_mock.patch.object(_cm2, "load", _cache_loader))
     stack.enter_context(_mock.patch.object(_se, "fetch_earnings_reactions_calendar",
                                            earnings_cal_fn))
     return stack
@@ -1248,11 +1372,13 @@ def _expected_tokens(meta):
         toks.append(("breadth", f"{int(_b20p*100)}%→{int(_b20*100)}%"))
     else:
         toks.append(("breadth", f"{int(_b20*100)}%"))
+    # Mirror the round-4 banner: reason appended whenever present, on number OR n/a.
     _gns = meta.get("good_news_sold")
+    _r = str(meta.get("earnings_degrade_reason") or "")
     if _gns is not None:
-        toks.append(("gns", f"{_EN['cockpit_frag_gns']}: {_gns}"))
+        toks.append(("gns", f"{_EN['cockpit_frag_gns']}: {_gns}"
+                            + (f" ({_r})" if _r else "")))
     else:
-        _r = str(meta.get("earnings_degrade_reason") or "")
         toks.append(("gns", f"{_EN['cockpit_frag_gns']}: "
                             + (f"{na} ({_r})" if _r else na)))
     return toks
@@ -1301,23 +1427,27 @@ def _run_parity(earnings_cal_fn):
 
 
 try:
-    # --- Scenario A: earnings LIT (a beat sold) — banner shows the number ---
-    _lit_cal = lambda *a, **k: [{"ticker": "AAA",
-                                 "report_date": _parity_frames()[1],
+    # --- Scenario A: a SCAN-universe ticker NOT in the top-N reports + has a cached
+    # frame → it is EVALUATED (the round-4 rescope: market signal over the scan set).
+    _lit_cal = lambda *a, **k: [{"ticker": "SCANX",
+                                 "report_date": _report_date(),
                                  "direction": "beat"}]  # noqa: E731
     _blobA, _metaA, _excA = _run_parity(_lit_cal)
     check("18.1 real refresh wrote a fragility _meta header (lit path)",
           bool(_metaA) and "fragility_level" in _metaA, _excA[:160])
     check("18.2 refresh raised no exception (lit path)", _excA == "", _excA[:200])
-    check("18.3 LIVE: earnings evaluated → good_news_sold is a number in _meta",
+    check("18.3 LIVE: a non-top-N SCAN ticker (SCANX) is evaluated → number in _meta",
           _metaA.get("good_news_sold") is not None
+          and _metaA.get("earnings_evaluated", 0) >= 1
+          and "SCANX" not in _TOPN  # proves it came from the scan scope, not top-N
           and _metaA.get("earnings_degrade_reason", "") == "",
-          f"gns={_metaA.get('good_news_sold')} reason={_metaA.get('earnings_degrade_reason')}")
+          f"gns={_metaA.get('good_news_sold')} ev={_metaA.get('earnings_evaluated')} "
+          f"reason={_metaA.get('earnings_degrade_reason')}")
     check("18.4 PARITY (lit): every _meta token is rendered on the banner",
           _parity_holds(_blobA, _metaA),
           str(_expected_tokens(_metaA)) + " || " + _blobA[:240])
 
-    # --- Scenario B: earnings DARK (empty calendar) — the EXACT live bug ---
+    # --- Scenario B: earnings DARK (empty calendar) → no_reports_in_window ---
     _dark_cal = lambda *a, **k: []  # call OK, nothing in window → no_reports_in_window
     _blobB, _metaB, _excB = _run_parity(_dark_cal)
     check("18.5 LIVE: empty calendar degrades to no_reports_in_window in _meta",
@@ -1328,6 +1458,23 @@ try:
           _parity_holds(_blobB, _metaB)
           and "good-news-sold: n/a (no_reports_in_window)" in _blobB,
           _blobB[:240])
+
+    # --- Scenario C: a scan ticker reports but its frame is NOT cache-resident →
+    # skipped+counted → partial_frame_coverage (distinct from no_reports_in_window). ---
+    _partial_cal = lambda *a, **k: [{"ticker": "NOFRAME",
+                                     "report_date": _report_date(),
+                                     "direction": "beat"}]  # noqa: E731
+    _blobC, _metaC, _excC = _run_parity(_partial_cal)
+    check("18.9 LIVE: in-window report without a cached frame → partial_frame_coverage",
+          _metaC.get("good_news_sold") is None
+          and _metaC.get("earnings_skipped", 0) >= 1
+          and _metaC.get("earnings_degrade_reason") == "partial_frame_coverage",
+          f"gns={_metaC.get('good_news_sold')} skipped={_metaC.get('earnings_skipped')} "
+          f"reason={_metaC.get('earnings_degrade_reason')}")
+    check("18.10 PARITY (partial): banner shows 'n/a (partial_frame_coverage)' = _meta",
+          _parity_holds(_blobC, _metaC)
+          and "good-news-sold: n/a (partial_frame_coverage)" in _blobC,
+          _blobC[:240])
 
     # --- The parity check FAILS when banner and _meta diverge (the guarantee) ---
     # A _meta whose level/components were altered (the nested/vintage/dead-arg class

@@ -503,7 +503,21 @@ def generate_candidates(macro_regime: str, top_n: int = 20, llm_n: int = 50,
     results = _generate_candidates_cached(regime_key, top_n, llm_n,
                                           tuple(universe), lang)
     _publish_cockpit_signals(results)
+    _publish_scan_universe(universe)
     return results
+
+
+def _publish_scan_universe(universe: list) -> None:
+    """Stage the EXACT scan universe used THIS refresh so the Cockpit's market-
+    internals earnings scope (good-news-sold) runs over the scanned set (~100-150
+    names), not the ranked top-N. Publishing the object the generator actually used
+    avoids a re-derived list that could drift from this refresh. Fail-closed."""
+    try:
+        st.session_state["cockpit_scan_universe"] = [
+            str(t).upper().strip() for t in (universe or []) if str(t).strip()
+        ]
+    except Exception:  # noqa: BLE001 — no Streamlit runtime / unexpected shape
+        pass
 
 
 def _candidate_handoff_dict(c: "CandidateSignal", signal_strength: str) -> dict:
