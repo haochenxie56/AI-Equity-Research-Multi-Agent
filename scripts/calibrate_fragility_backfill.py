@@ -35,7 +35,19 @@ CAVEAT = ("Backfill uses TODAY'S code and TODAY'S universe applied to past days 
 
 
 def _universe() -> list:
-    """Deduped theme-basket constituents = the breadth/internals universe."""
+    """The SCAN universe — consistent with cf94f89 and the live compute path.
+
+    ``candidate_generator.get_universe()`` (= SP500_TOP_100 + any session-selected
+    constituents) is the exact set the live Cockpit refresh scans, so good-news-sold
+    AND breadth here reproduce the numbers the live system computed on those days.
+    Falls back to theme-basket constituents only if the scan universe is unavailable."""
+    try:
+        from lib.candidate_generator import get_universe
+        uni = [str(t).upper().strip() for t in (get_universe() or []) if str(t).strip()]
+        if uni:
+            return uni
+    except Exception:  # noqa: BLE001
+        pass
     out: list = []
     try:
         from lib.theme_baskets import THEME_BASKETS
@@ -111,7 +123,10 @@ def main() -> int:
               - _dt.timedelta(days=int(args.days) * 2 + 10)).isoformat()
         from lib.signal_engine import fetch_earnings_reactions_calendar
         reports = fetch_earnings_reactions_calendar(lo, today)
-        reaction_records = mi._reaction_records(reports, frame_loader, bench_dates, today, cfg)
+        # Scope earnings to the SCAN universe (cf94f89): without universe= the bulk
+        # calendar's whole-market reports would be counted (the 39/92 leak).
+        reaction_records = mi._reaction_records(
+            reports, frame_loader, bench_dates, today, cfg, universe=universe)
     except Exception as exc:  # noqa: BLE001
         earnings_note = f"unavailable ({exc})"
 
