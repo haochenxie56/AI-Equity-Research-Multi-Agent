@@ -267,16 +267,26 @@ def _run_refresh() -> None:
         _fragility = None
         _frag_level = "normal"
         try:
+            from datetime import timedelta as _timedelta
             from lib import market_internals as _mi
             from lib.relative_strength import _default_frame_loader as _cache_frames
             from lib.opportunity_ranker import SNAPSHOT_DIR as _snap_dir
+            from lib.signal_engine import fetch_earnings_reactions_calendar as _earn_cal
             from ui_utils import load_ohlcv as _bench_frames
 
+            # Item 2 — wire the earnings-reaction component: ONE bulk Finnhub
+            # earnings-calendar call (skippable/degradable), next-session reaction
+            # read from the SAME cached OHLCV (no per-ticker network). Was never
+            # passed before, so good-news-sold always degraded.
+            _today = datetime.now().strftime("%Y-%m-%d")
+            _from = (datetime.now() - _timedelta(days=12)).strftime("%Y-%m-%d")
+            _earn_cal_fn = lambda: _earn_cal(_from, _today)  # noqa: E731
             _fragility = _mi.compute_market_fragility(
                 universe=_tickers, frame_loader=_cache_frames,
                 benchmark_loader=lambda tk: _bench_frames(tk, "1y"),
                 themes=_themes_list, snapshot_dir=_snap_dir,
-                today_str=datetime.now().strftime("%Y-%m-%d"))
+                earnings_calendar_fn=_earn_cal_fn,
+                today_str=_today)
             _frag_level = _fragility.level
             st.session_state["cockpit_fragility"] = _fragility.to_dict()
             # WSL clock-drift defense — sanity-check the system date against the
@@ -465,20 +475,27 @@ else:
         _flevel = str(_frag.get("level", "normal"))
         _fcolor = {"normal": "#3fb950", "elevated": "#d29922",
                    "high": "#f85149"}.get(_flevel, "#8b949e")
+        # Each component renders one of THREE states (Item 1): a numeric value
+        # INCLUDING 0 shows the number; None/degraded shows the n/a marker; a
+        # component is NEVER silently omitted (an invisible 0 hides real signal).
+        _na = t("cockpit_frag_na")
         _bits = []
         _dd = max([x for x in (_frag.get("distribution_days_spy"),
                                _frag.get("distribution_days_qqq")) if x is not None],
                   default=None)
-        if _dd is not None:
-            _bits.append(f"distribution days {_dd}/25")
+        _bits.append(f"{t('cockpit_frag_dist')} "
+                     + (f"{_dd}/25" if _dd is not None else _na))
         _b20 = _frag.get("breadth_above_sma20")
         _b20p = _frag.get("breadth_above_sma20_prev")
-        if _b20 is not None:
-            _bits.append(f"breadth {int((_b20p or _b20)*100)}%→{int(_b20*100)}%"
-                         if _b20p is not None else f"breadth {int(_b20*100)}%")
+        if _b20 is None:
+            _bits.append(f"{t('cockpit_frag_breadth')} {_na}")
+        elif _b20p is not None:  # explicit None check — 0.0 prev is a real value
+            _bits.append(f"{t('cockpit_frag_breadth')} {int(_b20p*100)}%→{int(_b20*100)}%")
+        else:
+            _bits.append(f"{t('cockpit_frag_breadth')} {int(_b20*100)}%")
         _gns = _frag.get("good_news_sold")
-        if _gns:
-            _bits.append(f"{_gns} good-news-sold")
+        _bits.append(f"{t('cockpit_frag_gns')}: "
+                     + (f"{_gns}" if _gns is not None else _na))
         st.markdown(
             f"{t('cockpit_hub_internals')}: "
             + _badge(_flevel, _fcolor)

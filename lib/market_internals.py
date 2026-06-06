@@ -54,6 +54,8 @@ INTERNALS_CONFIG = {
                                         # (pp/100, i.e. 0.0 = closed red) is "sold"
     "good_news_sold_elevated": 1,       # >= good-news-sold instances → elevated
     "good_news_sold_high": 2,           # >= → high
+    "earnings_lookback_sessions": 5,    # a report counts when this many sessions
+                                        # (or fewer) have passed since it printed
 
     # Volume character / rally quality.
     "rally_down_day_pct": -0.01,        # a session <= this defines the down day
@@ -64,7 +66,7 @@ INTERNALS_CONFIG = {
     # which normalizes across price levels) over a recent window vs a trailing
     # baseline; shrinking beyond the ratio fires the flag (composite weight +1,
     # see _score_components).
-    "leading_theme_count": 2,             # how many leading themes to inspect
+    "leading_theme_count": 3,             # how many leader/ex-leader themes to inspect
     "leading_theme_vol_recent_days": 10,  # recent window (sessions)
     "leading_theme_vol_baseline_days": 25,  # trailing baseline window (sessions)
     "leading_theme_vol_shrink_ratio": 0.85,  # recent/baseline below this → shrinking
@@ -147,6 +149,12 @@ class FragilityReading:
     # True when the trading-calendar adjacency check fell back to a calendar-day
     # bound (benchmark index missing / out-of-range) for any evaluated pair.
     adjacency_degraded: bool = False
+    # WHY the earnings-reaction component degraded (Item 2): "" = evaluated;
+    # "finnhub_unavailable" (the calendar call failed / no key) vs
+    # "no_reports_in_window" (call succeeded, nothing in window) vs
+    # "earnings_source_absent" (no calendar source supplied) — distinct situations
+    # we need to tell apart in snapshot history.
+    earnings_degrade_reason: str = ""
 
     def to_dict(self) -> dict:
         d = asdict(self)
@@ -305,14 +313,21 @@ def _theme_dollar_volume_ratio(constituent_frames: dict, recent_days: int,
 
 
 def _select_leading_themes(themes, count: int) -> list:
-    """The top ``count`` leading themes: prefer leading/rotating_in stages, then
-    rank by momentum_score (desc). Falls back to top momentum when no stage set."""
-    def _key(th):
-        # String literals (not theme_baskets constants) keep this module decoupled.
-        stage = str(getattr(th, "stage", "") or "")
-        stage_rank = {"leading": 2, "rotating_in": 1}.get(stage, 0)
-        return (stage_rank, float(getattr(th, "momentum_score", 0.0) or 0.0))
-    return sorted(themes or [], key=_key, reverse=True)[:max(0, count)]
+    """The top ``count`` CURRENT-or-RECENT leaders to watch for volume distribution:
+    the stage set ``{leading, rotating_out}`` ranked by momentum_score (desc).
+
+    Rationale (polish round 3 — Item 3): the volume-shrink signal catches *buying
+    drying up in the leaders*. A leader that just flipped to ``rotating_out`` (the
+    ai_chips / AVGO case — still high momentum, breadth bleeding) is the **prime**
+    subject, so excluding it (the old leading/rotating_in-only rule) blinded the
+    monitor to exactly the distribution it exists to catch. ``rotating_in`` (a new
+    entrant, no distribution history yet) and ``out_of_favor`` (already gone) are
+    excluded. Falls back to all themes by momentum when no stage labels are set."""
+    eligible = [th for th in (themes or [])
+                if str(getattr(th, "stage", "") or "") in ("leading", "rotating_out")]
+    pool = eligible if eligible else list(themes or [])
+    return sorted(pool, key=lambda th: float(getattr(th, "momentum_score", 0.0) or 0.0),
+                  reverse=True)[:max(0, count)]
 
 
 def leading_theme_volume_shrink(themes, frame_loader, config: Optional[dict] = None):
@@ -676,6 +691,7 @@ def fragility_snapshot(reading: FragilityReading, date_str: str) -> dict:
         "fragility_consecutive_raw": reading.consecutive_raw,
         "fragility_degraded": list(reading.degraded),
         "fragility_adjacency_degraded": reading.adjacency_degraded,
+        "earnings_degrade_reason": reading.earnings_degrade_reason,
         # every component value, attributable
         "distribution_days_spy": c.distribution_days_spy,
         "distribution_days_qqq": c.distribution_days_qqq,
@@ -745,9 +761,85 @@ def _close_volume_lists(df):
     return closes, volumes
 
 
+def _next_session_reaction(df, report_date, today, window_sessions: int):
+    """(next-session return after the report, in_window) from a cached frame.
+
+    The next-session reaction is the close-to-close return of the first trading
+    session strictly AFTER ``report_date`` (the gap+day move off the pre-report
+    close). ``in_window`` is True when at most ``window_sessions`` trading dates lie
+    in ``(report_date, today]``. Returns (None, in_window) when the reaction can't
+    be computed; (None, False) when the frame/date is unusable."""
+    rd = _parse_iso(report_date)
+    if rd is None or df is None:
+        return None, False
+    try:
+        close = df["Close"]
+        idx = _index_dates(getattr(close, "index", None))
+        closes = _seq(close)
+    except Exception:  # noqa: BLE001
+        return None, False
+    if not idx or len(idx) != len(closes) or len(closes) < 2:
+        return None, False
+    t = _parse_iso(today) or idx[-1]
+    sessions_since = sum(1 for d in idx if rd < d <= t)
+    in_window = sessions_since <= int(window_sessions)
+    # first bar strictly after the report date → reaction vs the prior close.
+    j = next((i for i, d in enumerate(idx) if d > rd), None)
+    if j is None or j == 0 or closes[j - 1] in (None, 0):
+        return None, in_window
+    return (closes[j] / closes[j - 1] - 1.0), in_window
+
+
+def build_earnings_reactions(universe, frame_loader, calendar_fn, today_str: str,
+                             config: Optional[dict] = None):
+    """(reactions, degrade_reason) for the good-news-sold component.
+
+    ``calendar_fn()`` is the single, skippable bulk earnings-calendar call — it
+    returns recent reports ``[{ticker, report_date, direction}]`` (``direction`` =
+    "beat"/"miss") and RAISES on a genuine source failure (no key / network). The
+    per-report next-session reaction is read from cached OHLCV (``frame_loader``),
+    so no per-ticker network is added. A report counts only when its ticker is in
+    ``universe`` and it falls within ``earnings_lookback_sessions``.
+
+    Degrade reasons (distinct, for snapshot history): ``earnings_source_absent``
+    (no calendar_fn), ``finnhub_unavailable`` (call raised), ``no_reports_in_window``
+    (call returned but nothing usable in window/universe)."""
+    cfg = config or INTERNALS_CONFIG
+    if calendar_fn is None:
+        return [], "earnings_source_absent"
+    try:
+        reports = calendar_fn() or []
+    except Exception:  # noqa: BLE001 — the bulk call failed → genuinely unavailable
+        return [], "finnhub_unavailable"
+    uni = {str(t).upper().strip() for t in (universe or [])}
+    window = int(cfg["earnings_lookback_sessions"])
+    reactions: list = []
+    for rep in reports:
+        tk = str((rep.get("ticker") if isinstance(rep, dict) else "") or "").upper().strip()
+        if uni and tk not in uni:
+            continue
+        direction = rep.get("direction") if isinstance(rep, dict) else None
+        report_date = rep.get("report_date") if isinstance(rep, dict) else None
+        if direction is None or report_date is None:
+            continue
+        try:
+            df = frame_loader(tk) if frame_loader is not None else None
+        except Exception:  # noqa: BLE001
+            df = None
+        nxt, in_window = _next_session_reaction(df, report_date, today_str, window)
+        if not in_window or nxt is None:
+            continue
+        reactions.append({"ticker": tk, "direction": direction,
+                          "next_session_return": nxt})
+    if reactions:
+        return reactions, ""
+    return [], "no_reports_in_window"
+
+
 def compute_market_fragility(*, universe=None, frame_loader=None,
                              benchmark_loader=None, sector_loader=None,
                              themes=None, earnings_reactions=None,
+                             earnings_calendar_fn=None,
                              snapshot_dir=None, today_str: str = "",
                              config: Optional[dict] = None) -> FragilityReading:
     """Best-effort, network-free orchestration of the fragility components.
@@ -801,12 +893,21 @@ def compute_market_fragility(*, universe=None, frame_loader=None,
     if comp.breadth_above_sma20 is None:
         degraded.append("breadth")
 
-    # (a) earnings reaction quality.
+    # (a) earnings reaction quality. Reactions are either supplied precomputed or
+    # built here from the single bulk earnings-calendar call + cached OHLCV (Item 2
+    # — previously never wired, so this always degraded). The degrade REASON is
+    # recorded so future snapshots tell "source failed" from "no reports in window".
+    earnings_degrade_reason = ""
+    if not earnings_reactions:
+        earnings_reactions, earnings_degrade_reason = build_earnings_reactions(
+            universe, frame_loader, earnings_calendar_fn, today_str, cfg)
     if earnings_reactions:
         gns, ev = count_good_news_sold(earnings_reactions, cfg["good_news_sold_reaction_pp"])
         comp.good_news_sold, comp.earnings_evaluated = gns, ev
     else:
         degraded.append("earnings_reaction")
+        if earnings_degrade_reason:
+            degraded.append(earnings_degrade_reason)
 
     # Leading-theme volume shrink (top-2 leaders) — from the same cached OHLCV,
     # no new fetch. Breadth-narrowing for leading themes stays SCAFFOLDED: it needs
@@ -846,12 +947,14 @@ def compute_market_fragility(*, universe=None, frame_loader=None,
         if metas and comp.breadth_above_sma20_prev is None:
             comp.breadth_above_sma20_prev = metas[0].get("breadth_above_sma20")
 
-    return compute_fragility(
+    reading = compute_fragility(
         components=comp, offense_defense=offense_defense,
         prior_level=prior_level, recent_raw_levels=recent_raw,
         recent_dates=recent_dates, today_date=today_str or None,
         benchmark_index=bench_index,
         degraded=degraded, config=cfg)
+    reading.earnings_degrade_reason = earnings_degrade_reason
+    return reading
 
 
 def history_from_snapshots(meta_records, before_date: Optional[str] = None) -> tuple:

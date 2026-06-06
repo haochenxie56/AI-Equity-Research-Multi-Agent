@@ -694,6 +694,109 @@ except Exception as _e:  # noqa: BLE001 — AppTest unavailable counts as a fail
     check("13.5 internals render-smoke ran", False, f"AppTest unavailable: {_e}")
 
 
+# ===========================================================================
+# 14. Polish round 3 (banner zero/null, earnings wiring, volume theme selection)
+# ===========================================================================
+
+# --- Item 3: volume monitor watches current+recent leaders (leading ∪ rotating_out) ---
+_t_ai = _NS(theme_key="ai_chips", stage="rotating_out", momentum_score=0.9, constituents=[])
+_t_new = _NS(theme_key="new", stage="rotating_in", momentum_score=0.95, constituents=[])
+_t_hbm = _NS(theme_key="hbm", stage="leading", momentum_score=0.8, constituents=[])
+_sel = [th.theme_key for th in mi._select_leading_themes([_t_ai, _t_new, _t_hbm], 3)]
+check("14.1 rotating_out (just-distributing ex-leader) is now monitored",
+      "ai_chips" in _sel)
+check("14.2 leading is monitored, rotating_in (new entrant) is excluded",
+      "hbm" in _sel and "new" not in _sel)
+check("14.3 leading_theme_count default is 3", mi.INTERNALS_CONFIG["leading_theme_count"] == 3)
+
+# --- Item 2: earnings reactions wired with distinct degrade reasons ---
+_eidx = pd.bdate_range(end="2026-06-05", periods=40)
+_ec = [100.0] * 39 + [97.0]                 # report on _eidx[-2], next session -3%
+_eframe = pd.DataFrame({"Close": _ec, "Volume": [1e6] * 40}, index=_eidx)
+_rdate = str(_eidx[-2].date())
+
+def _eloader(tk):
+    return _eframe
+
+_reac, _reason = mi.build_earnings_reactions(
+    ["AVGO"], _eloader,
+    lambda: [{"ticker": "AVGO", "report_date": _rdate, "direction": "beat"}],
+    "2026-06-05")
+check("14.4 a beat sold next session is built as a reaction (evaluated)",
+      len(_reac) == 1 and _reac[0]["next_session_return"] < 0 and _reason == "")
+check("14.5 degrade reason: no calendar source", mi.build_earnings_reactions(
+      ["AVGO"], _eloader, None, "2026-06-05")[1] == "earnings_source_absent")
+
+def _boom():
+    raise RuntimeError("finnhub down")
+
+check("14.6 degrade reason: source failed → finnhub_unavailable",
+      mi.build_earnings_reactions(["AVGO"], _eloader, _boom, "2026-06-05")[1]
+      == "finnhub_unavailable")
+check("14.7 degrade reason: call OK but empty → no_reports_in_window",
+      mi.build_earnings_reactions(["AVGO"], _eloader, lambda: [], "2026-06-05")[1]
+      == "no_reports_in_window")
+# A report OUTSIDE the lookback window is not evaluated.
+_old_rdate = str(_eidx[0].date())
+check("14.8 report outside the session window is not evaluated",
+      mi.build_earnings_reactions(
+          ["AVGO"], _eloader,
+          lambda: [{"ticker": "AVGO", "report_date": _old_rdate, "direction": "beat"}],
+          "2026-06-05")[1] == "no_reports_in_window")
+# compute_market_fragility now actually evaluates the report (good_news_sold counted).
+_efrag = mi.compute_market_fragility(
+    universe=["AVGO"], frame_loader=_eloader,
+    earnings_calendar_fn=lambda: [{"ticker": "AVGO", "report_date": _rdate,
+                                   "direction": "beat"}],
+    today_str="2026-06-05")
+check("14.9 orchestrator counts the good-news-sold report (earnings wired)",
+      _efrag.components.good_news_sold == 1 and _efrag.components.earnings_evaluated == 1
+      and _efrag.earnings_degrade_reason == "")
+# When the source is absent the reason is surfaced in degraded + the reading.
+_efrag2 = mi.compute_market_fragility(universe=["AVGO"], frame_loader=_eloader,
+                                      today_str="2026-06-05")
+check("14.10 absent earnings source → reason recorded in reading + degraded",
+      _efrag2.earnings_degrade_reason == "earnings_source_absent"
+      and "earnings_source_absent" in _efrag2.degraded)
+# Snapshot persists the degrade reason.
+check("14.11 snapshot carries earnings_degrade_reason",
+      mi.fragility_snapshot(_efrag2, "2026-06-05").get("earnings_degrade_reason")
+      == "earnings_source_absent")
+
+# --- Item 1: banner three-state (0 renders, None → n/a, never omitted) ---
+try:
+    import streamlit as _st3  # noqa: E402
+    _st3.page_link = lambda *a, **k: None
+    from streamlit.testing.v1 import AppTest as _AT3  # noqa: E402
+
+    def _render_frag(frag):
+        _seed = {
+            "macro_regime_result": {"regime": "transition", "confidence": "low",
+                                    "horizon_bias": {}, "key_signals": [],
+                                    "opportunity_posture": "", "data_coverage": 1.0,
+                                    "signals": []},
+            "cockpit_fragility": frag,
+        }
+        _a = _AT3.from_file(os.path.join(_REPO_ROOT, "pages/7_Investment_Cockpit.py"),
+                            default_timeout=60)
+        for _k, _v in _seed.items():
+            _a.session_state[_k] = _v
+        _a.run()
+        return " ".join(str(getattr(_m, "value", "")) for _m in _a.markdown)
+
+    _blob0 = _render_frag({"level": "normal", "distribution_days_spy": 3,
+                           "breadth_above_sma20": 0.55, "good_news_sold": 0})
+    check("14.12 good_news_sold=0 renders as '0' (not suppressed)",
+          "good-news-sold: 0" in _blob0, _blob0[:200])
+    _blobN = _render_frag({"level": "normal", "distribution_days_spy": None,
+                           "breadth_above_sma20": None, "good_news_sold": None})
+    check("14.13 None components render the n/a marker, never omitted",
+          "good-news-sold: n/a" in _blobN and "distribution days n/a" in _blobN,
+          _blobN[:200])
+except Exception as _e:  # noqa: BLE001
+    check("14.12 banner three-state render-smoke ran", False, f"AppTest: {_e}")
+
+
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------

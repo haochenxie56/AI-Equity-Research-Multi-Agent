@@ -387,6 +387,41 @@ def _finnhub_get(url: str, params: dict) -> Optional[object]:
         return None
 
 
+_FINNHUB_EARNINGS_CAL = "https://finnhub.io/api/v1/calendar/earnings"
+
+
+def fetch_earnings_reactions_calendar(date_from: str, date_to: str) -> list:
+    """ONE bulk Finnhub earnings-calendar call (Phase 7B Item 2 — the single,
+    skippable earnings call per refresh).
+
+    Returns ``[{ticker, report_date, direction}]`` where ``direction`` is "beat"
+    when epsActual > epsEstimate else "miss". **Raises** ``RuntimeError`` when the
+    source is unavailable (no key / HTTP error) so the caller can tell
+    "finnhub_unavailable" from a legitimately empty window ("no_reports_in_window").
+    Reports missing actual/estimate are skipped (no direction can be derived)."""
+    if not FINNHUB_API_KEY:
+        raise RuntimeError("finnhub_no_key")
+    data = _finnhub_get(_FINNHUB_EARNINGS_CAL,
+                        {"from": date_from, "to": date_to, "token": FINNHUB_API_KEY})
+    if data is None:
+        raise RuntimeError("finnhub_error")
+    rows = data.get("earningsCalendar", []) if isinstance(data, dict) else []
+    out: list = []
+    for r in rows or []:
+        sym = r.get("symbol")
+        rdate = r.get("date")
+        act, est = r.get("epsActual"), r.get("epsEstimate")
+        if not sym or not rdate or act is None or est is None:
+            continue
+        try:
+            direction = "beat" if float(act) > float(est) else "miss"
+        except (TypeError, ValueError):
+            continue
+        out.append({"ticker": str(sym).upper().strip(),
+                    "report_date": str(rdate), "direction": direction})
+    return out
+
+
 @st.cache_data(ttl=_CACHE_TTL, show_spinner=False)
 def _technical_snapshot(ticker: str, period: str = "1y") -> dict:
     """Fetch OHLCV + compute the technical snapshot (the run_scan engine).

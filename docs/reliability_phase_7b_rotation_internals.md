@@ -1,9 +1,29 @@
 # Phase 7B — Multi-window Relative Strength, Two-Ring Rotation Engine, and Market-Internals Fragility Layer
 
-**Status**: Implemented + Codex fix round (×2) + polish rounds (×2) (lib + tests
+**Status**: Implemented + Codex fix round (×2) + polish rounds (×3) (lib + tests
 green). Review-only; not investment advice.
-**Suite**: `scripts/test_reliability_phase_7b_rotation_internals.py` — **109/109**,
+**Suite**: `scripts/test_reliability_phase_7b_rotation_internals.py` — **122/122**,
 mock-only / offline.
+
+**Polish round 3 (snapshot _meta + Codex):** (1) **Banner zero/null** — the
+fragility line distinguishes three states per component: a numeric value
+**including 0** renders the number, `None`/degraded renders an explicit `n/a`
+marker, and a component is **never silently omitted** (fixes `if _gns:` dropping
+`good_news_sold=0` and a `_b20p or _b20` falsy-zero bug). (2) **Earnings reactions
+were never evaluated** — root cause: the Cockpit's `compute_market_fragility` call
+never passed an earnings source, so component (a) always degraded
+(`earnings_evaluated=0`). Now a **single bulk Finnhub earnings-calendar call**
+(`signal_engine.fetch_earnings_reactions_calendar`, skippable/degradable) feeds
+`build_earnings_reactions`, which reads the next-session reaction from the **same
+cached OHLCV** (no per-ticker network); the degrade reason is recorded distinctly
+(`finnhub_unavailable` vs `no_reports_in_window` vs `earnings_source_absent`) on
+the reading + snapshot `_meta`. (3) **Volume monitor watched the wrong themes** —
+it selected leading/rotating_in only, excluding a just-distributing ex-leader
+(`rotating_out`, the ai_chips/AVGO case — the prime subject). Selection is now
+**leading ∪ rotating_out, ranked by momentum, capped at N=3**; `rotating_in` (new
+entrant, no distribution history) and `out_of_favor` (already gone) are excluded.
+The `leading_theme_volume_shrinking` field/keys are unchanged (snapshot
+backward-compatible; "leading" now means current+recent leaders).
 
 **Polish round 2 (Cockpit real-data verification — 3 display/integration bugs):**
 (1) **Fragility banner was invisible at level=normal** — Section A gated the line
