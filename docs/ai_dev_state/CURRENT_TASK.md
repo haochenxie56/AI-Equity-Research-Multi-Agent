@@ -5,7 +5,45 @@
 > history preserved verbatim). This file keeps only the active phase. The
 > long-form running status remains in `docs/ai_dev_state/PROJECT_STATE.md`.
 
-## Phase 7B — Multi-window RS, Two-Ring Rotation, Market-Internals Fragility (CURRENT — Implemented + fix round)
+## Valuation Refactor v1 — Method Router + Growth-Profile Peers (CURRENT — Implemented)
+
+Each company type gets an appropriate valuation method menu so the
+irreconcilable-anchor rate drops (KTOS class no longer dead-ends). **Deterministic;
+no LLM** (reverse DCF + debate = Phase 8). Phase doc
+`docs/reliability_valuation_router.md`; suite
+`scripts/test_reliability_valuation_router.py` **54/54**. Full canonical set green:
+stopbleed 65, 7A 115, 7B 187, 6c_b 47, equity_render_order 50, 6c_trading_desk
+118, 6c_v3_entry_v4 47, 6b_v3_horizon_scoring 189, theme_baskets 146,
+scanner_rotation_adapter 15.
+
+- **Task 1 — Classifier** (`lib/valuation_router.py`, NEW): `classify_company` →
+  5 types from one visible `CLASSIFIER_CONFIG` block + sector/industry hints, over
+  the already-fetched `tk.info` dict (no new network). Auditable `fired_rules`;
+  `clear`/`borderline` (borderline → default mature menu).
+- **Task 2 — Method menus** (`lib/equity_valuation.py`): `build_app_fair_value(...,
+  company_type=)` routes the blend input set via `METHOD_MENUS`. PE excluded for
+  growth_unprofitable; trailing-PE `cycle_distorted` for cyclical; DCF excluded for
+  growth/project. New `_compute_ev_s`/`_compute_ev_ebitda`/`_compute_pb_ps_band` +
+  sector fallback maps + Rule-of-40. Default path byte-identical; **dispersion gate
+  (3.0×) still runs last**.
+- **Task 3 — Growth-profile peers**: `match_growth_profile_peers` (sector AND
+  growth band AND size band; `sector_fallback` when < `min_peers`). `pages/4`
+  passes already-fetched peer info; cached path → sector fallback.
+- **Task 4 — Integration**: `AppFairValue` carries company_type + routing fields;
+  anchor cache schema **1 → 2** (version guard migrates old → empty); `pages/4`
+  badge + per-anchor methods + excluded anchors; `financial_tab` honest
+  DCF-excluded note; Cockpit unchanged beyond cache bump (verified). KTOS:
+  irreconcilable 7.89× ($0 band) → blended EV/EBITDA $23.46 + analyst $30 →
+  $19.94/$25.91/$31.50.
+
+**Created:** `lib/valuation_router.py`, `scripts/test_reliability_valuation_router.py`,
+`docs/reliability_valuation_router.md`. **Modified:** `lib/equity_valuation.py`,
+`lib/anchor_cache.py`, `lib/financial_tab.py`, `pages/4_Equity.py`, `ui_utils.py`,
+`scripts/test_reliability_valuation_stopbleed.py`, state docs.
+
+---
+
+## Phase 7B — Multi-window RS, Two-Ring Rotation, Market-Internals Fragility (Implemented + fix round)
 
 Makes rotation VISIBLE and market deterioration EARLY-VISIBLE. **All
 deterministic; no LLM.** Phase doc

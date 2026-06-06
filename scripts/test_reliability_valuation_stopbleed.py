@@ -346,14 +346,15 @@ with tempfile.TemporaryDirectory() as _td:
     # future schema migrations); the supported version + bare legacy load normally.
     import json as _json
     _vp = Path(_td) / "ver.json"
-    for _bad in (0, 2):
+    _cur_ver = ac._SCHEMA_VERSION
+    for _bad in (0, _cur_ver - 1, _cur_ver + 1):
         with open(_vp, "w", encoding="utf-8") as fh:
             _json.dump({"version": _bad, "anchors": {"X": {"fair_value_mid": 1.0}}}, fh)
         check(f"5.15 version={_bad} envelope loads as empty",
               ac.load_all(_vp) == {}, detail=str(ac.load_all(_vp)))
     with open(_vp, "w", encoding="utf-8") as fh:
-        _json.dump({"version": 1, "anchors": {"X": {"fair_value_mid": 1.0}}}, fh)
-    check("5.16 supported version (==1) loads", set(ac.load_all(_vp)) == {"X"})
+        _json.dump({"version": _cur_ver, "anchors": {"X": {"fair_value_mid": 1.0}}}, fh)
+    check(f"5.16 supported version (=={_cur_ver}) loads", set(ac.load_all(_vp)) == {"X"})
     with open(_vp, "w", encoding="utf-8") as fh:
         _json.dump({"X": {"fair_value_mid": 1.0}}, fh)
     check("5.17 bare un-versioned legacy object still tolerated",
