@@ -235,7 +235,9 @@ def _run_refresh() -> None:
     # daily snapshot. Orchestration only (no new numbers); fully fail-closed.
     try:
         from lib.opportunity_ranker import rank_opportunities, write_daily_snapshot
-        from lib.relative_strength import build_rs_map_cache_only
+        from lib.relative_strength import (build_rs_map_cache_only,
+                                           persist_frames_to_cache)
+        from ui_utils import load_ohlcv as _rs_ohlcv
 
         _themes_list = st.session_state.get("theme_momentum_results") or []
         _bias = get_regime_field("horizon_bias", {}) or {}
@@ -246,11 +248,15 @@ def _run_refresh() -> None:
             _cpi_date = fetch_economic_releases().cpi_date
         except Exception:  # noqa: BLE001 — fail-closed; CPI blocker simply absent
             _cpi_date = None
-        # RS (Fix 2 — network-free): SPY/QQQ benchmarks are the single per-refresh
-        # fetch; per-ticker history is read CACHE-ONLY from the signal pipeline's
-        # already-fetched OHLCV cache (lib.cache_manager). A cache miss degrades to
-        # a neutral RS + rs_degraded — it never triggers a per-ticker fetch.
+        # RS (network-free): SPY/QQQ benchmarks are the single per-refresh fetch;
+        # per-ticker history is read CACHE-ONLY. Data-vintage round 2 — write
+        # through the refresh's FRESH frames into cache_manager first (cache hits
+        # for the already-fetched candidates → no new network) so the cache-only RS
+        # loader serves the SAME vintage the refresh fetched, not an old bare-ohlcv
+        # parquet that the glob would otherwise sort on top. rs_stale flags any
+        # ticker whose cached frame still lags the benchmark vintage.
         _tickers = [getattr(c, "ticker", "") for c in _candidates]
+        persist_frames_to_cache(_tickers, _rs_ohlcv)
         _rs_map = build_rs_map_cache_only(_tickers, period="1y")
         # Cached valuation anchors (read-only, network-free) so LONG-horizon
         # enrichment can differentiate in/above/below the value band instead of
@@ -704,6 +710,8 @@ def _render_opportunity_card(card: dict, rank: int, horizon: str,
             _hints.append(f"🔗 {t('opp_concentration_prefix')}{concentration_ref}")
         if card.get("rs_degraded"):
             _hints.append(f"⚠️ {t('opp_rs_degraded')}")
+        if card.get("rs_stale"):
+            _hints.append(f"⏳ {t('opp_rs_stale')}")
         if _hints:
             st.caption(" · ".join(_hints))
 

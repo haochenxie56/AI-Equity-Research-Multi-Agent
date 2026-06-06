@@ -911,15 +911,21 @@ def _breadth_above_sma_asof(arrays_by_tk: dict, period: int, as_of):
     return round(above / used, 4) if used else None
 
 
-def _reaction_records(reports, frame_loader, bench_dates, today_str, cfg):
+def _reaction_records(reports, frame_loader, bench_dates, today_str, cfg,
+                      universe=None):
     """Per-report (ticker, reaction_date, return, direction) computed ONCE.
 
     The reaction_date is the first benchmark trading session strictly after the
     report; the return is read from the ticker's cached frame. Used to evaluate
-    earnings "as of" any past day without re-fetching."""
+    earnings "as of" any past day without re-fetching. **Filtered to ``universe``**
+    (round 2 fix — without it the bulk calendar's whole-market reports were
+    counted, and every non-universe ticker was also fetched)."""
     out = []
+    uni = {str(t).upper().strip() for t in (universe or [])}
     for rep in reports or []:
         tk = str((rep.get("ticker") if isinstance(rep, dict) else "") or "").upper().strip()
+        if uni and tk not in uni:
+            continue
         direction = rep.get("direction") if isinstance(rep, dict) else None
         rd = _parse_iso(rep.get("report_date") if isinstance(rep, dict) else None)
         if not tk or direction is None or rd is None:
@@ -1198,7 +1204,7 @@ def compute_market_fragility(*, universe=None, frame_loader=None,
                                        else "earnings_source_absent")
         elif bench_dates:
             reaction_records = _reaction_records(
-                reports, frame_loader, bench_dates, today_str, cfg)
+                reports, frame_loader, bench_dates, today_str, cfg, universe=universe)
             gns, ev = _earnings_components_asof(reaction_records, bench_dates,
                                                 today_str or str(bench_dates[-1]), cfg)
             if ev:
@@ -1212,6 +1218,14 @@ def compute_market_fragility(*, universe=None, frame_loader=None,
     if earnings_reactions and comp.earnings_evaluated == 0:
         gns, ev = count_good_news_sold(earnings_reactions, cfg["good_news_sold_reaction_pp"])
         comp.good_news_sold, comp.earnings_evaluated = gns, ev
+    # Sanity bound (round 2): more reports evaluated than the universe has tickers
+    # is impossible within the lookback window → degrade with a distinct reason
+    # rather than report a wrong figure (the good_news_sold=39 market-wide leak).
+    _uni_n = len(set(str(t).upper().strip() for t in (universe or [])))
+    if _uni_n and comp.earnings_evaluated > _uni_n:
+        comp.good_news_sold, comp.earnings_evaluated = None, 0
+        earnings_degrade_reason = "implausible_count"
+        reaction_records = []
     if comp.earnings_evaluated == 0:
         degraded.append("earnings_reaction")
         if earnings_degrade_reason:

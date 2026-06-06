@@ -1,10 +1,36 @@
 # Phase 7B — Multi-window Relative Strength, Two-Ring Rotation Engine, and Market-Internals Fragility Layer
 
 **Status**: Implemented + Codex fix round (×2) + polish rounds (×3) + rolling
-internals round + rolling fix round (lib + tests green). Review-only; not
+internals round + rolling fix rounds (×2) (lib + tests green). Review-only; not
 investment advice.
-**Suite**: `scripts/test_reliability_phase_7b_rotation_internals.py` — **141/141**,
+**Suite**: `scripts/test_reliability_phase_7b_rotation_internals.py` — **152/152**,
 mock-only / offline.
+
+**Data-vintage round 2 (RS stale guard + earnings universe filter).**
+**Item 1 — RS path read a stale cache, silently.** Root cause: `cache_manager.load(tk,
+"ohlcv")` globs `{tk}_ohlcv_*.parquet` sorted **descending**, so an old bare
+`{tk}_ohlcv_20260515.parquet` (written by a Scanner/signal run that last executed
+05-15) sorts **above** the fresh `{tk}_ohlcv_1y_1d_20260605.parquet` (`'2'>'1'`) —
+RS read 05-15 with `data_source="live"` (no flag). Fix (preferred design —
+**write-through**): `persist_frames_to_cache(tickers, load_ohlcv)` saves the
+refresh's fresh frames under data_type `"ohlcv"` (cache HITs for already-fetched
+candidates → no new network), which warms `cache_manager`'s in-memory cache (an
+authoritative memory hit) and writes a today-dated file that sorts on top — so the
+cache-only RS loader serves the refresh's vintage. The **RS loader still performs
+zero fetches** (the 7A network-free contract holds; pinned by a test). Plus a
+**guard** (d): each RS stamps `data_vintage` (frame's last date); a value lagging
+the benchmark vintage sets **`rs_stale`** (distinct from a cache-MISS `rs_degraded`),
+surfaced on cards + snapshot — a silent stale hit is now impossible.
+**Item 2 — good_news_sold=39 was market-wide.** Root cause: the rolling refactor's
+`_reaction_records` **dropped the universe filter** (round-3's `build_earnings_reactions`
+had it), so it counted every company in the bulk calendar (and fetched ~266
+tickers). Fix: `_reaction_records` filters to the universe; a **sanity bound**
+degrades with reason `implausible_count` when evaluated > universe size. Corrected
+today: evaluated **12**, good-news-sold **5** (was 92 / 39). **(e) Audit** — the only
+remaining `cache_manager.load` consumer on the refresh path was the RS frame loader
+(now write-through + guarded); fragility breadth/rolling were moved to `load_ohlcv`
+last round; theme breadth uses `yfinance` directly (fresh); earnings reaction prices
+use the Cockpit's `load_ohlcv` loader (fresh).
 
 **Rolling fix round (banner field drift + data-vintage split).** Three bugs the
 Cockpit exposed: (1) **Banner showed level + all-n/a.** Root cause:

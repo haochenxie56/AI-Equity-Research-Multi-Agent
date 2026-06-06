@@ -1356,6 +1356,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "opp_banner_header":  "市场环境（适用于全部候选）",
         "opp_next_trigger":   "等待",
         "opp_rs_degraded":    "相对强度数据暂缺（按中性计）",
+        "opp_rs_stale":       "相对强度数据时点滞后（疑似陈旧缓存）",
         # Phase 7A — setup type labels
         "opp_setup_momentum_breakout": "动能突破",
         "opp_setup_mid_rotation":      "中线轮动",
@@ -2750,6 +2751,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "opp_banner_header":  "Market context (applies to all candidates)",
         "opp_next_trigger":   "Waiting for",
         "opp_rs_degraded":    "Relative-strength data unavailable (treated as neutral)",
+        "opp_rs_stale":       "Relative-strength data vintage lags (stale cache suspected)",
         # Phase 7A — setup type labels
         "opp_setup_momentum_breakout": "Momentum Breakout",
         "opp_setup_mid_rotation":      "Mid-term Rotation",

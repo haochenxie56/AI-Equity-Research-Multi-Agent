@@ -8,8 +8,16 @@ follow. Prior status blob preserved verbatim afterward.)
 
 Makes rotation VISIBLE and market deterioration EARLY-VISIBLE. **All deterministic;
 no LLM.** Phase doc `docs/reliability_phase_7b_rotation_internals.md`; suite
-`scripts/test_reliability_phase_7b_rotation_internals.py` **141/141** (mock-only,
-incl. Codex fix round + polish 1–3 + rolling internals round + rolling FIX round:
+`scripts/test_reliability_phase_7b_rotation_internals.py` **152/152** (mock-only,
+incl. Codex fix round + polish 1–3 + rolling internals round + rolling FIX round +
+data-vintage round 2: (1) RS path silently read a stale parquet — cache_manager
+globs `{tk}_ohlcv_*` descending so an old bare `_ohlcv_20260515` sorted above the
+fresh `_ohlcv_1y_1d_20260605`; fixed by write-through (persist_frames_to_cache warms
+cache_manager from the refresh's fresh load_ohlcv frames; RS loader still zero-fetch)
++ an rs_stale guard (data_vintage stamp; flags lag vs benchmark; on cards+snapshot).
+(2) good_news_sold=39 was market-wide — _reaction_records dropped the universe
+filter; restored + an implausible_count bound; corrected today eval 12 / gns 5.
+Audit: RS loader was the only remaining cache_manager.load on the refresh path.
 (1) banner read flat top-level component keys but to_dict() nests them → stored the
 flat fragility_snapshot in session_state so banner + _meta share ONE object;
 (2) data-vintage split — fragility frame loader read the stale on-disk parquet

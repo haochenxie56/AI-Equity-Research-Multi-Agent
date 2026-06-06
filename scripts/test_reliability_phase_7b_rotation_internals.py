@@ -997,6 +997,114 @@ except Exception as _e:  # noqa: BLE001
     check("16.11 Macro Dashboard render-smoke ran", False, f"AppTest: {_e}")
 
 
+# ===========================================================================
+# 17. Data-vintage round 2 (RS stale guard + earnings universe filter)
+# ===========================================================================
+import lib.cache_manager as _cm  # noqa: E402
+
+# --- Item 1: RS data vintage stamp + rs_stale guard ---
+_v_fresh = pd.bdate_range(end="2026-06-05", periods=300)
+_v_stale = pd.bdate_range(end="2026-05-15", periods=300)
+
+
+def _vframe(idx):
+    return pd.DataFrame({"Close": [100.0 + i * 0.05 for i in range(300)],
+                         "Volume": [1e6] * 300}, index=idx)
+
+
+def _bench_2arg(tk, p=None):
+    return _vframe(_v_fresh)
+
+# 17.1 — compute_relative_strength stamps data_vintage from the frame's last date.
+_bench_map = rsm.benchmark_returns(_bench_2arg)
+_rs_one = rsm.compute_relative_strength("FRZ", _vframe(_v_fresh), _bench_map)
+check("17.1 RS stamps data_vintage from the frame", _rs_one.data_vintage == "2026-06-05",
+      _rs_one.data_vintage)
+check("17.2 benchmark_vintage reads the bench frames' last date",
+      rsm.benchmark_vintage(rsm.benchmark_frames(_bench_2arg)) == "2026-06-05")
+
+# 17.3 — a STALE cached frame (lags the benchmark vintage) → rs_stale True (silent
+# stale becomes visible; distinct from a cache-miss rs_degraded).
+_m_stale = rsm.build_rs_map_cache_only(
+    ["ZZZ"], ohlcv_fn=_bench_2arg, frame_loader=lambda tk: _vframe(_v_stale))
+check("17.3 stale cached frame → rs_stale True (data_source still live)",
+      _m_stale["ZZZ"].rs_stale is True and _m_stale["ZZZ"].data_source == "live")
+# 17.4 — matched vintage → not stale (happy path: RS inputs' last date == bench).
+_m_ok = rsm.build_rs_map_cache_only(
+    ["ZZZ"], ohlcv_fn=_bench_2arg, frame_loader=lambda tk: _vframe(_v_fresh))
+check("17.4 matched RS vintage → rs_stale False (happy path)",
+      _m_ok["ZZZ"].rs_stale is False and _m_ok["ZZZ"].data_vintage == "2026-06-05")
+
+# 17.5 — write-through: persisting fresh frames makes the cache-only loader serve
+# the SAME vintage (memory hit), so RS no longer reads a stale on-disk file.
+_n_wt = rsm.persist_frames_to_cache(["WTKR7B"], lambda tk, p=None: _vframe(_v_fresh))
+check("17.5 write-through persists + cache-only load then serves the fresh frame",
+      _n_wt == 1 and _cm.load("WTKR7B", "ohlcv") is not None
+      and rsm._frame_last_date(_cm.load("WTKR7B", "ohlcv")) == "2026-06-05")
+
+# 17.6 — 7A network-free contract intact: the RS loader performs ZERO per-ticker
+# fetches (cache-only); a recording ohlcv_fn is asked only for the benchmarks.
+_fetched: list = []
+
+
+def _rec_ohlcv(tk, p=None):
+    _fetched.append(str(tk).upper())
+    return _vframe(_v_fresh)
+
+rsm.build_rs_map_cache_only(["AAA", "BBB"], ohlcv_fn=_rec_ohlcv,
+                            frame_loader=lambda tk: _vframe(_v_fresh))
+check("17.6 RS loader fetches benchmarks ONLY (no per-ticker fetch)",
+      set(_fetched) <= {"SPY", "QQQ"}, f"unexpected fetched={set(_fetched) - {'SPY','QQQ'}}")
+
+# 17.7 — rs_stale surfaces on the opportunity card + snapshot.
+_stale_rs = {"STK": rsm.RelativeStrength("STK", rs_composite=0.6, data_source="live",
+                                         data_vintage="2026-05-15", rs_stale=True)}
+_stk_cards = orr.rank_opportunities(
+    [{"ticker": "STK", "short_score": 0.6, "mid_score": 0.5, "long_score": 0.5,
+      "signal_strength": "single", "candidate_type": "FUNNEL"}],
+    rs_map=_stale_rs, themes=None, top_n=0, today=_date(2026, 6, 5))
+check("17.7 rs_stale lands on the card + snapshot record",
+      _stk_cards[0].rs_stale is True
+      and orr._card_snapshot_record(_stk_cards[0], "2026-06-05", "x")["rs_stale"] is True)
+
+# --- Item 2: earnings universe filter + implausibility guard ---
+_bd17 = mi._dated_arrays(_vframe(_v_fresh))[0]
+_reports17 = [{"ticker": "U0", "report_date": str(_bd17[-2]), "direction": "beat"},
+              {"ticker": "OUTSIDER", "report_date": str(_bd17[-2]), "direction": "beat"}]
+_recs_uni = mi._reaction_records(_reports17, lambda tk: _vframe(_v_fresh), _bd17,
+                                 "2026-06-05", mi.INTERNALS_CONFIG, universe=["U0"])
+check("17.8 _reaction_records filters to the universe (drops OUTSIDER)",
+      [r["ticker"] for r in _recs_uni] == ["U0"])
+
+# 17.9 — implausibility guard: more evaluated than the universe size → degrade with
+# reason implausible_count (the backstop for the 39/92 market-wide leak).
+_frag_imp = mi.compute_market_fragility(
+    universe=["A", "B", "C"], frame_loader=lambda tk: _vframe(_v_fresh),
+    benchmark_loader=_bench_2arg,
+    earnings_reactions=[{"direction": "beat", "next_session_return": -0.02}
+                        for _ in range(5)],  # 5 evaluated > universe 3
+    today_str="2026-06-05")
+check("17.9 evaluated > universe size → implausible_count degrade (not reported)",
+      _frag_imp.components.earnings_evaluated == 0
+      and _frag_imp.components.good_news_sold is None
+      and "implausible_count" in _frag_imp.degraded)
+# 17.10 — a plausible count (≤ universe) is reported normally.
+_frag_ok = mi.compute_market_fragility(
+    universe=["A", "B", "C", "D", "E"], frame_loader=lambda tk: _vframe(_v_fresh),
+    benchmark_loader=_bench_2arg,
+    earnings_reactions=[{"direction": "beat", "next_session_return": -0.02},
+                        {"direction": "beat", "next_session_return": 0.03}],
+    today_str="2026-06-05")
+check("17.10 plausible count (≤ universe) is reported",
+      _frag_ok.components.earnings_evaluated == 2
+      and _frag_ok.components.good_news_sold == 1)
+
+# 17.11 — corrected today's earnings count is bounded by the universe (regression
+# guard for the 39/92 market-wide leak): reaction records never exceed universe.
+check("17.11 universe-filtered reactions are bounded by the universe size",
+      len(_recs_uni) <= 1)
+
+
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------

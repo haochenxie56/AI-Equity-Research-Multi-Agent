@@ -187,6 +187,7 @@ class OpportunityCard:
     long_grade: str = "C"
     rs: dict = field(default_factory=dict)
     rs_degraded: bool = False  # True when price history was not cached (RS neutral)
+    rs_stale: bool = False  # True when the cached RS frame lagged the benchmark vintage
     setup: str = "Speculative Watch"
     pullback_to_support: bool = False
     # Per-horizon five-state status (Fix round 2) — computed for short/mid/long so
@@ -986,6 +987,10 @@ def rank_opportunities(candidates, *, macro_regime: str = "unknown",
         rs_source = (rs.get("data_source") if isinstance(rs, dict)
                      else getattr(rs, "data_source", None)) if rs is not None else None
         rs_degraded = rs is None or rs_source == "fixture"
+        # rs_stale (data-vintage round 2): a SILENT stale cache-hit — the RS frame's
+        # last date lagged the benchmark vintage (distinct from rs_degraded's miss).
+        rs_stale = bool((rs.get("rs_stale") if isinstance(rs, dict)
+                         else getattr(rs, "rs_stale", False)) if rs is not None else False)
         rs_comp = _RS_NEUTRAL
         if rs is not None and not rs_degraded:
             rs_comp = (rs.get("rs_composite", _RS_NEUTRAL) if isinstance(rs, dict)
@@ -1016,6 +1021,7 @@ def rank_opportunities(candidates, *, macro_regime: str = "unknown",
             short_grade=_grade(s_short), mid_grade=_grade(s_mid), long_grade=_grade(s_long),
             rs=(rs.to_dict() if hasattr(rs, "to_dict") else (rs or {})),
             rs_degraded=rs_degraded,
+            rs_stale=rs_stale,
             setup=setup, pullback_to_support=pullback,
             blockers=list(rule_blockers),
             why_now=why_now, why_it_matters=why_matters,
@@ -1253,6 +1259,7 @@ def _card_snapshot_record(card: OpportunityCard, date_str: str,
         "long_grade": card.long_grade,
         "rs": card.rs,
         "rs_degraded": card.rs_degraded,
+        "rs_stale": card.rs_stale,
         "setup": card.setup,
         "pullback_to_support": card.pullback_to_support,
         # Per-horizon status map (Fix round 2) replaces the single status field;

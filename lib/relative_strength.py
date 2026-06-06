@@ -101,6 +101,12 @@ class RelativeStrength:
     # to the 6M window.
     rs_window_degraded: bool = False
     data_source: str = "fixture"  # "live" | "fixture"
+    # The last trading date of the price frame this RS was computed from (data
+    # vintage). ``rs_stale`` is True when that date lags the refresh's benchmark
+    # vintage — a SILENT stale cache-hit (distinct from ``rs_degraded``, which is a
+    # cache MISS). Set by build_rs_map_cache_only against the benchmark's last date.
+    data_vintage: str = ""
+    rs_stale: bool = False
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -170,6 +176,16 @@ def _volume_ratio(volumes, period: int = 20) -> Optional[float]:
     if avg <= 0:
         return None
     return recent / avg
+
+
+def _frame_last_date(df) -> str:
+    """Last trading date (YYYY-MM-DD) of a price frame's index, or '' (fail-closed)."""
+    try:
+        idx = df["Close"].index
+        last = idx[-1]
+        return str(getattr(last, "date", lambda: last)())[:10]
+    except Exception:  # noqa: BLE001
+        return ""
 
 
 def _closes_volumes(df):
@@ -390,6 +406,7 @@ def compute_relative_strength(ticker: str, df, bench_returns: dict,
         rs.vol_ratio = round(rs.vol_ratio, 2)
 
     rs.data_source = "live"
+    rs.data_vintage = _frame_last_date(df)
     rs.rs_composite = compute_rs_composite(rs)
     compute_horizon_composites(rs)
     return rs
@@ -488,6 +505,56 @@ def load_cached_frames(tickers, frame_loader: Optional[Callable] = None) -> dict
     return out
 
 
+def _series_last_date(s) -> str:
+    """Last date (YYYY-MM-DD) of a Close Series index, or '' (fail-closed)."""
+    try:
+        last = s.index[-1]
+        return str(getattr(last, "date", lambda: last)())[:10]
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def benchmark_vintage(bench_frames: dict) -> str:
+    """The benchmark's last trading date — the refresh's reference vintage."""
+    for b in BENCHMARKS:
+        d = _series_last_date((bench_frames or {}).get(b))
+        if d:
+            return d
+    return ""
+
+
+def persist_frames_to_cache(tickers, ohlcv_fn: Optional[Callable] = None) -> int:
+    """Write-through (data-vintage round 2): save the refresh's FRESH frames into
+    ``cache_manager`` under the SAME data_type the cache-only RS loader reads
+    (``"ohlcv"``), so RS sees the SAME vintage the refresh just fetched.
+
+    ``ohlcv_fn`` (default ``load_ohlcv`` via the lazy adapter) returns the fresh
+    frame — a cache HIT for tickers the signal pipeline already fetched, so this
+    adds no new network for them. ``cache_manager.save`` warms the in-memory cache
+    (so the next cache-only ``load`` is an authoritative memory hit) and writes a
+    today-dated parquet that sorts above any stale older file. The RS loader itself
+    still performs ZERO fetches (the 7A network-free structural contract holds).
+    Returns the number of tickers written."""
+    fn = ohlcv_fn or _default_ohlcv_fn
+    try:
+        from lib.cache_manager import save as _cache_save
+    except Exception:  # noqa: BLE001
+        return 0
+    n = 0
+    for tk in tickers or []:
+        sym = str(tk).upper().strip()
+        if not sym:
+            continue
+        try:
+            df = fn(sym, "1y")
+            if df is not None and getattr(df, "empty", True) is False:
+                _cache_save(sym, "ohlcv", df)
+                n += 1
+        except Exception:  # noqa: BLE001 — best-effort per ticker
+            continue
+    return n
+
+
 def build_rs_map_cache_only(tickers, *, ohlcv_fn: Optional[Callable] = None,
                             frame_loader: Optional[Callable] = None,
                             bench_returns: Optional[dict] = None,
@@ -500,13 +567,25 @@ def build_rs_map_cache_only(tickers, *, ohlcv_fn: Optional[Callable] = None,
     (``data_source='fixture'``) and never triggers a per-ticker fetch. The
     benchmark Close Series are kept (``benchmark_frames``) so excess returns are
     **date-aligned** against each ticker's own (cached) dates. Returns
-    ``{ticker: RelativeStrength}``."""
+    ``{ticker: RelativeStrength}``.
+
+    Data-vintage round 2: each ticker's ``data_vintage`` is stamped and compared to
+    the benchmark vintage; one that LAGS sets ``rs_stale`` (a silent stale cache-hit,
+    distinct from a cache MISS's ``rs_degraded``). Pair with
+    :func:`persist_frames_to_cache` so the cache serves the refresh's fresh vintage."""
     bench_frames = benchmark_frames(ohlcv_fn or _default_ohlcv_fn, period)
     bench = bench_returns if bench_returns is not None else _returns_from_frames(bench_frames)
     frames = load_cached_frames(tickers, frame_loader)
-    return compute_rs_for_tickers(tickers, bench_returns=bench, cache_only=True,
-                                  frames=frames, period=period,
-                                  bench_closes=bench_frames)
+    rs_map = compute_rs_for_tickers(tickers, bench_returns=bench, cache_only=True,
+                                    frames=frames, period=period,
+                                    bench_closes=bench_frames)
+    bench_vint = benchmark_vintage(bench_frames)
+    if bench_vint:
+        for rs in rs_map.values():
+            v = getattr(rs, "data_vintage", "") or ""
+            if v and v < bench_vint:
+                rs.rs_stale = True
+    return rs_map
 
 
 def compute_rs_for_tickers(tickers, ohlcv_fn: Optional[Callable] = None,
