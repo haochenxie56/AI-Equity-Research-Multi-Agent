@@ -538,6 +538,87 @@ check("11.5 QQQ excess aligns on its own common dates",
       _rs_qg.ret_5d_vs_qqq == _exp_qqq, f"got {_rs_qg.ret_5d_vs_qqq} exp {_exp_qqq}")
 
 
+# ===========================================================================
+# 12. Post-7B polish round (items 1, 2, 4)
+# ===========================================================================
+from types import SimpleNamespace as _NS  # noqa: E402
+
+# --- Item 1: same-date adjacency ---
+_cal12 = ["2026-06-05", "2026-06-08", "2026-06-09", "2026-06-10"]
+check("12.1 is_adjacent_session(d, d) is False (same-session duplicate)",
+      mi.is_adjacent_session("2026-06-08", "2026-06-08", _cal12) is False)
+# A duplicate same-date prior record must NOT extend the chain → no escalation.
+_dup, _ = mi.apply_hysteresis(
+    "high", "normal", ["high"], recent_dates=["2026-06-08"],
+    today_date="2026-06-08", benchmark_index=_cal12)
+check("12.2 duplicate same-date record does not escalate", _dup == "normal", _dup)
+
+
+def _vol_frame(close, vol):
+    return _df([close] * len(vol), vol)
+
+
+# --- Item 2: leading-theme volume shrink ---
+# 40 sessions: high baseline volume, then a low recent 10d window → ratio ≪ 0.85.
+_shrink_vol = [1_000_000.0] * 30 + [100_000.0] * 10
+_steady_vol = [1_000_000.0] * 40
+_shrink_consts = [f"S{i}" for i in range(6)]
+_theme_shrink = _NS(theme_key="ai_chips", constituents=_shrink_consts,
+                    stage="leading", momentum_score=0.9)
+_flag, _deg, _detail = mi.leading_theme_volume_shrink(
+    [_theme_shrink], lambda tk: _vol_frame(100.0, _shrink_vol))
+check("12.3 shrink fixture fires the volume flag (not degraded)",
+      _flag is True and _deg is False, f"{_flag}/{_deg}/{_detail}")
+# Steady volume → ratio ~1.0 → no shrink.
+_flag2, _deg2, _ = mi.leading_theme_volume_shrink(
+    [_theme_shrink], lambda tk: _vol_frame(100.0, _steady_vol))
+check("12.4 steady volume does not fire the flag", _flag2 is False and _deg2 is False)
+# Insufficient data (too few constituents with usable history) → stays degraded.
+_theme_thin = _NS(theme_key="ai_chips", constituents=["A", "B"],
+                  stage="leading", momentum_score=0.9)
+_flag3, _deg3, _ = mi.leading_theme_volume_shrink(
+    [_theme_thin], lambda tk: _vol_frame(100.0, _shrink_vol))
+check("12.5 insufficient-data fixture stays degraded (flag False)",
+      _flag3 is False and _deg3 is True)
+# Flag contributes points ONLY when not degraded: via the orchestrator a degraded
+# volume read leaves the component False (no points) and lists it in degraded.
+_orch = mi.compute_market_fragility(
+    themes=[_theme_thin], frame_loader=lambda tk: _vol_frame(100.0, _shrink_vol))
+check("12.6 orchestrator: degraded volume → component False + listed",
+      _orch.components.leading_theme_volume_shrinking is False
+      and "leading_theme_volume" in _orch.degraded)
+# When the flag IS set, _score_components counts it (+1).
+_pts_with = mi.compute_fragility(leading_theme_volume_shrinking=True)
+check("12.7 set flag contributes a triggered point",
+      "leading_theme_volume_shrinking" in _pts_with.triggered)
+
+# --- Item 4: WSL clock-drift defense ---
+_clkcal = ["2026-06-05", "2026-06-08", "2026-06-09", "2026-06-12"]  # latest 06-12
+check("12.8 clock normal (within bound) → not suspect",
+      mi.detect_clock_drift("2026-06-12", _clkcal)[0] is False)
+check("12.9 clock EARLIER than latest trading date → suspect",
+      mi.detect_clock_drift("2026-06-01", _clkcal)[0] is True)
+check("12.10 clock far AHEAD (> bound) → suspect",
+      mi.detect_clock_drift("2026-06-30", _clkcal)[0] is True)
+check("12.11 clock slightly ahead (within bound) → not suspect",
+      mi.detect_clock_drift("2026-06-15", _clkcal)[0] is False)
+check("12.12 clock check with no index → not suspect (never blocks)",
+      mi.detect_clock_drift("2026-06-12", [])[0] is False)
+# write_daily_snapshot persists clock_suspect into the _meta header.
+import json as _json  # noqa: E402
+import tempfile as _tf  # noqa: E402
+from pathlib import Path as _P  # noqa: E402
+_tmp = _P(_tf.mkdtemp())
+orr.write_daily_snapshot([], macro_regime="risk_on", clock_suspect=True,
+                         clock_suspect_reason="test drift", date_str="2026-06-05",
+                         base_dir=_tmp)
+_meta_line = _json.loads(open(_tmp / "opportunities_20260605.jsonl",
+                              encoding="utf-8").readline())
+check("12.13 snapshot _meta carries clock_suspect + reason",
+      _meta_line.get("clock_suspect") is True
+      and _meta_line.get("clock_suspect_reason") == "test drift")
+
+
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------

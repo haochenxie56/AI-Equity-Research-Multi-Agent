@@ -59,6 +59,17 @@ INTERNALS_CONFIG = {
     "rally_down_day_pct": -0.01,        # a session <= this defines the down day
     "volume_shrink_ratio": 0.90,        # bounce volume < this × down-day volume
 
+    # Leading-theme volume shrink ("buying drying up" in the leaders). Per the
+    # top-2 leading themes, aggregate constituent DOLLAR volume (Close×Volume,
+    # which normalizes across price levels) over a recent window vs a trailing
+    # baseline; shrinking beyond the ratio fires the flag (composite weight +1,
+    # see _score_components).
+    "leading_theme_count": 2,             # how many leading themes to inspect
+    "leading_theme_vol_recent_days": 10,  # recent window (sessions)
+    "leading_theme_vol_baseline_days": 25,  # trailing baseline window (sessions)
+    "leading_theme_vol_shrink_ratio": 0.85,  # recent/baseline below this → shrinking
+    "leading_theme_min_constituents": 5,  # data floor; below → flag stays degraded
+
     # Composite point thresholds.
     "elevated_points": 2,
     "high_points": 4,
@@ -73,6 +84,12 @@ INTERNALS_CONFIG = {
     # snapshot dates (cache miss/stale); using it flags adjacency_degraded. A
     # broken chain can only DELAY escalation, never fabricate it.
     "hysteresis_max_calendar_gap_days": 4,
+
+    # WSL clock-drift defense: WSL2's clock can lag after a Windows sleep/resume,
+    # mis-dating snapshots. The system date is sanity-checked against the latest
+    # cached benchmark trading date; EARLIER than it, or more than this many
+    # calendar days AHEAD, is "clock_suspect" (warn + flag, never block the write).
+    "clock_drift_max_ahead_days": 7,
 }
 
 LEVELS = ("normal", "elevated", "high")
@@ -257,6 +274,89 @@ def detect_weak_bounce(closes, volumes, down_day_pct: Optional[float] = None,
     return None
 
 
+def _theme_dollar_volume_ratio(constituent_frames: dict, recent_days: int,
+                               baseline_days: int, min_constituents: int):
+    """(recent/baseline dollar-volume ratio, n_used) for one theme, or (None, 0).
+
+    Per constituent: dollar volume = Close × Volume. ``recent`` = mean of the last
+    ``recent_days`` sessions; ``baseline`` = mean of the ``baseline_days`` sessions
+    immediately before that. The theme ratio is Σ(recent) / Σ(baseline) over the
+    constituents with enough history (≥ recent+baseline bars). Returns (None, n)
+    when fewer than ``min_constituents`` are usable or the baseline sum is ≤ 0."""
+    need = recent_days + baseline_days
+    total_recent = total_baseline = 0.0
+    used = 0
+    for df in (constituent_frames or {}).values():
+        closes, volumes = _close_volume_lists(df)
+        n = min(len(closes), len(volumes))
+        if n < need:
+            continue
+        dollar = [closes[i] * volumes[i] for i in range(n)]
+        recent = dollar[-recent_days:]
+        baseline = dollar[-need:-recent_days]
+        if not recent or not baseline:
+            continue
+        used += 1
+        total_recent += sum(recent) / len(recent)
+        total_baseline += sum(baseline) / len(baseline)
+    if used < min_constituents or total_baseline <= 0:
+        return None, used
+    return total_recent / total_baseline, used
+
+
+def _select_leading_themes(themes, count: int) -> list:
+    """The top ``count`` leading themes: prefer leading/rotating_in stages, then
+    rank by momentum_score (desc). Falls back to top momentum when no stage set."""
+    def _key(th):
+        # String literals (not theme_baskets constants) keep this module decoupled.
+        stage = str(getattr(th, "stage", "") or "")
+        stage_rank = {"leading": 2, "rotating_in": 1}.get(stage, 0)
+        return (stage_rank, float(getattr(th, "momentum_score", 0.0) or 0.0))
+    return sorted(themes or [], key=_key, reverse=True)[:max(0, count)]
+
+
+def leading_theme_volume_shrink(themes, frame_loader, config: Optional[dict] = None):
+    """(shrinking_flag, degraded, detail) for the top leading themes.
+
+    Aggregates constituent dollar volume from the SAME cached OHLCV the breadth
+    computation uses (``frame_loader``, cache-only — no new fetch, no per-ticker
+    network on the ranking path). The flag fires when ANY inspected leading theme's
+    recent/baseline ratio is below ``leading_theme_vol_shrink_ratio``. ``degraded``
+    is True when NO inspected theme had enough constituents with volume data."""
+    cfg = config or INTERNALS_CONFIG
+    if not themes or frame_loader is None:
+        return False, True, {}
+    recent_days = int(cfg["leading_theme_vol_recent_days"])
+    baseline_days = int(cfg["leading_theme_vol_baseline_days"])
+    shrink_ratio = float(cfg["leading_theme_vol_shrink_ratio"])
+    min_const = int(cfg["leading_theme_min_constituents"])
+    leaders = _select_leading_themes(themes, int(cfg["leading_theme_count"]))
+
+    shrinking = False
+    any_evaluable = False
+    detail: dict = {}
+    for th in leaders:
+        constituents = getattr(th, "constituents", None) or []
+        frames = {}
+        for tk in constituents:
+            try:
+                frames[tk] = frame_loader(tk)
+            except Exception:  # noqa: BLE001
+                frames[tk] = None
+        ratio, used = _theme_dollar_volume_ratio(
+            frames, recent_days, baseline_days, min_const)
+        key = getattr(th, "theme_key", "?")
+        if ratio is None:
+            detail[key] = {"ratio": None, "n_used": used}
+            continue
+        any_evaluable = True
+        detail[key] = {"ratio": round(ratio, 4), "n_used": used,
+                       "shrinking": ratio < shrink_ratio}
+        if ratio < shrink_ratio:
+            shrinking = True
+    return shrinking, (not any_evaluable), detail
+
+
 # ── Composite scoring ─────────────────────────────────────────────────────────
 
 def _score_components(comp: FragilityComponents, cfg: dict) -> tuple:
@@ -377,6 +477,8 @@ def is_adjacent_session(d1, d2, benchmark_index) -> Optional[bool]:
     a, b = _parse_iso(d1), _parse_iso(d2)
     if a is None or b is None:
         return None
+    if a == b:
+        return False  # a same-session duplicate record never extends a chain
     lo, hi = (a, b) if a <= b else (b, a)
     days = _index_dates(benchmark_index)
     if not days or lo < days[0] or hi > days[-1]:
@@ -532,6 +634,31 @@ def internals_reason() -> dict:
             "en": INTERNALS_REASON_EN, "zh": INTERNALS_REASON_ZH}
 
 
+# ── WSL clock-drift defense ───────────────────────────────────────────────────
+
+def detect_clock_drift(today, benchmark_index, config: Optional[dict] = None):
+    """(clock_suspect: bool, reason: str) from the system date vs the trading
+    calendar. ``benchmark_index`` is the cached SPY/QQQ date index (the latest
+    trading date). Suspect when the system date is EARLIER than that date, or more
+    than ``clock_drift_max_ahead_days`` calendar days ahead of it. Cannot be
+    determined (no index / unparseable date) → (False, "") — never blocks."""
+    cfg = config or INTERNALS_CONFIG
+    max_ahead = int(cfg.get("clock_drift_max_ahead_days", 7))
+    days = _index_dates(benchmark_index)
+    t = _parse_iso(today)
+    if not days or t is None:
+        return False, ""
+    latest = days[-1]
+    if t < latest:
+        return True, (f"system date {t} is EARLIER than the latest cached trading "
+                      f"date {latest} (clock likely lagging)")
+    ahead = (t - latest).days
+    if ahead > max_ahead:
+        return True, (f"system date {t} is {ahead} calendar days ahead of the latest "
+                      f"cached trading date {latest} (> {max_ahead})")
+    return False, ""
+
+
 # ── Snapshot serialization (the snapshot is the memory) ───────────────────────
 
 def fragility_snapshot(reading: FragilityReading, date_str: str) -> dict:
@@ -681,8 +808,16 @@ def compute_market_fragility(*, universe=None, frame_loader=None,
     else:
         degraded.append("earnings_reaction")
 
-    # leading-theme internal flags — best-effort; degrade when history is absent.
-    degraded.append("leading_theme_internals")
+    # Leading-theme volume shrink (top-2 leaders) — from the same cached OHLCV,
+    # no new fetch. Breadth-narrowing for leading themes stays SCAFFOLDED: it needs
+    # per-theme historical internal breadth that the snapshot does not yet persist,
+    # so it remains False and is listed in ``degraded``.
+    shrink, vol_degraded, _vol_detail = leading_theme_volume_shrink(
+        themes, frame_loader, cfg)
+    comp.leading_theme_volume_shrinking = bool(shrink and not vol_degraded)
+    if vol_degraded:
+        degraded.append("leading_theme_volume")
+    degraded.append("leading_theme_breadth_narrowing")  # scaffolded (no history)
 
     # (e) offense/defense reading (Task 2 outer ring), cache-only.
     offense_defense = None

@@ -1276,6 +1276,8 @@ def _card_snapshot_record(card: OpportunityCard, date_str: str,
 def write_daily_snapshot(cards: list, *, themes=None, macro_regime: str = "unknown",
                          horizon_bias: Optional[dict] = None,
                          fragility: Optional[dict] = None,
+                         clock_suspect: bool = False,
+                         clock_suspect_reason: str = "",
                          date_str: Optional[str] = None,
                          refreshed_at: Optional[str] = None,
                          base_dir: Optional[Path] = None) -> str:
@@ -1303,6 +1305,10 @@ def write_daily_snapshot(cards: list, *, themes=None, macro_regime: str = "unkno
             "horizon_bias": horizon_bias or {},
             "theme_momentum": theme_mom_map,
             "n_candidates": len(cards or []),
+            # WSL clock-drift defense (polish round): the refresh still writes, but
+            # a suspect system clock is flagged so mis-dated snapshots are visible.
+            "clock_suspect": bool(clock_suspect),
+            "clock_suspect_reason": clock_suspect_reason or "",
         }
         # Phase 7B Task 3 — fragility level + every component value live in the
         # _meta header (the snapshot is the memory; hysteresis reads it back).

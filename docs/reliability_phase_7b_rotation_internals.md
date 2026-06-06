@@ -1,9 +1,25 @@
 # Phase 7B — Multi-window Relative Strength, Two-Ring Rotation Engine, and Market-Internals Fragility Layer
 
-**Status**: Implemented + Codex fix round (×2) (lib + tests green). Review-only;
-not investment advice.
-**Suite**: `scripts/test_reliability_phase_7b_rotation_internals.py` — **90/90**,
-mock-only / offline. Canonical regressions all green (7A 115, stopbleed 64,
+**Status**: Implemented + Codex fix round (×2) + polish round (lib + tests green).
+Review-only; not investment advice.
+**Suite**: `scripts/test_reliability_phase_7b_rotation_internals.py` — **103/103**,
+mock-only / offline.
+
+**Polish round (post-7B):** (1) `is_adjacent_session` now returns `False` for
+`d1 == d2`, so a same-session duplicate snapshot can't extend a hysteresis chain.
+(2) The **leading-theme volume-shrink** flag (judgment call 5) is now implemented:
+`leading_theme_volume_shrink` aggregates constituent **dollar volume** (Close×Volume)
+for the top-2 leading themes — recent 10d avg vs prior 25d baseline, from the same
+cached OHLCV (no new fetch) — and fires when the ratio < `leading_theme_vol_shrink_ratio`
+(0.85); below `leading_theme_min_constituents` (5) usable constituents it stays
+degraded. **Leading-theme breadth-narrowing remains scaffolded** (needs per-theme
+historical internal breadth the snapshot doesn't yet persist) → stays `False`,
+listed in `degraded`. (3) The AST registry-completeness guard now also catches
+`missing += [...]` and `missing.extend([...])`. (4) **WSL clock-drift defense**:
+`detect_clock_drift` compares the system date to the latest cached benchmark trading
+date — earlier than it, or > `clock_drift_max_ahead_days` (7) ahead — and sets
+`clock_suspect` in the snapshot `_meta` + a Cockpit banner warning, but **never
+blocks the write**. Canonical regressions all green (7A 115, stopbleed 64,
 6c_b 47, equity_render_order 50, 6c_trading_desk 118, 6c_v3_entry_v4 47,
 6b_v3_horizon_scoring 189, theme_baskets 146, scanner_rotation_adapter 15).
 

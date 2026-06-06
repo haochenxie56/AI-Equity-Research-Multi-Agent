@@ -279,8 +279,19 @@ def _run_refresh() -> None:
                 today_str=datetime.now().strftime("%Y-%m-%d"))
             _frag_level = _fragility.level
             st.session_state["cockpit_fragility"] = _fragility.to_dict()
+            # WSL clock-drift defense — sanity-check the system date against the
+            # latest cached benchmark trading date; flag but NEVER block the write.
+            try:
+                _bench_idx = _mi._frame_date_index(_bench_frames("SPY", "1y"))
+                _clk_suspect, _clk_reason = _mi.detect_clock_drift(
+                    datetime.now().strftime("%Y-%m-%d"), _bench_idx)
+                st.session_state["cockpit_clock_suspect"] = (_clk_suspect, _clk_reason)
+            except Exception:  # noqa: BLE001
+                _clk_suspect, _clk_reason = False, ""
+                st.session_state.pop("cockpit_clock_suspect", None)
         except Exception:  # noqa: BLE001 — fail-closed; fragility simply absent
             st.session_state.pop("cockpit_fragility", None)
+            _clk_suspect, _clk_reason = False, ""
         _cards = rank_opportunities(
             _candidates, macro_regime=_regime_str(), horizon_bias=_bias,
             themes=_themes_list, rs_map=_rs_map, cpi_date=_cpi_date,
@@ -294,7 +305,9 @@ def _run_refresh() -> None:
             except Exception:  # noqa: BLE001
                 _frag_meta = None
         write_daily_snapshot(_cards, themes=_themes_list, macro_regime=_regime_str(),
-                             horizon_bias=_bias, fragility=_frag_meta)
+                             horizon_bias=_bias, fragility=_frag_meta,
+                             clock_suspect=_clk_suspect,
+                             clock_suspect_reason=_clk_reason)
         status["opportunities"] = True
     except Exception:  # noqa: BLE001 — fail-closed; Section C falls back gracefully
         pass
@@ -469,6 +482,10 @@ else:
             unsafe_allow_html=True,
         )
         st.caption(t("cockpit_hub_internals_note"))
+    # WSL clock-drift warning (polish round) — the snapshot was still written.
+    _clk = st.session_state.get("cockpit_clock_suspect")
+    if _clk and _clk[0]:
+        st.warning(f"⏱️ {t('cockpit_hub_clock_suspect')}: {_clk[1]}")
     if _bias:
         st.caption(
             f"{t('cockpit_hub_macro_bias')}: "

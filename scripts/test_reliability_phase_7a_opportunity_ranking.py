@@ -218,18 +218,43 @@ check("1.19 every registry condition classifies to its category via derive_statu
 check("1.19b registry has both categories represented",
       {mc.category for mc in _REG.values()} == {"fundamental", "trigger"})
 
-# Completeness guard: NO inline missing-condition string literal may be appended
-# to a *missing* list in order_advisor — every condition must come from the
-# registry, so a future inline addition fails this suite.
+# Completeness guard: NO inline missing-condition string literal may be added to a
+# *missing* list in order_advisor — every condition must come from the registry,
+# so a future inline addition fails this suite. Catches all three add forms:
+#   missing.append("literal")         (Call .append)
+#   missing.extend(["literal", ...])  (Call .extend with a list literal)
+#   missing += ["literal", ...]       (AugAssign Add with a list literal)
 _oa_src = open(os.path.join(_REPO_ROOT, "lib/order_advisor.py"), encoding="utf-8").read()
+
+
+def _name_has_missing(_n) -> bool:
+    return "missing" in getattr(_n, "id", "").lower()
+
+
+def _str_consts(_nodes) -> list:
+    out = []
+    for _x in _nodes:
+        if isinstance(_x, _ast.Constant) and isinstance(_x.value, str):
+            out.append(_x.value)
+    return out
+
+
 _inline_appends = []
 for _node in _ast.walk(_ast.parse(_oa_src)):
+    # missing.append("x") / missing.extend([...])
     if (isinstance(_node, _ast.Call) and isinstance(_node.func, _ast.Attribute)
-            and _node.func.attr == "append"
-            and "missing" in getattr(_node.func.value, "id", "").lower()):
-        for _arg in _node.args:
-            if isinstance(_arg, _ast.Constant) and isinstance(_arg.value, str):
-                _inline_appends.append(_arg.value)
+            and _name_has_missing(_node.func.value)):
+        if _node.func.attr == "append":
+            _inline_appends += _str_consts(_node.args)
+        elif _node.func.attr == "extend":
+            for _arg in _node.args:
+                if isinstance(_arg, (_ast.List, _ast.Tuple)):
+                    _inline_appends += _str_consts(_arg.elts)
+    # missing += ["x", ...]
+    elif (isinstance(_node, _ast.AugAssign) and isinstance(_node.op, _ast.Add)
+            and _name_has_missing(_node.target)
+            and isinstance(_node.value, (_ast.List, _ast.Tuple))):
+        _inline_appends += _str_consts(_node.value.elts)
 check("1.20 no inline missing-condition literals in order_advisor (registry-only)",
       not _inline_appends, str(_inline_appends))
 

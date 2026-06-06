@@ -1116,6 +1116,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         # Phase 7B — fragility banner + theme stage / breadth (Cockpit)
         "cockpit_hub_internals":        "市场内部结构",
         "cockpit_hub_internals_note":   "内部结构为收紧型预警，不改变市场状态判定",
+        "cockpit_hub_clock_suspect":    "系统时钟疑似异常（快照仍已写入）",
         "cockpit_hub_stage":            "轮动阶段",
         "cockpit_hub_stage_confirmed":  "广度确认",
         "cockpit_hub_stage_unconfirmed":"广度未确认",
@@ -2484,6 +2485,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         # Phase 7B — fragility banner + theme stage / breadth (Cockpit)
         "cockpit_hub_internals":        "Internals",
         "cockpit_hub_internals_note":   "Internals are a tighten-only early warning; the regime label is unchanged.",
+        "cockpit_hub_clock_suspect":    "System clock looks off (snapshot still written)",
         "cockpit_hub_stage":            "Rotation stage",
         "cockpit_hub_stage_confirmed":  "breadth-confirmed",
         "cockpit_hub_stage_unconfirmed":"unconfirmed",
