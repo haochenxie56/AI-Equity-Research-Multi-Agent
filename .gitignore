@@ -41,3 +41,12 @@ Thumbs.db
 # ── Jupyter ───────────────────────────────────
 .ipynb_checkpoints/
 *.ipynb
+
+# ── Codex local agent tooling (machine-local) ─
+.codex/
+
+# ── Stray git worktree gitlink (accidental embed, no .gitmodules) ──
+.claude/worktrees/
+
+# ── Windows "mark of the web" alternate-data-stream cruft ──
+*Zone.Identifier
