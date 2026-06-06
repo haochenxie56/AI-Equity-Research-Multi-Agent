@@ -58,7 +58,11 @@ _log = logging.getLogger("anchor_cache")
 _DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 ANCHOR_CACHE_PATH = _DATA_DIR / "anchor_cache.json"
 
-_SCHEMA_VERSION = 1
+# Schema version. Bumped to 2 by "Valuation Refactor v1" (the cache entry now
+# carries company_type + routing fields). The version guard in load_all() handles
+# migration automatically: a stale version-1 envelope loads as empty (the Cockpit
+# falls back to its prior Research-Required behavior until the cache is rewarmed).
+_SCHEMA_VERSION = 2
 
 # Default staleness window: ~5 trading days ≈ 7 calendar days. A cached anchor
 # older than this is treated as stale (the Cockpit falls back to its prior
@@ -218,6 +222,11 @@ def entry_from_app_fair_value(fv) -> dict:
         "confidence": str(g("confidence", "low") or "low"),
         "relative_basis": str(g("relative_basis", "") or ""),
         "peer_pe_basis": str(g("peer_pe_basis", "") or ""),
+        # Method-router fields (schema v2). Carried transparently for review /
+        # the Cockpit LONG enrichment; the LONG band consumer still reads only
+        # the fair_value_low/mid/high + blend_state below.
+        "company_type": str(g("company_type", "") or ""),
+        "peer_basis": str(g("peer_basis", "") or ""),
         "fair_value_low": low,
         "fair_value_mid": float(g("fair_value_mid", 0.0) or 0.0),
         "fair_value_high": float(g("fair_value_high", 0.0) or 0.0),
