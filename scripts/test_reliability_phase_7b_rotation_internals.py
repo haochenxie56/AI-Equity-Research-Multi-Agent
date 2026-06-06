@@ -1355,45 +1355,217 @@ def _parity_patches(snap_dir, earnings_cal_fn):
     return stack
 
 
+_NA = _EN["cockpit_frag_na"]
+# Earnings degrade reasons (the vocabulary that renders in the Macro degrade column).
+_EARN_REASONS = {"no_reports_in_window", "finnhub_unavailable", "partial_frame_coverage",
+                 "earnings_source_absent", "implausible_count"}
+# Canonical fragility_snapshot key set — derived from the CODE, so a field added to
+# the snapshot automatically appears here and MUST be classified below.
+_SNAP_KEYS = set(mi.fragility_snapshot(mi.FragilityReading(), "2000-01-01").keys())
+# Macro table row → trigger codes (mirrors pages/8 _render_market_internals rows).
+_TABLE_TRIGGERS = [
+    ("distribution_days_elevated", "distribution_days_high"),    # SPY
+    ("distribution_days_elevated", "distribution_days_high"),    # QQQ
+    ("breadth_weak",),                                           # >SMA20
+    (),                                                          # >SMA50
+    ("breadth_narrowing",),                                      # slope
+    ("weak_bounce",),                                            # weak_bounce
+    ("good_news_sold_elevated", "good_news_sold_high"),          # good-news-sold
+    ("leading_theme_volume_shrinking",),                         # vol
+    ("offense_defense_defensive", "offense_defense_defensive_strong"),  # offense/defense
+]
+
+
+def _dd_banner(m):
+    dd = max([x for x in (m.get("distribution_days_spy"), m.get("distribution_days_qqq"))
+              if x is not None], default=None)
+    return f"{dd}/25" if dd is not None else _NA
+
+
+def _breadth_banner(m):
+    b, p = m.get("breadth_above_sma20"), m.get("breadth_above_sma20_prev")
+    if b is None:
+        return _NA
+    if p is not None:
+        return f"{int(p*100)}%→{int(b*100)}%"
+    return f"{int(b*100)}%"
+
+
+def _gns_banner(m):
+    g, r = m.get("good_news_sold"), str(m.get("earnings_degrade_reason") or "")
+    lbl = _EN["cockpit_frag_gns"]
+    if g is not None:
+        return f"{lbl}: {g}" + (f" ({r})" if r else "")
+    return f"{lbl}: " + (f"{_NA} ({r})" if r else _NA)
+
+
+def _macro_cell(v):
+    """Mirror pages/8 _row value formatting (0 renders as 0; float → 2dp; None → n/a)."""
+    return _NA if v is None else (f"{v:.2f}" if isinstance(v, float) else str(v))
+
+
+def _od_cell(m):
+    return (f"{m.get('offense_defense_direction', '') or '—'} "
+            f"{m.get('offense_defense_magnitude', '') or ''}").strip()
+
+
+# field -> fn(meta) -> [(mode, token)] the UI MUST surface. mode ∈
+# {"banner" (substring of cockpit blob), "macro" (substring of macro blob),
+#  "cell" (EXACT cell of the macro internals table)}. fragility_triggered is
+# checked separately (✅-marker count parity). Every key here is a _meta field with
+# a rendered surface; the structural check asserts FIELD_RENDER ∪ EXCLUSIONS == all
+# snapshot fields, so a new snapshot field with no surface decision fails loudly.
+FIELD_RENDER = {
+    "fragility_level": lambda m: [("banner", str(m["fragility_level"])),
+                                  ("macro", str(m["fragility_level"]))],
+    "distribution_days_spy": lambda m: [("banner", _dd_banner(m)),
+                                        ("cell", _macro_cell(m.get("distribution_days_spy")))],
+    "distribution_days_qqq": lambda m: [("cell", _macro_cell(m.get("distribution_days_qqq")))],
+    "breadth_above_sma20": lambda m: [("banner", _breadth_banner(m)),
+                                      ("cell", _macro_cell(m.get("breadth_above_sma20")))],
+    "breadth_above_sma20_prev": lambda m: [("banner", _breadth_banner(m))],
+    "breadth_above_sma50": lambda m: [("cell", _macro_cell(m.get("breadth_above_sma50")))],
+    "breadth_slope": lambda m: [("cell", _macro_cell(m.get("breadth_slope")))],
+    "weak_bounce": lambda m: [("cell", _macro_cell(m.get("weak_bounce")))],
+    "good_news_sold": lambda m: [("banner", _gns_banner(m)),
+                                 ("cell", _macro_cell(m.get("good_news_sold")))],
+    "earnings_degrade_reason": lambda m: (
+        [("banner", _gns_banner(m))]
+        + ([("macro", str(m["earnings_degrade_reason"]))] if m.get("earnings_degrade_reason") else [])),
+    "earnings_skipped": lambda m: (
+        [("macro", f"skipped={m['earnings_skipped']}")]
+        if (m.get("earnings_skipped") and m.get("earnings_degrade_reason")) else []),
+    "leading_theme_volume_shrinking": lambda m: [
+        ("cell", _macro_cell(m.get("leading_theme_volume_shrinking")))],
+    "offense_defense_direction": lambda m: [("cell", _od_cell(m))],
+    "offense_defense_magnitude": lambda m: [("cell", _od_cell(m))],
+    "hysteresis_source": lambda m: [("macro", str(m.get("hysteresis_source") or "—"))],
+    "data_vintage": lambda m: [("macro", str(m.get("data_vintage") or "—"))],
+    "vintage_mismatch": lambda m: (
+        [("macro", _EN["mi_vintage_mismatch"])] if m.get("vintage_mismatch") else []),
+    # The degraded LIST surfaces its earnings reasons in the Macro degrade column
+    # (component degrades surface as n/a values, asserted via their own fields).
+    "fragility_degraded": lambda m: [("macro", r) for r in (m.get("fragility_degraded") or [])
+                                     if r in _EARN_REASONS],
+    # ✅ markers in the Macro table — checked via _triggered_parity, not a token.
+    "fragility_triggered": lambda m: [],
+}
+
+# Fields that intentionally have NO UI surface (each with a one-line justification).
+# The structural check forces a future snapshot field to land here or in FIELD_RENDER.
+EXCLUSIONS = {
+    "date": "snapshot record date (metadata); the trading-date surface is data_vintage",
+    "fragility_raw_level": "surfaced only as the Macro trend chart's last marker COLOUR (a plotly figure), no text token",
+    "fragility_points": "surfaced only as the Macro trend chart's last point Y (plotly figure), no text token",
+    "fragility_consecutive_raw": "internal hysteresis counter; no UI surface by design",
+    "fragility_adjacency_degraded": "folded into fragility_degraded as 'hysteresis_adjacency'; no distinct surface",
+    "rolling_window": "config echo (window length); the trend renders the series itself, length implicit",
+    "leading_theme_breadth_narrowing": "scaffolded component (always False, no history); no table row, folded into degraded",
+    "earnings_evaluated": "internal count behind good_news_sold; surfaces render good_news_sold + skipped, not evaluated",
+}
+
+
+def _collect(at):
+    """All text-renderable element values on a page (markdown/caption/warning/…) PLUS
+    every table/dataframe cell value, joined — the page's full rendered text surface."""
+    parts = []
+    for attr in ("markdown", "caption", "warning", "info", "error", "success",
+                 "header", "subheader", "title", "metric"):
+        try:
+            for el in getattr(at, attr):
+                parts.append(str(getattr(el, "value", "")))
+        except Exception:  # noqa: BLE001
+            pass
+    for attr in ("table", "dataframe"):
+        try:
+            for el in getattr(at, attr):
+                v = getattr(el, "value", None)
+                if v is None:
+                    continue
+                try:
+                    parts.append(" ".join(str(c) for c in v.columns))
+                    parts.append(" ".join(str(c) for row in v.values.tolist() for c in row))
+                except Exception:  # noqa: BLE001
+                    parts.append(str(v))
+        except Exception:  # noqa: BLE001
+            pass
+    return " ".join(parts)
+
+
+def _internals_table(at):
+    """The Macro internals component table (the st.table with the mi_triggered col)."""
+    try:
+        for el in getattr(at, "table", []):
+            v = getattr(el, "value", None)
+            try:
+                cols = list(v.columns)
+            except Exception:  # noqa: BLE001
+                continue
+            if _EN["mi_triggered"] in cols and _EN["mi_component"] in cols:
+                return v
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
+def _internals_cells(df):
+    cells = set()
+    if df is None:
+        return cells
+    try:
+        cells.update(str(c) for c in df.columns)
+        for row in df.values.tolist():
+            cells.update(str(c) for c in row)
+    except Exception:  # noqa: BLE001
+        pass
+    return cells
+
+
 def _expected_tokens(meta):
-    """The component tokens the banner MUST render, derived from _meta alone —
-    using the exact same formatting rules as pages/7 lines ~500-521."""
-    na = _EN["cockpit_frag_na"]
-    toks = []
-    toks.append(("level", str(meta.get("fragility_level", "normal"))))
-    _dd = max([x for x in (meta.get("distribution_days_spy"),
-                           meta.get("distribution_days_qqq")) if x is not None],
-              default=None)
-    toks.append(("dist", f"{_dd}/25" if _dd is not None else na))
-    _b20, _b20p = meta.get("breadth_above_sma20"), meta.get("breadth_above_sma20_prev")
-    if _b20 is None:
-        toks.append(("breadth", na))
-    elif _b20p is not None:
-        toks.append(("breadth", f"{int(_b20p*100)}%→{int(_b20*100)}%"))
-    else:
-        toks.append(("breadth", f"{int(_b20*100)}%"))
-    # Mirror the round-4 banner: reason appended whenever present, on number OR n/a.
-    _gns = meta.get("good_news_sold")
-    _r = str(meta.get("earnings_degrade_reason") or "")
-    if _gns is not None:
-        toks.append(("gns", f"{_EN['cockpit_frag_gns']}: {_gns}"
-                            + (f" ({_r})" if _r else "")))
-    else:
-        toks.append(("gns", f"{_EN['cockpit_frag_gns']}: "
-                            + (f"{na} ({_r})" if _r else na)))
-    return toks
+    """Banner-derived tokens (retained for the banner-only checks 18.4/18.6/18.10)."""
+    return [("level", str(meta.get("fragility_level", "normal"))),
+            ("dist", _dd_banner(meta)), ("breadth", _breadth_banner(meta)),
+            ("gns", _gns_banner(meta))]
 
 
 def _parity_holds(blob, meta):
-    """True iff EVERY token _meta implies is present in the rendered banner blob."""
+    """True iff EVERY banner token _meta implies is present in the rendered banner."""
     return all(tok in blob for _name, tok in _expected_tokens(meta))
 
 
+def _missing(meta, R):
+    """[(field, mode, token)] for every FIELD_RENDER surface NOT found in R's blobs —
+    empty list ⇔ full banner+macro parity against this `meta`."""
+    out = []
+    for field, fn in FIELD_RENDER.items():
+        for mode, token in fn(meta):
+            blob = {"banner": R.banner, "macro": R.macro}.get(mode)
+            ok = (token in R.cells) if mode == "cell" else (token in blob)
+            if not ok:
+                out.append((field, mode, token))
+    return out
+
+
+def _triggered_parity(meta, R):
+    """(expected_fires, actual_✅) — the Macro table ✅ count vs _meta.fragility_triggered."""
+    trig = set(meta.get("fragility_triggered") or [])
+    expected = sum(1 for keys in _TABLE_TRIGGERS if set(keys) & trig)
+    actual = None
+    if R.table is not None and _EN["mi_triggered"] in list(R.table.columns):
+        actual = sum(1 for v in R.table[_EN["mi_triggered"]].tolist() if str(v) == "✅")
+    return expected, actual
+
+
 def _run_parity(earnings_cal_fn):
-    """Drive the real refresh once; return (banner_blob, meta_dict, exception)."""
+    """Drive the REAL refresh once, then render BOTH pages from that refresh's
+    session reading. Returns a namespace with the cockpit banner blob, the Macro
+    blob + internals table/cells, the _meta the refresh wrote, and the clock-warning
+    flag — all from ONE refresh, so every surface is asserted against ONE _meta."""
     import streamlit as _stp
     _stp.page_link = lambda *a, **k: None
     from streamlit.testing.v1 import AppTest as _ATp
+    R = SimpleNamespace(banner="", macro="", cells=set(), table=None, meta={},
+                        clock_warn=False, exc="")
     _tmp = _P(_tf.mkdtemp())
     with _parity_patches(_tmp, earnings_cal_fn):
         _a = _ATp.from_file(os.path.join(_REPO_ROOT, "pages/7_Investment_Cockpit.py"),
@@ -1406,25 +1578,45 @@ def _run_parity(earnings_cal_fn):
             "horizon_bias": {"short": "cautious"}, "key_signals": [],
             "opportunity_posture": "", "data_coverage": 1.0, "signals": []}
         _a.run()
-        # Click the refresh button (the SAME entry point the user clicks).
         _btn = None
         for _b in _a.button:
             if getattr(_b, "key", "") == "cockpit_refresh_all":
                 _btn = _b
                 break
         if _btn is None:
-            return "", {}, "refresh button not found"
+            R.exc = "refresh button not found"
+            return R
         _btn.click().run()
-        _blob = " ".join(str(getattr(_m, "value", "")) for _m in _a.markdown)
-        _exc = str(list(_a.exception)) if _a.exception else ""
-        # Read the _meta the SAME refresh wrote.
+        R.banner = _collect(_a)
+        R.exc = str(list(_a.exception)) if _a.exception else ""
+        R.clock_warn = _EN["cockpit_hub_clock_suspect"] in R.banner
         _files = sorted(_tmp.glob("opportunities_*.jsonl"))
-        _meta = {}
         if _files:
-            _first = _files[-1].read_text(encoding="utf-8").splitlines()[0]
-            _meta = _json.loads(_first)
-    return _blob, _meta, _exc
+            R.meta = _json.loads(_files[-1].read_text(encoding="utf-8").splitlines()[0])
+        # Render the Macro Dashboard from the SAME refresh's session reading.
+        _cf = dict(_a.session_state["cockpit_fragility"]) \
+            if "cockpit_fragility" in _a.session_state else {}
+        _cfs = list(_a.session_state["cockpit_fragility_series"]) \
+            if "cockpit_fragility_series" in _a.session_state else []
+        _m = _ATp.from_file(os.path.join(_REPO_ROOT, "pages/8_Macro_Dashboard.py"),
+                            default_timeout=120)
+        _m.session_state["language"] = "en"
+        _m.session_state["cockpit_fragility"] = _cf
+        _m.session_state["cockpit_fragility_series"] = _cfs
+        _m.run()
+        R.macro = _collect(_m)
+        R.table = _internals_table(_m)
+        R.cells = _internals_cells(R.table)
+    return R
 
+
+# --- Structural completeness: every snapshot field is classified (loud on a new one).
+_unclassified = _SNAP_KEYS - set(FIELD_RENDER) - set(EXCLUSIONS)
+_overlap = set(FIELD_RENDER) & set(EXCLUSIONS)
+_phantom = (set(FIELD_RENDER) | set(EXCLUSIONS)) - _SNAP_KEYS
+check("18.0 every fragility_snapshot field is classified (surface or justified exclusion)",
+      not _unclassified and not _overlap and not _phantom,
+      f"unclassified={_unclassified} overlap={_overlap} phantom={_phantom}")
 
 try:
     # --- Scenario A: a SCAN-universe ticker NOT in the top-N reports + has a cached
@@ -1432,64 +1624,108 @@ try:
     _lit_cal = lambda *a, **k: [{"ticker": "SCANX",
                                  "report_date": _report_date(),
                                  "direction": "beat"}]  # noqa: E731
-    _blobA, _metaA, _excA = _run_parity(_lit_cal)
+    _RA = _run_parity(_lit_cal)
     check("18.1 real refresh wrote a fragility _meta header (lit path)",
-          bool(_metaA) and "fragility_level" in _metaA, _excA[:160])
-    check("18.2 refresh raised no exception (lit path)", _excA == "", _excA[:200])
+          bool(_RA.meta) and "fragility_level" in _RA.meta, _RA.exc[:160])
+    check("18.2 refresh raised no exception (lit path)", _RA.exc == "", _RA.exc[:200])
     check("18.3 LIVE: a non-top-N SCAN ticker (SCANX) is evaluated → number in _meta",
-          _metaA.get("good_news_sold") is not None
-          and _metaA.get("earnings_evaluated", 0) >= 1
+          _RA.meta.get("good_news_sold") is not None
+          and _RA.meta.get("earnings_evaluated", 0) >= 1
           and "SCANX" not in _TOPN  # proves it came from the scan scope, not top-N
-          and _metaA.get("earnings_degrade_reason", "") == "",
-          f"gns={_metaA.get('good_news_sold')} ev={_metaA.get('earnings_evaluated')} "
-          f"reason={_metaA.get('earnings_degrade_reason')}")
+          and _RA.meta.get("earnings_degrade_reason", "") == "",
+          f"gns={_RA.meta.get('good_news_sold')} ev={_RA.meta.get('earnings_evaluated')} "
+          f"reason={_RA.meta.get('earnings_degrade_reason')}")
     check("18.4 PARITY (lit): every _meta token is rendered on the banner",
-          _parity_holds(_blobA, _metaA),
-          str(_expected_tokens(_metaA)) + " || " + _blobA[:240])
+          _parity_holds(_RA.banner, _RA.meta),
+          str(_expected_tokens(_RA.meta)) + " || " + _RA.banner[:240])
+    # FULL cross-page parity: every surfaced _meta field appears on its surface.
+    _missA = _missing(_RA.meta, _RA)
+    check("18.11 FULL PARITY (lit): every surfaced _meta field renders (banner+macro)",
+          _missA == [], f"missing={_missA[:8]}")
+    _expF, _actF = _triggered_parity(_RA.meta, _RA)
+    check("18.12 triggered ✅-marker parity (Macro table == _meta.fragility_triggered)",
+          _actF is not None and _expF == _actF,
+          f"expected_fires={_expF} actual_✅={_actF} trig={_RA.meta.get('fragility_triggered')}")
+    check("18.13 clock-warning parity (banner ⟺ _meta.clock_suspect)",
+          _RA.clock_warn == bool(_RA.meta.get("clock_suspect")),
+          f"banner_warn={_RA.clock_warn} meta={_RA.meta.get('clock_suspect')}")
+    check("18.14 vintage-mismatch parity (Macro warning ⟺ _meta.vintage_mismatch)",
+          (_EN["mi_vintage_mismatch"] in _RA.macro) == bool(_RA.meta.get("vintage_mismatch")),
+          f"meta={_RA.meta.get('vintage_mismatch')}")
+    # Spot-confirm the new fields actually rendered (not vacuously absent).
+    check("18.15 Macro surfaces hysteresis_source + data_vintage from _meta",
+          str(_RA.meta.get("hysteresis_source")) in _RA.macro
+          and str(_RA.meta.get("data_vintage")) in _RA.macro,
+          f"src={_RA.meta.get('hysteresis_source')} vintage={_RA.meta.get('data_vintage')} "
+          + _RA.macro[:160])
 
     # --- Scenario B: earnings DARK (empty calendar) → no_reports_in_window ---
     _dark_cal = lambda *a, **k: []  # call OK, nothing in window → no_reports_in_window
-    _blobB, _metaB, _excB = _run_parity(_dark_cal)
+    _RB = _run_parity(_dark_cal)
     check("18.5 LIVE: empty calendar degrades to no_reports_in_window in _meta",
-          _metaB.get("good_news_sold") is None
-          and _metaB.get("earnings_degrade_reason") == "no_reports_in_window",
-          f"gns={_metaB.get('good_news_sold')} reason={_metaB.get('earnings_degrade_reason')}")
+          _RB.meta.get("good_news_sold") is None
+          and _RB.meta.get("earnings_degrade_reason") == "no_reports_in_window",
+          f"gns={_RB.meta.get('good_news_sold')} reason={_RB.meta.get('earnings_degrade_reason')}")
     check("18.6 PARITY (dark): banner shows 'n/a (no_reports_in_window)' = _meta",
-          _parity_holds(_blobB, _metaB)
-          and "good-news-sold: n/a (no_reports_in_window)" in _blobB,
-          _blobB[:240])
+          _parity_holds(_RB.banner, _RB.meta)
+          and "good-news-sold: n/a (no_reports_in_window)" in _RB.banner,
+          _RB.banner[:240])
+    _missB = _missing(_RB.meta, _RB)
+    check("18.16 FULL PARITY (dark): degrade reason renders on BOTH banner + Macro table",
+          _missB == []
+          and "no_reports_in_window" in _RB.macro,  # the Macro degrade column
+          f"missing={_missB[:8]}")
 
-    # --- Scenario C: a scan ticker reports but its frame is NOT cache-resident →
-    # skipped+counted → partial_frame_coverage (distinct from no_reports_in_window). ---
+    # --- Scenario C: scan ticker reports, frame NOT cache-resident → partial_frame_coverage ---
     _partial_cal = lambda *a, **k: [{"ticker": "NOFRAME",
                                      "report_date": _report_date(),
                                      "direction": "beat"}]  # noqa: E731
-    _blobC, _metaC, _excC = _run_parity(_partial_cal)
+    _RC = _run_parity(_partial_cal)
     check("18.9 LIVE: in-window report without a cached frame → partial_frame_coverage",
-          _metaC.get("good_news_sold") is None
-          and _metaC.get("earnings_skipped", 0) >= 1
-          and _metaC.get("earnings_degrade_reason") == "partial_frame_coverage",
-          f"gns={_metaC.get('good_news_sold')} skipped={_metaC.get('earnings_skipped')} "
-          f"reason={_metaC.get('earnings_degrade_reason')}")
+          _RC.meta.get("good_news_sold") is None
+          and _RC.meta.get("earnings_skipped", 0) >= 1
+          and _RC.meta.get("earnings_degrade_reason") == "partial_frame_coverage",
+          f"gns={_RC.meta.get('good_news_sold')} skipped={_RC.meta.get('earnings_skipped')} "
+          f"reason={_RC.meta.get('earnings_degrade_reason')}")
     check("18.10 PARITY (partial): banner shows 'n/a (partial_frame_coverage)' = _meta",
-          _parity_holds(_blobC, _metaC)
-          and "good-news-sold: n/a (partial_frame_coverage)" in _blobC,
-          _blobC[:240])
+          _parity_holds(_RC.banner, _RC.meta)
+          and "good-news-sold: n/a (partial_frame_coverage)" in _RC.banner,
+          _RC.banner[:240])
+    _missC = _missing(_RC.meta, _RC)
+    check("18.17 FULL PARITY (partial): Macro surfaces reason + 'skipped=N' note",
+          _missC == [] and "skipped=" in _RC.macro,
+          f"missing={_missC[:8]} skipped={_RC.meta.get('earnings_skipped')}")
 
-    # --- The parity check FAILS when banner and _meta diverge (the guarantee) ---
-    # A _meta whose level/components were altered (the nested/vintage/dead-arg class
-    # of bug) is NOT what the banner rendered → _parity_holds must be False.
-    _diverged_level = {**_metaB, "fragility_level":
-                       ("high" if _metaB.get("fragility_level") != "high" else "normal")}
+    # --- Negative divergence controls for the newly covered classes (#3): mutate a
+    # _meta field POST-refresh (blobs unchanged) → the full parity MUST now fail. ---
+    _badV = {**_RA.meta, "data_vintage": "1999-12-31"}
+    check("18.18 parity FAILS on diverged data_vintage",
+          any(f == "data_vintage" for f, _mo, _tk in _missing(_badV, _RA)))
+    _badH = {**_RA.meta, "hysteresis_source":
+             ("snapshot" if _RA.meta.get("hysteresis_source") != "snapshot" else "rolling")}
+    check("18.19 parity FAILS on diverged hysteresis_source",
+          any(f == "hysteresis_source" for f, _mo, _tk in _missing(_badH, _RA)))
+    # Mutate one degraded-list entry (the earnings reason) to a different known reason
+    # the Macro surface does NOT show → fragility_degraded parity must fail.
+    _deg = list(_RB.meta.get("fragility_degraded") or [])
+    _deg = ["finnhub_unavailable" if d == "no_reports_in_window" else d for d in _deg]
+    _badD = {**_RB.meta, "fragility_degraded": _deg}
+    check("18.20 parity FAILS on a diverged fragility_degraded entry",
+          any(f == "fragility_degraded" for f, _mo, _tk in _missing(_badD, _RB)),
+          f"degraded={_deg}")
+
+    # --- Existing banner-only divergence controls (retained). ---
+    _diverged_level = {**_RB.meta, "fragility_level":
+                       ("high" if _RB.meta.get("fragility_level") != "high" else "normal")}
     check("18.7 parity FAILS on a diverged level (level mismatch caught)",
-          not _parity_holds(_blobB, _diverged_level))
-    _diverged_gns = {**_metaA, "good_news_sold": (_metaA.get("good_news_sold") or 0) + 7}
+          not _parity_holds(_RB.banner, _diverged_level))
+    _diverged_gns = {**_RA.meta, "good_news_sold": (_RA.meta.get("good_news_sold") or 0) + 7}
     check("18.8 parity FAILS on a diverged component value (number mismatch caught)",
-          not _parity_holds(_blobA, _diverged_gns))
+          not _parity_holds(_RA.banner, _diverged_gns))
 except Exception as _e:  # noqa: BLE001 — AppTest unavailable counts as a failure
     import traceback as _tb_p
     check("18.1 banner↔_meta parity harness ran", False,
-          f"{_e} :: {_tb_p.format_exc()[-300:]}")
+          f"{_e} :: {_tb_p.format_exc()[-400:]}")
 
 
 # ---------------------------------------------------------------------------
