@@ -219,16 +219,100 @@ def add_all_indicators(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
+# Swing support / resistance + candlestick (pure pandas/code; no LLM)
+# ---------------------------------------------------------------------------
+
+def _nearest_swing_levels(df: pd.DataFrame, price: float, window: int = 20) -> tuple:
+    """Return ``(nearest_support, nearest_resistance)`` over the last ``window`` bars.
+
+    * ``nearest_support`` — the LARGEST swing low strictly *below* ``price`` (a bar
+      whose Low is the minimum of its ±2-bar neighborhood), or ``None`` if none.
+    * ``nearest_resistance`` — the SMALLEST swing high strictly *above* ``price``,
+      or ``None`` if none.
+
+    Fail-closed -> ``(None, None)``.
+    """
+    try:
+        recent = df.tail(max(window, 5))
+        lows = [float(x) for x in recent["Low"].values]
+        highs = [float(x) for x in recent["High"].values]
+        n = len(lows)
+        swing_lows: list = []
+        swing_highs: list = []
+        for i in range(2, n - 2):
+            if lows[i] == min(lows[i - 2 : i + 3]):
+                swing_lows.append(lows[i])
+            if highs[i] == max(highs[i - 2 : i + 3]):
+                swing_highs.append(highs[i])
+        below = [s for s in swing_lows if s < price]
+        above = [r for r in swing_highs if r > price]
+        nearest_support = round(max(below), 2) if below else None
+        nearest_resistance = round(min(above), 2) if above else None
+        return nearest_support, nearest_resistance
+    except Exception:  # noqa: BLE001 — fail-closed
+        return None, None
+
+
+def candlestick_pattern(df: pd.DataFrame) -> str:
+    """Detect a single candlestick pattern from the most-recent (up to 2) candles.
+
+    Precedence: doji -> engulfing -> hammer/shooting_star -> "none". Mirrors the
+    detector documented in ``lib/order_advisor._candlestick_pattern``; kept here so
+    ``snapshot()`` can expose a ``candlestick_pattern`` field. Fail-closed -> "none".
+    """
+    try:
+        if len(df) < 2:
+            return "none"
+        o = float(df["Open"].iloc[-1])
+        h = float(df["High"].iloc[-1])
+        l = float(df["Low"].iloc[-1])
+        c = float(df["Close"].iloc[-1])
+        po = float(df["Open"].iloc[-2])
+        pc = float(df["Close"].iloc[-2])
+        rng = h - l
+        if rng <= 0:
+            return "none"
+        body = abs(c - o)
+        if body <= 0.1 * rng:
+            return "doji"
+        prev_red, prev_green = pc < po, pc > po
+        cur_green, cur_red = c > o, c < o
+        if prev_red and cur_green and o <= pc and c >= po:
+            return "bullish_engulfing"
+        if prev_green and cur_red and o >= pc and c <= po:
+            return "bearish_engulfing"
+        upper_shadow = h - max(o, c)
+        lower_shadow = min(o, c) - l
+        if lower_shadow >= 2 * body and upper_shadow <= body and min(o, c) >= l + 0.5 * rng:
+            return "hammer"
+        if upper_shadow >= 2 * body and lower_shadow <= body and max(o, c) <= h - 0.5 * rng:
+            return "shooting_star"
+        return "none"
+    except Exception:  # noqa: BLE001 — fail-closed
+        return "none"
+
+
+# ---------------------------------------------------------------------------
 # Utility: latest readings snapshot (for report generation)
 # ---------------------------------------------------------------------------
 
 def snapshot(df: pd.DataFrame) -> dict:
-    """Return the most-recent indicator values as a plain dict."""
+    """Return the most-recent indicator values as a plain dict.
+
+    Includes the moving-average set (EMA_10 / EMA_20 / SMA_20 / SMA_50 / SMA_200),
+    momentum / volatility / volume readings, the nearest swing support/resistance
+    over the last 20 bars, and the most-recent candlestick pattern — all computed
+    deterministically here (no LLM). ``nearest_support`` / ``nearest_resistance``
+    are ``None`` when no qualifying swing level exists.
+    """
     df    = add_all_indicators(df)
     last  = df.iloc[-1]
     price = last["Close"]
+    nearest_support, nearest_resistance = _nearest_swing_levels(df, float(price), 20)
     return {
         "price":            round(price, 2),
+        "EMA_10":           round(last.get("EMA_10",        float("nan")), 2),
+        "EMA_20":           round(last.get("EMA_20",        float("nan")), 2),
         "SMA_20":           round(last.get("SMA_20",        float("nan")), 2),
         "SMA_50":           round(last.get("SMA_50",        float("nan")), 2),
         "SMA_200":          round(last.get("SMA_200",       float("nan")), 2),
@@ -242,4 +326,8 @@ def snapshot(df: pd.DataFrame) -> dict:
         "52w_high":         round(df["Close"].tail(252).max(), 2),
         "52w_low":          round(df["Close"].tail(252).min(), 2),
         "pct_from_52w_high":round((price / df["Close"].tail(252).max() - 1) * 100, 1),
+        # --- Entry Strategy v3 additions (swing levels + candlestick) ---------
+        "nearest_support":    nearest_support,
+        "nearest_resistance": nearest_resistance,
+        "candlestick_pattern": candlestick_pattern(df),
     }

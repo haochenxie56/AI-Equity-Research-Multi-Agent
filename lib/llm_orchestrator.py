@@ -11,9 +11,12 @@ All functions accept `lang` ("en" | "zh") for bilingual support.
 
 import os
 import json
+import logging
 import re
 
 _MODEL = "claude-sonnet-4-6"
+
+_log = logging.getLogger("llm_orchestrator")
 
 # Valid GICS sector names used by compute_sector_scores()
 _GICS_SECTORS = [
@@ -117,6 +120,48 @@ def _fallback(step: str, err: Exception) -> dict:
         "key_metrics": {},
         "error": str(err),
     }
+
+
+# ── Bilingual normaliser (LLM emits *_en + *_zh directly; no deep-translator) ──
+
+def _bilingualize(result: dict, text_fields: list) -> dict:
+    """Normalise an LLM result so every prose field has ``{f}_en`` / ``{f}_zh``.
+
+    The prompts now ask the model to emit BOTH ``{f}_en`` (English original) and
+    ``{f}_zh`` (professional-finance Chinese) in ONE call, so no Google-Translate
+    round-trip is needed. Fail-closed fallback per field: a missing/blank ``_zh``
+    falls back to ``_en``; a missing/blank ``_en`` falls back to the plain ``{f}``
+    value (older/degraded responses); if all are blank the field is left as "".
+    The plain ``{f}`` is also set to the English canonical so any legacy consumer
+    (e.g. ``synthesize_sector_analysis``) keeps working. Pure in-process; never
+    raises.
+    """
+    if not isinstance(result, dict):
+        return result
+    out = dict(result)
+
+    def _s(v):
+        return v if isinstance(v, str) and v.strip() and v != "N/A" else None
+
+    for f in text_fields:
+        en = _s(out.get(f"{f}_en"))
+        zh = _s(out.get(f"{f}_zh"))
+        base = _s(out.get(f))
+        canonical_en = en or base or ""
+        canonical_zh = zh or en or base or ""
+        out[f"{f}_en"] = canonical_en
+        out[f"{f}_zh"] = canonical_zh
+        if canonical_en:
+            out[f] = canonical_en
+    return out
+
+
+def _bilingualize_list(items, text_fields: list) -> list:
+    """Apply :func:`_bilingualize` to each dict in a list (e.g. selected stocks)."""
+    if not isinstance(items, list):
+        return items
+    return [_bilingualize(it, text_fields) if isinstance(it, dict) else it
+            for it in items]
 
 
 def _llm_json_call(client, max_tokens: int, system: str, user: str) -> dict:
@@ -250,75 +295,156 @@ def analyze_sector_full(data: dict, lang: str = "en") -> dict:
             f"{s}: [{', '.join(v)}]" for s, v in _SUBSECTORS_BY_SECTOR.items() if v
         )
 
-        if lang == "zh":
-            system = (
-                "你是美股行业配置专家。以下是六个维度的量化数据，"
-                "请按六个子章节结构输出深度分析，每个子章节2-3句，最后给出板块选择决策。\n"
-                "输出纯JSON（不含markdown），字段：\n"
-                '  "macro":              宏观环境分析（2-3句中文），\n'
-                '  "rotation":           轮动信号分析（2-3句中文），\n'
-                '  "momentum":           板块动量对比（2-3句中文），\n'
-                '  "etf_trend":          ETF走势对比（2-3句中文），\n'
-                '  "volume_flow":        资金流入信号（2-3句中文），\n'
-                '  "subsector":          子板块分析（2-3句中文），\n'
-                '  "decision":           选定GICS板块（必须在有效列表中），\n'
-                '  "subsector_decision": 选定子板块（从提示列表选；无则null），\n'
-                '  "reasoning":          综合决策逻辑（1句），\n'
-                '  "summary":            一句话摘要'
-            )
-            user = (
-                f"【宏观指标】\n{macro_text}\n\n"
-                f"【轮动阶段】\n{phase_text}\n\n"
-                f"【板块动量对比（三窗口）】\n{momentum_text}\n\n"
-                f"【ETF走势 vs SPY】\n{etf_text}\n\n"
-                f"【近5日资金量比】\n{volume_text}\n\n"
-                f"【子板块评分】\n{subsector_text}\n\n"
-                f"有效GICS板块：{_GICS_SECTORS}\n"
-                f"可选子板块：{sub_hint}\n\n"
-                "请生成六维度分析报告并输出JSON。"
-            )
-        else:
-            system = (
-                "You are a US equity sector rotation expert. Below are 6 dimensions of "
-                "quantitative data. Produce a structured analysis with 6 sub-sections "
-                "(2-3 sentences each), then give a sector selection decision.\n"
-                "Output pure JSON (no markdown), fields:\n"
-                '  "macro":              macro environment (2-3 sentences),\n'
-                '  "rotation":           rotation signal (2-3 sentences),\n'
-                '  "momentum":           sector momentum comparison (2-3 sentences),\n'
-                '  "etf_trend":          ETF trend vs SPY (2-3 sentences),\n'
-                '  "volume_flow":        volume flow signal (2-3 sentences),\n'
-                '  "subsector":          subsector analysis (2-3 sentences),\n'
-                '  "decision":           selected GICS sector (must be from valid list),\n'
-                '  "subsector_decision": selected subsector (from hint list; null if none),\n'
-                '  "reasoning":          one-sentence combined rationale,\n'
-                '  "summary":            one-line summary'
-            )
-            user = (
-                f"[Macro indicators]\n{macro_text}\n\n"
-                f"[Rotation phase]\n{phase_text}\n\n"
-                f"[Sector momentum — 3 windows]\n{momentum_text}\n\n"
-                f"[ETF returns vs SPY]\n{etf_text}\n\n"
-                f"[Volume flow — last 5D avg vol ratio]\n{volume_text}\n\n"
-                f"[Subsector scores]\n{subsector_text}\n\n"
-                f"Valid GICS sectors: {_GICS_SECTORS}\n"
-                f"Available subsectors: {sub_hint}\n\n"
-                "Generate the 6-dimension analysis report and output JSON."
-            )
+        # Single bilingual call: the model emits BOTH languages per prose field.
+        system = (
+            "You are a US equity sector rotation expert. Below are 6 dimensions of "
+            "quantitative data. Produce a structured analysis with 6 sub-sections "
+            "(2-3 sentences each), then give a sector selection decision.\n"
+            "Output pure JSON (no markdown). For EVERY prose field you MUST output "
+            "BOTH an English version ('<field>_en') and a Chinese version "
+            "('<field>_zh'). The Chinese MUST use professional finance / investment "
+            "research terminology — NOT a literal machine translation. Fields:\n"
+            '  "macro_en"/"macro_zh":             macro environment (2-3 sentences),\n'
+            '  "rotation_en"/"rotation_zh":       rotation signal (2-3 sentences),\n'
+            '  "momentum_en"/"momentum_zh":       sector momentum comparison (2-3 sentences),\n'
+            '  "etf_trend_en"/"etf_trend_zh":     ETF trend vs SPY (2-3 sentences),\n'
+            '  "volume_flow_en"/"volume_flow_zh": volume flow signal (2-3 sentences),\n'
+            '  "subsector_en"/"subsector_zh":     subsector analysis (2-3 sentences),\n'
+            '  "reasoning_en"/"reasoning_zh":     one-sentence combined rationale,\n'
+            '  "summary_en"/"summary_zh":         one-line summary,\n'
+            '  "decision":           selected GICS sector (English; must be from valid list),\n'
+            '  "subsector_decision": selected subsector (English; from hint list; null if none)'
+        )
+        user = (
+            f"[Macro indicators]\n{macro_text}\n\n"
+            f"[Rotation phase]\n{phase_text}\n\n"
+            f"[Sector momentum — 3 windows]\n{momentum_text}\n\n"
+            f"[ETF returns vs SPY]\n{etf_text}\n\n"
+            f"[Volume flow — last 5D avg vol ratio]\n{volume_text}\n\n"
+            f"[Subsector scores]\n{subsector_text}\n\n"
+            f"Valid GICS sectors: {_GICS_SECTORS}\n"
+            f"Available subsectors: {sub_hint}\n\n"
+            "Generate the 6-dimension bilingual analysis report and output JSON."
+        )
 
-        result = _llm_json_call(client, 2000, system, user)
-        try:
-            from translator import add_bilingual
-            result = add_bilingual(result, lang, [
-                "macro", "rotation", "momentum", "etf_trend",
-                "volume_flow", "subsector", "reasoning", "summary",
-            ])
-        except Exception:
-            pass
-        return result
+        result = _llm_json_call(client, 3000, system, user)
+        return _bilingualize(result, [
+            "macro", "rotation", "momentum", "etf_trend",
+            "volume_flow", "subsector", "reasoning", "summary",
+        ])
 
     except Exception as e:
         return _fallback("sector_full", e)
+
+
+# ── Cross-GICS Theme Basket interpretation ───────────────────────────────────
+
+def analyze_theme_basket(theme_key: str, momentum_result, macro_regime,
+                         lang: str = "en") -> dict:
+    """LLM interpretation of one cross-GICS theme basket.
+
+    Mirrors analyze_sector_full(): deterministic momentum numbers are computed
+    by lib/theme_baskets.py; this call only *interprets* them. It never invents
+    returns or prices.
+
+    Args:
+      theme_key:        THEME_BASKETS key (e.g. "model_training").
+      momentum_result:  ThemeMomentumResult dataclass OR a dict with the same
+                        fields (label_en/label_zh, etf, constituents,
+                        return_1m/return_3m/return_6m, momentum_score,
+                        data_source).
+      macro_regime:     current macro regime — a str, or a MacroRegimeResult /
+                        dict (regime/confidence/horizon_bias/...).
+      lang:             "en" | "zh".
+
+    Returns dict with keys:
+      macro_alignment, narrative_stage ("early"|"growing"|"mature"|"cooling"),
+      key_catalysts, risk_factors, horizon_bias, summary.
+    Falls back gracefully on any failure.
+    """
+    try:
+        client = _get_client()
+
+        def _g(obj, key, default=None):
+            if isinstance(obj, dict):
+                return obj.get(key, default)
+            return getattr(obj, key, default)
+
+        label_en   = _g(momentum_result, "label_en", theme_key)
+        label_zh   = _g(momentum_result, "label_zh", label_en)
+        label      = label_zh if lang == "zh" else label_en
+        etf        = _g(momentum_result, "etf")
+        consts     = _g(momentum_result, "constituents", []) or []
+        r1m        = _g(momentum_result, "return_1m")
+        r3m        = _g(momentum_result, "return_3m")
+        r6m        = _g(momentum_result, "return_6m")
+        mscore     = _g(momentum_result, "momentum_score")
+        data_src   = _g(momentum_result, "data_source", "fixture")
+
+        # Normalise the macro regime into a short readable string.
+        if isinstance(macro_regime, str):
+            regime_text = macro_regime
+        else:
+            _reg  = _g(macro_regime, "regime", "unknown")
+            _conf = _g(macro_regime, "confidence")
+            _bias = _g(macro_regime, "horizon_bias")
+            regime_text = str(_reg)
+            if _conf is not None:
+                regime_text += f" (confidence={_conf}"
+                regime_text += f", horizon_bias={_bias})" if _bias else ")"
+
+        def _ret(v):
+            return f"{v:+.1f}%" if isinstance(v, (int, float)) else "N/A"
+
+        mscore_text = f"{mscore:.2f}" if isinstance(mscore, (int, float)) else "N/A"
+
+        src_label = {
+            "etf": f"ETF {etf} price returns",
+            "equal_weight": "equal-weight average of constituents",
+            "fixture": "fixture fallback (no live data)",
+        }.get(data_src, data_src)
+
+        basket_text = (
+            f"  Theme: {label}\n"
+            f"  ETF proxy: {etf or 'none (equal-weight basket)'}\n"
+            f"  Constituents: {', '.join(consts) if consts else 'N/A'}\n"
+            f"  1M return: {_ret(r1m)}\n"
+            f"  3M return: {_ret(r3m)}\n"
+            f"  6M return: {_ret(r6m)}\n"
+            f"  Momentum score (0-1 percentile): {mscore_text}\n"
+            f"  Data source: {src_label}"
+        )
+
+        # Single bilingual call: the model emits BOTH languages per prose field.
+        system = (
+            "You are a US equity thematic strategy expert. Below is quantitative "
+            "momentum data for one cross-GICS investment theme plus the current "
+            "macro environment. Produce a structured thematic assessment.\n"
+            "Output pure JSON (no markdown). For EVERY prose field you MUST output "
+            "BOTH an English version ('<field>_en') and a Chinese version "
+            "('<field>_zh'). The Chinese MUST use professional finance / investment "
+            "research terminology — NOT a literal machine translation. Fields:\n"
+            '  "macro_alignment_en"/"macro_alignment_zh": how this theme fits the current macro regime (2-3 sentences),\n'
+            '  "narrative_stage": one of "early"|"growing"|"mature"|"cooling" (English enum, single value),\n'
+            '  "key_catalysts_en"/"key_catalysts_zh":   what is driving this theme right now (2-3 sentences),\n'
+            '  "risk_factors_en"/"risk_factors_zh":     what could derail this theme (2-3 sentences),\n'
+            '  "horizon_bias_en"/"horizon_bias_zh":     short/mid/long horizon suitability with rationale,\n'
+            '  "summary_en"/"summary_zh":               one-line summary'
+        )
+        user = (
+            f"[Theme momentum data]\n{basket_text}\n\n"
+            f"[Current macro regime]\n  {regime_text}\n\n"
+            "Generate the bilingual thematic assessment and output JSON."
+        )
+
+        result = _llm_json_call(client, 1500, system, user)
+        return _bilingualize(result, [
+            "macro_alignment", "key_catalysts", "risk_factors",
+            "horizon_bias", "summary",
+        ])
+
+    except Exception as e:
+        return _fallback("theme_basket", e)
 
 
 # ── Step 1: Sector Analysis (legacy fallback version) ────────────────────────
@@ -453,59 +579,39 @@ def analyze_scanner_multi(strategy_results: dict, sector_ctx: dict,
             strat_sections.append("\n".join(lines))
         scan_text = "\n".join(strat_sections) or "  No hits across all strategies"
 
-        if lang == "zh":
-            system = (
-                "你是美股选股专家。以下是四种策略各自筛出的候选股，"
-                "请跨策略综合评估，选出1-5支最优标的。\n"
-                "评估维度：技术面强度、基本面质量、策略确认度（多策略同时命中加分）、"
-                "市值流动性、板块匹配度。\n"
-                "输出纯JSON，字段：\n"
-                '  "selected": [\n'
-                '    {"ticker":"NVDA","strategy":"Momentum","confidence":"High","reasoning":"..."}\n'
-                '    ... (最多5支)\n'
-                '  ],\n'
-                '  "decision":  最强1支ticker（大写，作为下一步深度研究输入），\n'
-                '  "runner_up": 次选ticker（可为空字符串），\n'
-                '  "reasoning": 综合选股逻辑（1-2句，中文），\n'
-                '  "summary":   一句话摘要（含入选股数量和最强标的，中文）'
-            )
-            user = (
-                f"板块背景：{sector_name} — {sector_reason}\n\n"
-                f"四策略扫描结果：\n{scan_text}\n\n"
-                f"总命中：{total_hits}支。请选出最优1-5支，输出JSON。"
-            )
-        else:
-            system = (
-                "You are a US equity stock selection expert. Below are candidates from "
-                "four different strategies. Select 1-5 best stocks across strategies.\n"
-                "Evaluation criteria: technical strength, fundamental quality, "
-                "strategy confirmation (bonus for multi-strategy hits), market cap / "
-                "liquidity, sector fit.\n"
-                "Output pure JSON, fields:\n"
-                '  "selected": [\n'
-                '    {"ticker":"NVDA","strategy":"Momentum","confidence":"High","reasoning":"..."}\n'
-                '    ... (up to 5 stocks)\n'
-                '  ],\n'
-                '  "decision":  top pick ticker (uppercase, used as deep-dive input),\n'
-                '  "runner_up": second-choice ticker (empty string if none),\n'
-                '  "reasoning": one-paragraph cross-strategy rationale,\n'
-                '  "summary":   one-line summary (include count and top pick)'
-            )
-            user = (
-                f"Sector context: {sector_name} — {sector_reason}\n\n"
-                f"Four-strategy scan results:\n{scan_text}\n\n"
-                f"Total hits: {total_hits}. Select best 1-5 stocks and output JSON."
-            )
+        # Single bilingual call: the model emits BOTH languages per prose field
+        # (including each selected stock's reasoning).
+        system = (
+            "You are a US equity stock selection expert. Below are candidates from "
+            "four different strategies. Select 1-5 best stocks across strategies.\n"
+            "Evaluation criteria: technical strength, fundamental quality, "
+            "strategy confirmation (bonus for multi-strategy hits), market cap / "
+            "liquidity, sector fit.\n"
+            "Output pure JSON. For EVERY prose field you MUST output BOTH an English "
+            "version ('<field>_en') and a Chinese version ('<field>_zh'). The Chinese "
+            "MUST use professional finance / investment research terminology — NOT a "
+            "literal machine translation. Fields:\n"
+            '  "selected": [\n'
+            '    {"ticker":"NVDA","strategy":"Momentum","confidence":"High",\n'
+            '     "reasoning_en":"...","reasoning_zh":"..."}\n'
+            '    ... (up to 5 stocks; ticker/strategy/confidence stay English)\n'
+            '  ],\n'
+            '  "decision":  top pick ticker (uppercase English, used as deep-dive input),\n'
+            '  "runner_up": second-choice ticker (uppercase English; empty string if none),\n'
+            '  "reasoning_en"/"reasoning_zh": one-paragraph cross-strategy rationale,\n'
+            '  "summary_en"/"summary_zh":     one-line summary (include count and top pick)'
+        )
+        user = (
+            f"Sector context: {sector_name} — {sector_reason}\n\n"
+            f"Four-strategy scan results:\n{scan_text}\n\n"
+            f"Total hits: {total_hits}. Select best 1-5 stocks and output bilingual JSON."
+        )
 
-        result = _llm_json_call(client, 2000, system, user)
-        try:
-            from translator import add_bilingual, add_bilingual_list
-            result = add_bilingual(result, lang, ["reasoning", "summary"])
-            selected = result.get("selected") or []
-            if selected:
-                result["selected"] = add_bilingual_list(selected, lang, ["reasoning"])
-        except Exception:
-            pass
+        result = _llm_json_call(client, 3000, system, user)
+        result = _bilingualize(result, ["reasoning", "summary"])
+        selected = result.get("selected") or []
+        if selected:
+            result["selected"] = _bilingualize_list(selected, ["reasoning"])
         return result
 
     except Exception as e:
@@ -932,3 +1038,257 @@ def synthesize_report(state: dict, lang: str = "en") -> dict:
 
 # translate_research_fields() has been removed.
 # Use translator.add_bilingual() / translator.add_bilingual_list() instead.
+
+
+# ── Phase 6C-B: Equity fair-value bull/bear/risk debate ──────────────────────
+
+_DEBATE_TEXT_FIELDS = ("bull_case", "bear_case", "risk_factors", "synthesis")
+_DEBATE_ACTIONS = ("buy", "hold", "avoid", "wait")
+
+
+def _debate_fallback(low: float, high: float, reason: str = "") -> dict:
+    """Deterministic, code-only fallback (no LLM). Endorses the app low/high band.
+
+    ``reason`` is surfaced (both languages) so the page can tell the user WHY the
+    debate did not run instead of showing blank prose. The result carries
+    ``debate_status="fallback"`` and ``debate_error=<reason>``.
+    """
+    why = (reason or "AI debate unavailable").strip()
+    msg_en = (
+        f"AI debate did not run ({why}). Showing the app-computed fair value "
+        "range only — not an AI-endorsed view."
+    )
+    msg_zh = (
+        f"AI 辩论未运行（{why}）。仅展示应用计算的合理估值区间，非 AI 认可结论。"
+    )
+    out = {}
+    for f in _DEBATE_TEXT_FIELDS:
+        out[f"{f}_en"] = msg_en
+        out[f"{f}_zh"] = msg_zh
+    out["endorsed_fair_value_low"] = round(float(low), 2)
+    out["endorsed_fair_value_high"] = round(float(high), 2)
+    out["analyst_action"] = "hold"
+    out["debate_status"] = "fallback"
+    out["debate_error"] = why
+    return out
+
+
+def _extract_debate_fields(text: str):
+    """Last-resort field-by-field regex extraction from a possibly truncated /
+    malformed debate JSON string. Returns a dict if at least ``bull_case_en`` is
+    found, else ``None`` (survives a missing closing brace / output truncation)."""
+    if not text:
+        return None
+    out: dict = {}
+
+    def _grab(key: str):
+        m = re.search(r'"%s"\s*:\s*"((?:[^"\\]|\\.)*)"' % re.escape(key), text, re.S)
+        if not m:
+            return None
+        val = (m.group(1)
+               .replace('\\"', '"').replace("\\n", " ")
+               .replace("\\t", " ").replace("\\\\", "\\"))
+        return val.strip()
+
+    for f in _DEBATE_TEXT_FIELDS:
+        en = _grab(f"{f}_en")
+        zh = _grab(f"{f}_zh")
+        if en:
+            out[f"{f}_en"] = en
+        if zh:
+            out[f"{f}_zh"] = zh
+    for key in ("endorsed_fair_value_low", "endorsed_fair_value_high"):
+        m = re.search(r'"%s"\s*:\s*(-?\d+(?:\.\d+)?)' % key, text)
+        if m:
+            try:
+                out[key] = float(m.group(1))
+            except ValueError:
+                pass
+    m = re.search(r'"analyst_action"\s*:\s*"(\w+)"', text)
+    if m:
+        out["analyst_action"] = m.group(1)
+    return out if out.get("bull_case_en") else None
+
+
+def _parse_debate_response(text: str):
+    """Lenient debate-JSON parser. Strategy chain: (1) the standard parser
+    (markdown-fence strip + first decodable object), (2) the first ``{...}`` block,
+    (3) field-by-field regex extraction. Returns a dict with ``bull_case_en`` or
+    ``None``."""
+    if not text:
+        return None
+    parsed = _parse_json(text)  # strips fences, scans for first JSON object
+    if isinstance(parsed, dict) and parsed.get("bull_case_en"):
+        return parsed
+    m = re.search(r"\{.*\}", text, re.S)
+    if m:
+        try:
+            obj = json.loads(m.group(0))
+            if isinstance(obj, dict) and obj.get("bull_case_en"):
+                return obj
+        except Exception:  # noqa: BLE001 — fall through to regex extraction
+            pass
+    return _extract_debate_fields(text)
+
+
+def analyze_equity_fair_value_debate(
+    ticker: str,
+    app_fair_value,
+    thesis_text: str = "",
+    macro_regime: str = "unknown",
+    lang: str = "en",
+) -> dict:
+    """One LLM call: a bull / bear / risk debate over an app-computed fair value.
+
+    Input is the full :class:`lib.equity_valuation.AppFairValue` plus the current
+    macro regime and an optional thesis. The LLM acts as a bull/bear/risk panel
+    and endorses a fair-value range + a recommended action. Output JSON is
+    bilingual (``*_en`` / ``*_zh``) for every prose field. Cached TTL=7200 keyed
+    on ``(ticker, confidence, macro_regime, lang)``. Fail-closed: on any failure
+    the endorsed range mirrors the app ``fair_value_low`` / ``fair_value_high``
+    and the action defaults to ``hold``. The LLM never alters the computed
+    numbers — it only argues over them.
+    """
+    tk = (ticker or "").upper().strip()
+    lang = lang if lang in ("en", "zh") else "en"
+    regime = (macro_regime or "unknown").strip().lower() or "unknown"
+    low = float(getattr(app_fair_value, "fair_value_low", 0.0) or 0.0)
+    mid = float(getattr(app_fair_value, "fair_value_mid", 0.0) or 0.0)
+    high = float(getattr(app_fair_value, "fair_value_high", 0.0) or 0.0)
+    confidence = str(getattr(app_fair_value, "confidence", "low") or "low")
+    upside = float(getattr(app_fair_value, "upside_pct", 0.0) or 0.0)
+    dcf = getattr(app_fair_value, "dcf_value", None)
+    rel = getattr(app_fair_value, "relative_value", None)
+    ana = getattr(app_fair_value, "analyst_target", None)
+    methodology = str(getattr(app_fair_value, "methodology", "") or "")
+    try:
+        return _equity_debate_cached(
+            tk, confidence, regime, lang, round(low, 2), round(mid, 2), round(high, 2),
+            round(upside, 4), dcf, rel, ana, methodology, (thesis_text or "")[:600],
+        )
+    except Exception as exc:  # noqa: BLE001 — fail-closed
+        _reason = f"{type(exc).__name__}: {exc}"
+        _log.warning(
+            "analyze_equity_fair_value_debate(%s): failed (%s); returning fallback",
+            tk, _reason,
+        )
+        return _debate_fallback(low, high, _reason)
+
+
+def _equity_debate_cached(ticker: str, confidence: str, macro_regime: str, lang: str,
+                          low: float, mid: float, high: float, upside: float,
+                          dcf, rel, ana, methodology: str, thesis_text: str) -> dict:
+    """Cached LLM debate (fail-closed)."""
+    if not _has_llm_api_key():
+        _reason = "ANTHROPIC_API_KEY not configured"
+        _log.warning(
+            "analyze_equity_fair_value_debate(%s): %s; returning deterministic "
+            "fallback (endorsed = app low/high, action=hold).", ticker, _reason,
+        )
+        return _debate_fallback(low, high, _reason)
+    try:
+        client = _get_client()
+        facts = (
+            f"ticker: {ticker}\n"
+            f"app_fair_value_low: {low}\n"
+            f"app_fair_value_mid: {mid}\n"
+            f"app_fair_value_high: {high}\n"
+            f"upside_pct (mid vs current): {upside:.2%}\n"
+            f"confidence: {confidence}\n"
+            f"dcf_value: {dcf}\n"
+            f"relative_value: {rel}\n"
+            f"analyst_target: {ana}\n"
+            f"methodology: {methodology}\n"
+            f"macro_regime: {macro_regime}\n"
+            f"thesis: {thesis_text or '(none given)'}"
+        )
+        # Concise prompt — field names + a one-line description each — so the
+        # bilingual JSON has plenty of token room and does not truncate.
+        system = (
+            "You are an equity research debate panel (bull/bear/risk). The "
+            "fair-value range was computed by code; do NOT change the numbers, "
+            "only argue over them. Reply with PURE JSON ONLY (no markdown, no "
+            "prose), every text field in BOTH English (_en) and "
+            "professional-finance Chinese (_zh). Keep each field to 2-3 short "
+            "sentences. Fields:\n"
+            "bull_case_en / bull_case_zh: why fair_value_high is reachable.\n"
+            "bear_case_en / bear_case_zh: why fair_value_low or below is the risk.\n"
+            "risk_factors_en / risk_factors_zh: what could invalidate the valuation.\n"
+            "synthesis_en / synthesis_zh: recommended stance + endorsed range.\n"
+            "endorsed_fair_value_low / endorsed_fair_value_high: numbers near the band.\n"
+            'analyst_action: one of "buy"|"hold"|"avoid"|"wait".'
+        )
+        user = (
+            "Return the JSON object ONLY for this app-computed fair value.\n\n"
+            f"{facts}"
+        )
+        # max_tokens generous (>=1500) so the bilingual JSON never truncates.
+        resp = client.messages.create(
+            model=_MODEL, max_tokens=1600, system=system,
+            messages=[{"role": "user", "content": user}],
+        )
+        raw_text = resp.content[0].text if (resp and resp.content) else ""
+        parsed = _parse_debate_response(raw_text)
+        if not isinstance(parsed, dict) or not parsed.get("bull_case_en"):
+            _reason = (
+                f"LLM response was not parseable JSON ({len(raw_text)} chars; "
+                f"head: {raw_text[:120]!r})"
+            )
+            _log.warning("analyze_equity_fair_value_debate(%s): %s", ticker, _reason)
+            return _debate_fallback(low, high, _reason)
+
+        def _pair(field: str) -> tuple:
+            en = str(parsed.get(f"{field}_en", "") or parsed.get(field, "") or "")[:1200]
+            zh = str(parsed.get(f"{field}_zh", "") or "")[:1200]
+            return en, (zh or en)
+
+        out: dict = {}
+        for f in _DEBATE_TEXT_FIELDS:
+            en, zh = _pair(f)
+            out[f"{f}_en"], out[f"{f}_zh"] = en, zh
+
+        def _num(key: str, default: float) -> float:
+            v = parsed.get(key)
+            try:
+                fv = float(v)
+                return fv if fv == fv else default  # reject NaN
+            except (TypeError, ValueError):
+                return default
+
+        out["endorsed_fair_value_low"] = round(_num("endorsed_fair_value_low", low), 2)
+        out["endorsed_fair_value_high"] = round(_num("endorsed_fair_value_high", high), 2)
+        action = parsed.get("analyst_action")
+        out["analyst_action"] = action if action in _DEBATE_ACTIONS else "hold"
+        out["debate_status"] = "ok"
+        out["debate_error"] = ""
+        return out
+    except Exception as exc:  # noqa: BLE001 — fail-closed
+        _reason = f"{type(exc).__name__}: {exc}"
+        _log.warning(
+            "analyze_equity_fair_value_debate(%s): LLM call failed (%s); "
+            "returning fallback.", ticker, _reason,
+        )
+        return _debate_fallback(low, high, _reason)
+
+
+# Decorate the cached debate worker with st.cache_data when Streamlit is available.
+try:  # pragma: no cover - cache decoration is environment dependent
+    import streamlit as _st_dbg
+
+    _equity_debate_cached = _st_dbg.cache_data(ttl=7200, show_spinner=False)(
+        _equity_debate_cached
+    )
+except Exception:  # noqa: BLE001
+    pass
+
+
+def _has_llm_api_key() -> bool:
+    """True if an LLM API key is configured (without importing the SDK)."""
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        return True
+    try:
+        import streamlit as st
+
+        return bool(st.secrets.get("ANTHROPIC_API_KEY"))
+    except Exception:  # noqa: BLE001
+        return False

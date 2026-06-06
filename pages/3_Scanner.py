@@ -14,6 +14,18 @@ from ui_utils import (
     apply_layout, apply_legend, fmt_large, download_report_button, page_header, render_table, t, bi,
     render_workflow_bar,
 )
+from lib.macro_data import fetch_all_macro
+from lib.macro_regime import MacroRegimeResult, classify_regime
+from lib.signal_engine import TickerSignalResult
+from lib.candidate_generator import generate_candidates, build_universe, UniverseConfig
+from lib.theme_baskets import THEME_BASKETS
+
+# ── Phase 6B — Stock Selection Signal Layer feature flag ──────────────────────
+# When True, an AI-generated candidate-signal section (built from real
+# alternative-data + fundamental + technical signals) is shown at the top of the
+# page. When False, this page behaves EXACTLY as it did before Phase 6B: only the
+# manual scanner runs and no signal-generation code is exercised.
+SCANNER_SIGNAL_MODE = True
 
 st.set_page_config(page_title="Stock Scanner", page_icon="🔍", layout="wide")
 apply_theme()
@@ -27,6 +39,374 @@ page_header()
 render_workflow_bar()
 st.caption(t("p3_subtitle"))
 st.divider()
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PHASE 6B — AI SIGNAL CANDIDATES (auto-generated from real signals)
+# Surfaces an AI-generated candidate list ranked by alternative data, EPS-revision
+# trend, narrative attribution, and entry quality — without a manual ticker pool.
+# Review-only context; never an order or execution instruction.
+# ══════════════════════════════════════════════════════════════════════════════
+if SCANNER_SIGNAL_MODE:
+    # Phase 6B (Plan A) — obtain the current macro regime directly. Both
+    # fetch_all_macro() and classify_regime() are fail-closed and cached
+    # (st.cache_data TTL), so if the macro page was already visited this hits the
+    # cache with no extra cost; otherwise it fetches the regime live now. The
+    # freshly classified regime is published to st.session_state["macro_regime_result"]
+    # for cross-page reuse, then its `regime` field drives the signal scoring.
+    _macro_regime = "unknown"
+    _macro_conf = None
+    _macro_cov = None
+    try:
+        _macro_res = classify_regime(fetch_all_macro())
+        st.session_state["macro_regime_result"] = {
+            "regime": _macro_res.regime,
+            "confidence": _macro_res.confidence,
+            "horizon_bias": dict(_macro_res.horizon_bias or {}),
+            "data_coverage": _macro_res.data_coverage,
+        }
+        _macro_regime = _macro_res.regime
+        _macro_conf = _macro_res.confidence
+        _macro_cov = _macro_res.data_coverage
+    except Exception:
+        # Fail-closed: reuse any previously-published regime, else stay "unknown".
+        _prev = st.session_state.get("macro_regime_result")
+        if isinstance(_prev, dict) and _prev.get("regime"):
+            _macro_regime = str(_prev.get("regime"))
+            _macro_conf = _prev.get("confidence")
+            _macro_cov = _prev.get("data_coverage")
+
+    # ── Universe Configuration ────────────────────────────────────────────────
+    # Lets the user shape the candidate universe (S&P 500 anchor + cross-GICS
+    # theme baskets + manual tickers) before generating candidates. Review-only:
+    # no order, no execution. The live universe size is shown without fetching
+    # market data (build_universe is a pure set-union over hardcoded lists +
+    # session_state). The resulting UniverseConfig is passed to
+    # generate_candidates() below.
+
+    # Theme pre-load banner from the Sector Research "Send to Scanner" hand-off.
+    _theme_universe = st.session_state.get("theme_universe") or []
+    _theme_label = st.session_state.get("theme_universe_label") or ""
+    if _theme_universe:
+        _bn_col, _clr_col = st.columns([5, 1])
+        with _bn_col:
+            st.info(
+                t("scn_uni_preloaded").format(
+                    label=_theme_label or "—", n=len(_theme_universe)
+                )
+            )
+        with _clr_col:
+            if st.button(t("scn_uni_clear_btn"), key="scn_uni_clear",
+                         use_container_width=True):
+                st.session_state.pop("theme_universe", None)
+                st.session_state.pop("theme_universe_label", None)
+                st.rerun()
+
+    with st.expander(t("scn_uni_title"), expanded=False):
+        _inc_sp500 = st.checkbox(
+            t("scn_uni_sp500"), value=True, key="scn_uni_sp500_cb",
+        )
+        _theme_keys = list(THEME_BASKETS.keys())
+
+        def _theme_label_fn(k: str) -> str:
+            _cfg = THEME_BASKETS.get(k, {})
+            return _cfg.get("label_zh" if _lang == "zh" else "label_en", k)
+
+        _sel_themes = st.multiselect(
+            t("scn_uni_themes"), options=_theme_keys,
+            format_func=_theme_label_fn, key="scn_uni_themes_ms",
+        )
+        _manual_raw = st.text_input(
+            t("scn_uni_manual"), value="", key="scn_uni_manual_ti",
+        )
+        _manual_list = [
+            x.strip().upper()
+            for x in _manual_raw.replace("\n", ",").split(",")
+            if x.strip()
+        ]
+        _max_size = st.slider(
+            t("scn_uni_max"), min_value=50, max_value=300, value=150, step=25,
+            key="scn_uni_max_sl",
+        )
+
+        _uni_config = UniverseConfig(
+            include_sp500_top100=_inc_sp500,
+            selected_themes=_sel_themes,
+            manual_tickers=_manual_list,
+            max_size=_max_size,
+        )
+        # Live universe size — pure set-union, no market-data fetch.
+        try:
+            _uni_preview = build_universe(_uni_config)
+        except Exception:
+            _uni_preview = []
+        st.caption(t("scn_uni_current").format(n=len(_uni_preview)))
+
+    st.subheader(t("scn_sig_title"))
+    # Directly show the currently-loaded macro regime status (regime + confidence
+    # + data coverage when available); reuses the existing macro chrome keys.
+    _macro_status = f'{t("scn_sig_macro_label")}: {_macro_regime}'
+    if _macro_conf:
+        _macro_status += f'  ·  {t("macro_live_confidence_label")}: {_macro_conf}'
+    if _macro_cov is not None:
+        try:
+            _macro_status += f'  ·  {t("macro_live_coverage_label")}: {_macro_cov:.0%}'
+        except (TypeError, ValueError):
+            pass
+    st.caption(f'{t("scn_sig_caption")}  ·  {_macro_status}')
+
+    # LLM narrative depth — how many Layer-1 survivors get a Layer-2 LLM
+    # narrative call (default 30, range 10–50). Estimated time ≈ llm_n × 2s.
+    _llm_n = st.slider(
+        t("scn_sig_llm_depth"), min_value=10, max_value=100, value=50, step=5,
+        key="scn_sig_llm_n",
+        help=t("scn_sig_llm_help"),
+    )
+    st.caption(f'{t("scn_sig_llm_est")}: ~{_llm_n * 2}s')
+
+    _gen_col, _send_col = st.columns([1, 1])
+    with _gen_col:
+        _gen_clicked = st.button(
+            t("scn_sig_generate_btn"), type="primary",
+            use_container_width=True, key="scn_sig_generate",
+        )
+    with _send_col:
+        _send_clicked = st.button(
+            t("scn_sig_send_btn"), use_container_width=True, key="scn_sig_send",
+            disabled=not st.session_state.get("signal_candidates"),
+        )
+
+    if _gen_clicked:
+        with st.spinner(t("scn_sig_generating")):
+            try:
+                st.session_state["signal_candidates"] = generate_candidates(
+                    _macro_regime, top_n=20, llm_n=_llm_n, config=_uni_config,
+                    lang=_lang,
+                )
+            except Exception:
+                st.session_state["signal_candidates"] = []
+
+    _candidates = st.session_state.get("signal_candidates") or []
+
+    # "Send to Manual Scanner": pre-fill the manual pool input (consumed below by
+    # the existing `_scanner_pool_prefill` mechanism on the same render pass).
+    if _send_clicked and _candidates:
+        _top_syms = [
+            c.ticker for c in _candidates[:20] if getattr(c, "ticker", "")
+        ]
+        if _top_syms:
+            st.session_state["_scanner_pool_prefill"] = ", ".join(_top_syms)
+            st.success(t("scn_sig_sent_note"))
+
+    if not _candidates:
+        st.info(t("scn_sig_empty_hint"))
+    else:
+        import html as _html_mod
+
+        def _esc(s) -> str:
+            return _html_mod.escape(str(s if s is not None else ""))
+
+        _sig_tx = "#e6edf3" if _dark else "#1f2328"
+        _sig_mut = "#8b949e"
+
+        # Candidate-type color coding: FUNNEL=blue, ALT_SIGNAL=orange, BOTH=green.
+        def _type_color(kind: str) -> str:
+            return {
+                "FUNNEL": "#388bfd",
+                "ALT_SIGNAL": "#d29922",
+                "BOTH": "#3fb950",
+            }.get(kind, _sig_mut)
+
+        # signal_strength -> (accent color, emoji prefix). triple = gold + 🔥.
+        def _strength_style(s: str):
+            return {
+                "triple": ("#d4a017", "🔥"),
+                "double": ("#3fb950", ""),
+                "single": ("#388bfd", ""),
+                "none":   (_sig_mut, ""),
+            }.get(s, (_sig_mut, ""))
+
+        # Per-horizon hit thresholds (short 0.65 / mid 0.60 / long 0.55).
+        _HZ_THRESH = {"short": 0.65, "mid": 0.60, "long": 0.55}
+
+        def _pill_color(h: str, score: float) -> str:
+            th = _HZ_THRESH.get(h, 0.6)
+            if score >= th:
+                return "#3fb950"   # green — horizon hit
+            if score >= th - 0.15:
+                return "#d29922"   # yellow — near threshold
+            return "#f85149"       # red — well below
+
+        # ── Horizon filter checkboxes (default all checked) ───────────────────
+        st.caption(t("scn_sig_filter_label"))
+        _hz_cols = st.columns([1, 1, 1, 3])
+        with _hz_cols[0]:
+            _show_short = st.checkbox(t("scn_sig_hz_short"), value=True, key="scn_sig_hz_short_cb")
+        with _hz_cols[1]:
+            _show_mid = st.checkbox(t("scn_sig_hz_mid"), value=True, key="scn_sig_hz_mid_cb")
+        with _hz_cols[2]:
+            _show_long = st.checkbox(t("scn_sig_hz_long"), value=True, key="scn_sig_hz_long_cb")
+
+        _checked = set()
+        if _show_short:
+            _checked.add("short")
+        if _show_mid:
+            _checked.add("mid")
+        if _show_long:
+            _checked.add("long")
+        _all_checked = _show_short and _show_mid and _show_long
+
+        def _visible(c) -> bool:
+            # Show a candidate if any of its hit horizons is checked. A "none"
+            # signal (no horizon hit) is opt-in: shown only when all three boxes
+            # are checked.
+            hh = set(getattr(c, "horizons_hit", []) or [])
+            if getattr(c, "signal_strength", "none") == "none":
+                return _all_checked
+            return bool(hh & _checked)
+
+        _shown = [c for c in _candidates if _visible(c)]
+
+        # ── Signal cards ──────────────────────────────────────────────────────
+        for c in _shown:
+            _s = getattr(c, "signal_strength", "none") or "none"
+            _accent, _emoji = _strength_style(_s)
+            _kind = getattr(c, "candidate_type", "FUNNEL") or "FUNNEL"
+            _kc = _type_color(_kind)
+            _short = float(getattr(c, "short_score", 0.0) or 0.0)
+            _mid = float(getattr(c, "mid_score", 0.0) or 0.0)
+            _long = float(getattr(c, "long_score", 0.0) or 0.0)
+            _hh = set(getattr(c, "horizons_hit", []) or [])
+            _is_triple = _s == "triple"
+
+            with st.container(border=True):
+                # Row 1 — ticker + signal_strength badge + candidate_type badge.
+                _strength_badge = (
+                    f'<span style="background:{_accent}22;border:1px solid {_accent};'
+                    f'color:{_accent};padding:2px 10px;border-radius:12px;'
+                    f'font-size:0.78rem;font-weight:700">{_emoji} '
+                    f'{_esc(t("scn_sig_strength_" + _s))}</span>'
+                )
+                _type_badge = (
+                    f'<span style="background:{_kc}22;border:1px solid {_kc};'
+                    f'color:{_kc};padding:2px 10px;border-radius:12px;'
+                    f'font-size:0.72rem;font-weight:700">{_esc(t("scn_sig_col_type"))}: {_esc(_kind)}</span>'
+                )
+                _triple_hdr = (
+                    f'<span style="background:#d4a01733;border:1px solid #d4a017;'
+                    f'color:#d4a017;padding:2px 10px;border-radius:12px;'
+                    f'font-size:0.78rem;font-weight:700">{_esc(t("scn_sig_triple_header"))}</span>'
+                    if _is_triple else ""
+                )
+                # Triple hits get a gold/amber border accent; others a subtle one.
+                _card_border = "2px solid #d4a017" if _is_triple else f"1px solid {_accent}"
+                _card_bg = "#d4a01710" if _is_triple else "transparent"
+
+                # Row 2 — three horizon score pills with ✓ (hit) / ○ (below).
+                def _pill(h: str, label: str, score: float) -> str:
+                    col = _pill_color(h, score)
+                    mark = "✓" if h in _hh else "○"
+                    return (
+                        f'<span style="display:inline-block;margin-right:10px;'
+                        f'background:{col}22;border:1px solid {col};color:{col};'
+                        f'padding:2px 10px;border-radius:10px;font-weight:700;'
+                        f'font-size:0.82rem">{_esc(label)} {score:.2f} {mark}</span>'
+                    )
+                _pills = (
+                    _pill("short", t("scn_sig_hz_short"), _short)
+                    + _pill("mid", t("scn_sig_hz_mid"), _mid)
+                    + _pill("long", t("scn_sig_hz_long"), _long)
+                )
+
+                # Row 3 — catalyst summary (⚡) + horizon tags + recency + warning.
+                _cat_summary = getattr(c, "catalyst_summary", "") or ""
+                _cat_html = ""
+                if _cat_summary:
+                    _ch_tags = ", ".join(getattr(c, "catalyst_horizon", []) or []) or "—"
+                    _rec = getattr(c, "catalyst_recency", "none") or "none"
+                    _priced = bool(getattr(c, "already_priced_in", False))
+                    _warn = (
+                        f' <span style="color:#f85149;font-weight:700">'
+                        f'⚠ {_esc(t("scn_sig_priced_in"))}</span>'
+                        if _priced else ""
+                    )
+                    _cat_html = (
+                        f'<div style="margin-top:6px;font-size:0.85rem;color:{_sig_tx}">'
+                        f'⚡ {_esc(_cat_summary)} '
+                        f'<span style="color:{_sig_mut};font-size:0.78rem">'
+                        f'[{_esc(_ch_tags)} · {_esc(_rec)}]</span>{_warn}</div>'
+                    )
+
+                # Row 4 — first 3 key signals as a bullet list.
+                _ks = getattr(c, "key_signals", []) or []
+                _ks_html = "".join(
+                    f'<li style="margin:1px 0">{_esc(k)}</li>' for k in _ks[:3]
+                )
+                _ks_block = (
+                    f'<ul style="margin:6px 0 0 0;padding-left:18px;font-size:0.84rem;'
+                    f'color:{_sig_tx}">{_ks_html}</ul>' if _ks_html else ""
+                )
+
+                st.markdown(
+                    f'<div style="border-left:{_card_border};background:{_card_bg};'
+                    f'border-radius:0 6px 6px 0;padding:8px 12px">'
+                    f'<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'
+                    f'<span style="font-size:1.35rem;font-weight:800;color:{_sig_tx}">{_esc(c.ticker)}</span>'
+                    f'{_strength_badge}{_type_badge}{_triple_hdr}</div>'
+                    f'<div style="margin-top:8px">{_pills}</div>'
+                    f'{_cat_html}{_ks_block}'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
+                # Row 5 — collapsed details.
+                with st.expander(t("scn_sig_details")):
+                    _full_ks = "".join(f"- {k}\n" for k in _ks) or "—\n"
+                    st.markdown(_full_ks)
+                    _eps = getattr(c, "eps_revision_direction", "unknown")
+                    _val = getattr(c, "valuation_percentile", 0.5)
+                    _eq = getattr(c, "entry_quality_label", "—")
+                    _ns = getattr(c, "narrative_stage", "unknown")
+                    _tags = ", ".join(getattr(c, "narrative_theme_tags", []) or []) or "—"
+                    try:
+                        _val_txt = f"{float(_val):.2f}"
+                    except (TypeError, ValueError):
+                        _val_txt = "—"
+                    st.caption(
+                        f'{t("scn_sig_eps")}: {_eps}  ·  '
+                        f'{t("scn_sig_val")}: {_val_txt}  ·  '
+                        f'{t("scn_sig_col_entry")}: {_eq}'
+                    )
+                    st.caption(f'{t("scn_sig_narr_stage")}: {_ns}  ·  {t("scn_sig_theme_tags")}: {_tags}')
+
+                    # Track A / Track B sub-scores (shown for ALT_SIGNAL especially).
+                    _ta = getattr(c, "track_a", None)
+                    _tb = getattr(c, "track_b", None)
+                    if _kind == "ALT_SIGNAL" or _tb is not None:
+                        _ta_s = f'{_ta.track_a_score:.2f}' if _ta is not None else "—"
+                        _tb_s = f'{_tb.track_b_score:.2f}' if _tb is not None else "—"
+                        _ins = f'{_tb.insider_buy_signal:.2f}' if _tb is not None else "—"
+                        _unu = f'{_tb.unusual_news_signal:.2f}' if _tb is not None else "—"
+                        _ana = f'{_tb.analyst_revision_signal:.2f}' if _tb is not None else "—"
+                        st.caption(
+                            f'{t("scn_sig_col_track_a")}: {_ta_s}  ·  '
+                            f'{t("scn_sig_col_track_b")}: {_tb_s}  ·  '
+                            f'{t("scn_sig_col_insider")}: {_ins}  ·  '
+                            f'{t("scn_sig_col_unusual")}: {_unu}  ·  '
+                            f'{t("scn_sig_col_analyst")}: {_ana}'
+                        )
+
+        # ── Summary line ──────────────────────────────────────────────────────
+        _n_triple = sum(1 for c in _candidates if getattr(c, "signal_strength", "") == "triple")
+        _n_double = sum(1 for c in _candidates if getattr(c, "signal_strength", "") == "double")
+        _n_single = sum(1 for c in _candidates if getattr(c, "signal_strength", "") == "single")
+        st.caption(
+            t("scn_sig_summary").format(
+                n=len(_candidates), triple=_n_triple, double=_n_double, single=_n_single
+            )
+        )
+
+    st.caption(t("scn_sig_disclaimer"))
+    st.divider()
 
 # ══════════════════════════════════════════════════════════════════════════════
 # AI WORKFLOW RESULTS — read from research_state

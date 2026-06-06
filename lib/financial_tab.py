@@ -268,6 +268,18 @@ def render_financial_tab(ticker: str) -> None:
                     net_debt=net_d,
                     current_price=price,
                 )
+                # Phase 6C-B — publish the user-adjusted DCF inputs + base-case
+                # intrinsic value so the Equity "AI Valuation Summary" can offer an
+                # "Update Valuation" action. Additive; no rendering change.
+                try:
+                    st.session_state["dcf_params"] = {
+                        "ticker": (ticker or "").upper().strip(),
+                        "wacc": wacc_pct / 100.0,
+                        "base_fcf_b": base_fcf_b,
+                        "intrinsic_value": float(scenarios_r["base"].intrinsic_value),
+                    }
+                except Exception:  # noqa: BLE001 — fail-closed (never block the chart)
+                    pass
                 scen_names = ["bear", "base", "bull"]
                 iv_vals    = [scenarios_r[s].intrinsic_value for s in scen_names]
                 fig_dcf = go.Figure()
