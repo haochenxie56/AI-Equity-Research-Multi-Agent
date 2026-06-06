@@ -797,6 +797,110 @@ except Exception as _e:  # noqa: BLE001
     check("14.12 banner three-state render-smoke ran", False, f"AppTest: {_e}")
 
 
+# ===========================================================================
+# 15. Rolling raw-reading series (Task A — the SIGNAL trail)
+# ===========================================================================
+_ridx = pd.bdate_range(end="2026-06-05", periods=60)
+
+
+def _spy_with_distribution():
+    _c = [100.0]
+    _v = [1e6]
+    for _i in range(1, 60):
+        _c.append(_c[-1] * 1.001)
+        _v.append(1e6)
+    for _k in (40, 44, 48, 52, 56, 58):  # 6 distribution days near the end
+        _c[_k] = _c[_k - 1] * 0.99
+        _v[_k] = _v[_k - 1] * 1.5
+    return pd.DataFrame({"Close": _c, "Volume": _v}, index=_ridx)
+
+
+_spy = _spy_with_distribution()
+_uni_frames = {f"U{n}": pd.DataFrame(
+    {"Close": [100.0 * (0.999 ** i) for i in range(60)], "Volume": [1e6] * 60},
+    index=_ridx) for n in range(8)}
+
+
+def _bench_ld(tk):
+    return _spy
+
+
+def _frame_ld(tk):
+    return _uni_frames.get(tk)
+
+
+# 15.1 — as-of-day component correctness vs an independent direct computation.
+_arrays = {tk: mi._dated_arrays(df) for tk, df in _uni_frames.items()}
+_asof = str(_ridx[40].date())
+_asof_breadth = mi._breadth_above_sma_asof(_arrays, 20, _asof)
+_direct_breadth = mi.breadth_above_sma(
+    {tk: df.loc[:_asof] for tk, df in _uni_frames.items()}, 20)
+check("15.1 as-of breadth matches a direct truncated computation",
+      _asof_breadth == _direct_breadth, f"{_asof_breadth} vs {_direct_breadth}")
+
+_r_roll = mi.compute_market_fragility(
+    universe=list(_uni_frames), frame_loader=_frame_ld, benchmark_loader=_bench_ld,
+    today_str="2026-06-05")
+# 15.2 — breadth slope is no longer null on a fresh run (computed from the series).
+check("15.2 breadth_slope is non-null with sufficient cache",
+      _r_roll.components.breadth_slope is not None)
+# 15.3 — hysteresis consumes the rolling series; held 2 sessions → escalates TODAY.
+check("15.3 rolling series populated + source=rolling",
+      len(_r_roll.rolling_raw_series) >= 2 and _r_roll.hysteresis_source == "rolling")
+check("15.4 condition held → effective escalates immediately (not normal)",
+      _r_roll.level in ("elevated", "high"), _r_roll.level)
+
+# 15.5 — a one-day spike in the rolling series still never escalates.
+_spike_eff, _ = mi._replay_hysteresis(["normal"] * 6 + ["high"], mi.INTERNALS_CONFIG)
+check("15.5 one-day spike in the rolling series never escalates",
+      _spike_eff == "normal", _spike_eff)
+# ...but two consecutive elevated recomputed sessions do.
+_hold_eff, _ = mi._replay_hysteresis(["normal"] * 4 + ["elevated", "elevated"],
+                                     mi.INTERNALS_CONFIG)
+check("15.6 two held sessions in the rolling series escalate", _hold_eff == "elevated")
+
+# 15.7 — fallback to the snapshot path when frames are UNDATED (no calendar).
+_undated = {f"U{n}": _df([100.0] * 60) for n in range(4)}  # RangeIndex (no dates)
+_r_fb = mi.compute_market_fragility(
+    universe=list(_undated), frame_loader=lambda tk: _undated.get(tk),
+    benchmark_loader=lambda tk: _df([100.0] * 60), today_str="2026-06-05")
+check("15.7 undated frames → hysteresis_source falls back to snapshot",
+      _r_fb.hysteresis_source == "snapshot")
+
+# 15.8 — audit vs signal: the snapshot _meta still records today's reading AND the
+# hysteresis_source (audit trail unchanged in meaning; source is additive).
+_snap_roll = mi.fragility_snapshot(_r_roll, "2026-06-05")
+check("15.8 snapshot records today's raw + the hysteresis_source field",
+      _snap_roll["fragility_raw_level"] == _r_roll.raw_level
+      and _snap_roll["hysteresis_source"] == "rolling"
+      and _snap_roll["rolling_window"] == mi.INTERNALS_CONFIG["rolling_window_sessions"])
+
+# 15.9 — structural: NO new per-ticker fetches on the refresh path. Every ticker
+# the loaders are asked for is in (universe ∪ SPY/QQQ ∪ offense/defense ETFs).
+_req: set = set()
+import lib.rotation as _rot_mod  # noqa: E402
+_sector_etfs = {str(_rot_mod.SECTOR_CONFIG[s]["etf"]).upper()
+                for s in list(_rot_mod.OFFENSE_SECTORS) + list(_rot_mod.DEFENSE_SECTORS)
+                if _rot_mod.SECTOR_CONFIG.get(s, {}).get("etf")}
+
+
+def _rec_frame(tk):
+    _req.add(str(tk).upper())
+    return _uni_frames.get(tk)
+
+
+def _rec_bench(tk):
+    _req.add(str(tk).upper())
+    return _spy
+
+
+mi.compute_market_fragility(universe=list(_uni_frames), frame_loader=_rec_frame,
+                            benchmark_loader=_rec_bench, today_str="2026-06-05")
+_expected = {tk.upper() for tk in _uni_frames} | {"SPY", "QQQ"} | _sector_etfs
+check("15.9 no surprise per-ticker fetches (requests ⊆ expected universe)",
+      _req <= _expected, f"unexpected={_req - _expected}")
+
+
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------

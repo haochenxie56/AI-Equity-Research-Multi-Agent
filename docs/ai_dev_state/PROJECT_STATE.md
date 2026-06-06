@@ -8,14 +8,23 @@ follow. Prior status blob preserved verbatim afterward.)
 
 Makes rotation VISIBLE and market deterioration EARLY-VISIBLE. **All deterministic;
 no LLM.** Phase doc `docs/reliability_phase_7b_rotation_internals.md`; suite
-`scripts/test_reliability_phase_7b_rotation_internals.py` **122/122** (mock-only,
-incl. Codex fix round + polish 1: same-date adjacency, volume-shrink flag, AST
-guard, clock-drift; + polish 2: always render fragility at normal, LONG why_now
-fix, theme excess-3M label; + polish 3: banner zero/null three-state, earnings
-reactions WIRED via one bulk Finnhub earnings-calendar call with distinct degrade
-reasons (finnhub_unavailable / no_reports_in_window / earnings_source_absent),
-volume monitor now watches leading ∪ rotating_out (was excluding the distributing
-ex-leader)). Full canonical set green: 7A 115, stopbleed 64, 6c_b
+`scripts/test_reliability_phase_7b_rotation_internals.py` **131/131** (mock-only,
+incl. Codex fix round + polish 1–3 + rolling internals round). Polish: same-date
+adjacency, volume-shrink flag, AST guard, clock-drift; always render fragility at
+normal, LONG why_now fix, theme excess-3M label; banner zero/null three-state,
+earnings reactions WIRED via one bulk Finnhub call (distinct degrade reasons),
+volume monitor watches leading ∪ rotating_out. **Rolling internals round (two-track
+audit-vs-signal):** `compute_rolling_raw_series` recomputes raw readings for the
+past N=10 trading days from cached OHLCV (zero new fetches); `_replay_hysteresis`
+makes escalation mean "condition held N consecutive recomputed sessions" (not
+"system recorded it N times"); breadth_slope no longer null day one;
+`hysteresis_source` rolling|snapshot (snapshot is fallback) on the reading + _meta.
+Calibration tool `scripts/calibrate_fragility_backfill.py` (md+CSV to
+docs/calibration/, hindsight caveat). Today's recomputed 10-day raw series:
+normal×5 → elevated×3 (05-11..13) → normal (05-14) → elevated (05-15); today raw
+elevated (2pts) but **effective normal** (single spike after a normal day); earnings
+now live (good_news_sold=1, earnings_eval=3). Full canonical set green: 7A 115,
+stopbleed 64, 6c_b
 47, equity_render_order 50, 6c_trading_desk 118, 6c_v3_entry_v4 47,
 6b_v3_horizon_scoring 189, theme_baskets 146, scanner_rotation_adapter 15.
 

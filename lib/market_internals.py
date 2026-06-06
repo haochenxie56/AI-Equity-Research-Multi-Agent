@@ -87,6 +87,13 @@ INTERNALS_CONFIG = {
     # broken chain can only DELAY escalation, never fabricate it.
     "hysteresis_max_calendar_gap_days": 4,
 
+    # Rolling raw-reading series (Task A): recompute raw fragility "as of" each of
+    # the past N trading days from cached OHLCV, so hysteresis consumes what the
+    # MARKET did (the signal trail) rather than what the system RECORDED (the audit
+    # trail). breadth_slope is derived from this computed series (no day-one null).
+    "rolling_window_sessions": 10,
+    "breadth_slope_lookback_sessions": 5,
+
     # WSL clock-drift defense: WSL2's clock can lag after a Windows sleep/resume,
     # mis-dating snapshots. The system date is sanity-checked against the latest
     # cached benchmark trading date; EARLIER than it, or more than this many
@@ -155,6 +162,13 @@ class FragilityReading:
     # "earnings_source_absent" (no calendar source supplied) — distinct situations
     # we need to tell apart in snapshot history.
     earnings_degrade_reason: str = ""
+    # How hysteresis resolved the effective level (Task A): "rolling" = from raw
+    # readings recomputed for past trading days (the intended "condition held N
+    # sessions" meaning); "snapshot" = fallback to recorded snapshot history when
+    # cache depth was insufficient. The rolling raw series + the window used.
+    hysteresis_source: str = "snapshot"
+    rolling_window: int = 0
+    rolling_raw_series: list = field(default_factory=list)  # [(date, raw_level), ...]
 
     def to_dict(self) -> dict:
         d = asdict(self)
@@ -692,6 +706,8 @@ def fragility_snapshot(reading: FragilityReading, date_str: str) -> dict:
         "fragility_degraded": list(reading.degraded),
         "fragility_adjacency_degraded": reading.adjacency_degraded,
         "earnings_degrade_reason": reading.earnings_degrade_reason,
+        "hysteresis_source": reading.hysteresis_source,
+        "rolling_window": reading.rolling_window,
         # every component value, attributable
         "distribution_days_spy": c.distribution_days_spy,
         "distribution_days_qqq": c.distribution_days_qqq,
@@ -836,6 +852,259 @@ def build_earnings_reactions(universe, frame_loader, calendar_fn, today_str: str
     return [], "no_reports_in_window"
 
 
+# ── Rolling raw-reading series (Task A — the SIGNAL trail) ────────────────────
+
+def _dated_arrays(df):
+    """(dates, closes, volumes) sorted by date from a dated frame, or None.
+
+    ``dates`` are pure ``datetime.date`` (so date-vs-date comparisons never raise).
+    Returns None when the frame is undated/empty (→ rolling unavailable for it)."""
+    try:
+        close = df["Close"]
+        idx = getattr(close, "index", None)
+        dates = _index_dates(idx)
+        closes = _seq(close)
+        volumes = _seq(df["Volume"])
+    except Exception:  # noqa: BLE001
+        return None
+    if not dates or len(dates) != len(closes):
+        return None
+    if len(volumes) != len(closes):
+        volumes = volumes + [0.0] * (len(closes) - len(volumes))
+    return dates, closes, volumes
+
+
+def _pos_le(dates, as_of):
+    """Index of the last date <= as_of (dates sorted ascending), or None."""
+    import bisect
+    d = _parse_iso(as_of)
+    if d is None or not dates:
+        return None
+    pos = bisect.bisect_right(dates, d) - 1
+    return pos if pos >= 0 else None
+
+
+def _breadth_above_sma_asof(arrays_by_tk: dict, period: int, as_of):
+    """Fraction of the universe at/above SMA(period) AS OF ``as_of``, or None."""
+    used = above = 0
+    for arr in (arrays_by_tk or {}).values():
+        if arr is None:
+            continue
+        dates, closes, _ = arr
+        pos = _pos_le(dates, as_of)
+        if pos is None or pos + 1 < period:
+            continue
+        seg = closes[:pos + 1]
+        sma = sum(seg[-period:]) / period
+        used += 1
+        if seg[-1] >= sma:
+            above += 1
+    return round(above / used, 4) if used else None
+
+
+def _reaction_records(reports, frame_loader, bench_dates, today_str, cfg):
+    """Per-report (ticker, reaction_date, return, direction) computed ONCE.
+
+    The reaction_date is the first benchmark trading session strictly after the
+    report; the return is read from the ticker's cached frame. Used to evaluate
+    earnings "as of" any past day without re-fetching."""
+    out = []
+    for rep in reports or []:
+        tk = str((rep.get("ticker") if isinstance(rep, dict) else "") or "").upper().strip()
+        direction = rep.get("direction") if isinstance(rep, dict) else None
+        rd = _parse_iso(rep.get("report_date") if isinstance(rep, dict) else None)
+        if not tk or direction is None or rd is None:
+            continue
+        try:
+            df = frame_loader(tk) if frame_loader is not None else None
+        except Exception:  # noqa: BLE001
+            df = None
+        nxt, _inw = _next_session_reaction(df, rd, today_str, 10 ** 6)
+        if nxt is None:
+            continue
+        # reaction session = first benchmark date strictly after the report.
+        rxn = next((d for d in bench_dates if d > rd), None)
+        if rxn is None:
+            continue
+        out.append({"ticker": tk, "direction": direction,
+                    "reaction_date": rxn, "next_session_return": nxt})
+    return out
+
+
+def _earnings_components_asof(reaction_records, bench_dates, as_of, cfg):
+    """(good_news_sold, evaluated) AS OF ``as_of`` — reports whose reaction session
+    is on/before ``as_of`` and within ``earnings_lookback_sessions`` of it."""
+    d = _parse_iso(as_of)
+    if d is None:
+        return None, 0
+    window = int(cfg["earnings_lookback_sessions"])
+    in_window = []
+    for rec in reaction_records or []:
+        rxn = rec["reaction_date"]
+        if rxn > d:
+            continue
+        sessions_since = sum(1 for bd in bench_dates if rxn < bd <= d)
+        if sessions_since <= window:
+            in_window.append(rec)
+    if not in_window:
+        return None, 0
+    return count_good_news_sold(in_window, cfg["good_news_sold_reaction_pp"])
+
+
+def _replay_hysteresis(raw_chrono: list, cfg: dict):
+    """Replay hysteresis over a CONTIGUOUS recomputed raw series (chronological).
+
+    Trading-day adjacency is inherent (the series is indexed by the benchmark
+    calendar), so escalation means "the raw condition held N consecutive
+    recomputed sessions" — the originally intended meaning. Returns
+    (effective_level, consecutive_today)."""
+    effective = "normal"
+    consec = 1
+    for i, raw in enumerate(raw_chrono):
+        recent = list(reversed(raw_chrono[:i]))  # most-recent-first, all adjacent
+        effective, consec = apply_hysteresis(raw, effective, recent, cfg)
+    return effective, consec
+
+
+def _trunc_loader(frame_loader, as_of):
+    """Wrap a frame loader so it returns each frame truncated to bars <= as_of."""
+    def _loader(tk):
+        try:
+            df = frame_loader(tk)
+        except Exception:  # noqa: BLE001
+            return None
+        if df is None:
+            return None
+        try:
+            return df.loc[:str(as_of)]
+        except Exception:  # noqa: BLE001
+            return df
+    return _loader
+
+
+def _od_asof(sector_arrays: dict, as_of):
+    """Offense/defense reading AS OF ``as_of`` from preloaded sector close arrays."""
+    if not sector_arrays:
+        return None
+    import pandas as pd
+
+    def _loader(tk):
+        arr = sector_arrays.get(str(tk).upper().strip())
+        if arr is None:
+            return None
+        dates, closes, _ = arr
+        pos = _pos_le(dates, as_of)
+        if pos is None or pos < 1:
+            return None
+        return pd.Series(closes[:pos + 1])
+
+    try:
+        from lib import rotation as _rot
+        return _rot.offense_defense_reading(_rot.build_sector_excess(_loader))
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _components_asof(as_of, *, bench_arr, qqq_arr, universe_arrays, sector_arrays,
+                     frame_loader, themes, reaction_records, bench_dates, cfg):
+    """A :class:`FragilityComponents` recomputed AS OF a past trading day from
+    cached data (the backfillable subset). Reused by the rolling raw series and
+    the calibration backfill tool."""
+    comp = FragilityComponents()
+    if bench_arr is not None:
+        d, c, v = bench_arr
+        pos = _pos_le(d, as_of)
+        if pos is not None:
+            comp.distribution_days_spy = count_distribution_days(
+                c[:pos + 1], v[:pos + 1], cfg["distribution_day_lookback"],
+                cfg["distribution_day_pct"])
+            comp.weak_bounce = detect_weak_bounce(c[:pos + 1], v[:pos + 1])
+    if qqq_arr is not None:
+        d, c, v = qqq_arr
+        pos = _pos_le(d, as_of)
+        if pos is not None:
+            comp.distribution_days_qqq = count_distribution_days(
+                c[:pos + 1], v[:pos + 1], cfg["distribution_day_lookback"],
+                cfg["distribution_day_pct"])
+    comp.breadth_above_sma20 = _breadth_above_sma_asof(universe_arrays, 20, as_of)
+    comp.breadth_above_sma50 = _breadth_above_sma_asof(universe_arrays, 50, as_of)
+    lb = int(cfg["breadth_slope_lookback_sessions"])
+    pos = _pos_le(bench_dates, as_of)
+    if pos is not None and pos - lb >= 0:
+        prev = _breadth_above_sma_asof(universe_arrays, 20, bench_dates[pos - lb])
+        comp.breadth_above_sma20_prev = prev
+        if comp.breadth_above_sma20 is not None and prev is not None:
+            comp.breadth_slope = round(comp.breadth_above_sma20 - prev, 4)
+    gns, ev = _earnings_components_asof(reaction_records, bench_dates, as_of, cfg)
+    comp.good_news_sold, comp.earnings_evaluated = gns, ev
+    od = _od_asof(sector_arrays, as_of)
+    if od:
+        comp.offense_defense_direction = od.get("direction", "")
+        comp.offense_defense_magnitude = od.get("magnitude", "")
+    if themes and frame_loader is not None:
+        shrink, vdeg, _ = leading_theme_volume_shrink(
+            themes, _trunc_loader(frame_loader, as_of), cfg)
+        comp.leading_theme_volume_shrinking = bool(shrink and not vdeg)
+    return comp
+
+
+def _raw_level_asof(as_of, **kw):
+    """The raw fragility level recomputed AS OF a past trading day from cached data."""
+    cfg = kw["cfg"]
+    comp = _components_asof(as_of, **kw)
+    points, _ = _score_components(comp, cfg)
+    return _raw_level_from_points(points, cfg)
+
+
+def compute_rolling_raw_series(window, *, bench_arr, qqq_arr, universe_arrays,
+                               sector_arrays, frame_loader, themes,
+                               reaction_records, bench_dates, today_str, cfg):
+    """The recomputed raw level for each of the last ``window`` trading days
+    (chronological ``[(date_str, raw_level), ...]``) from cached data — the SIGNAL
+    trail hysteresis consumes. Empty when the benchmark calendar is unusable."""
+    if not bench_dates:
+        return []
+    anchor = today_str or str(bench_dates[-1])
+    pos_today = _pos_le(bench_dates, anchor)
+    if pos_today is None:
+        return []
+    start = max(0, pos_today - int(window) + 1)
+    series = []
+    for i in range(start, pos_today + 1):
+        d = bench_dates[i]
+        series.append((str(d), _raw_level_asof(
+            d, bench_arr=bench_arr, qqq_arr=qqq_arr, universe_arrays=universe_arrays,
+            sector_arrays=sector_arrays, frame_loader=frame_loader, themes=themes,
+            reaction_records=reaction_records, bench_dates=bench_dates, cfg=cfg)))
+    return series
+
+
+def _preload_sector_arrays(frame_loader) -> dict:
+    """{TICKER: (dates, closes, vols)} for SPY + the offense/defense sector ETFs,
+    loaded ONCE so offense/defense can be recomputed as-of any past day."""
+    if frame_loader is None:
+        return {}
+    try:
+        from lib import rotation as _rot
+        tickers = {"SPY"}
+        for s in list(_rot.OFFENSE_SECTORS) + list(_rot.DEFENSE_SECTORS):
+            c = _rot.SECTOR_CONFIG.get(s)
+            if c and c.get("etf"):
+                tickers.add(str(c["etf"]).upper().strip())
+    except Exception:  # noqa: BLE001
+        return {}
+    out = {}
+    for tk in tickers:
+        try:
+            df = frame_loader(tk)
+        except Exception:  # noqa: BLE001
+            df = None
+        arr = _dated_arrays(df) if df is not None else None
+        if arr is not None:
+            out[tk] = arr
+    return out
+
+
 def compute_market_fragility(*, universe=None, frame_loader=None,
                              benchmark_loader=None, sector_loader=None,
                              themes=None, earnings_reactions=None,
@@ -856,6 +1125,7 @@ def compute_market_fragility(*, universe=None, frame_loader=None,
     # (c) distribution days on SPY/QQQ + (d) weak bounce on SPY.
     bl = benchmark_loader or frame_loader
     spy_c = spy_v = None
+    _spy_frame = _qqq_frame = None
     bench_index = None  # the trading calendar for hysteresis adjacency (SPY, then QQQ)
     if bl is not None:
         try:
@@ -893,18 +1163,45 @@ def compute_market_fragility(*, universe=None, frame_loader=None,
     if comp.breadth_above_sma20 is None:
         degraded.append("breadth")
 
-    # (a) earnings reaction quality. Reactions are either supplied precomputed or
-    # built here from the single bulk earnings-calendar call + cached OHLCV (Item 2
-    # — previously never wired, so this always degraded). The degrade REASON is
-    # recorded so future snapshots tell "source failed" from "no reports in window".
+    # Benchmark trading calendar (dates) for the rolling recomputation (Task A).
+    bench_arr = _dated_arrays(_spy_frame) if _spy_frame is not None else None
+    qqq_arr = _dated_arrays(_qqq_frame) if _qqq_frame is not None else None
+    bench_dates = (bench_arr[0] if bench_arr else (qqq_arr[0] if qqq_arr else []))
+
+    # (a) earnings reaction quality. ONE bulk earnings-calendar call → reports;
+    # per-report reactions are computed once (with reaction date) so any past day
+    # can be evaluated for the rolling series (Item 2 + Task A). The degrade REASON
+    # is recorded distinctly (source failed vs no reports in window).
     earnings_degrade_reason = ""
+    reaction_records: list = []
     if not earnings_reactions:
-        earnings_reactions, earnings_degrade_reason = build_earnings_reactions(
-            universe, frame_loader, earnings_calendar_fn, today_str, cfg)
-    if earnings_reactions:
+        reports = None
+        if earnings_calendar_fn is not None:
+            try:
+                reports = earnings_calendar_fn() or []
+            except Exception:  # noqa: BLE001 — the bulk call failed
+                reports = None
+        if reports is None:
+            earnings_degrade_reason = ("finnhub_unavailable"
+                                       if earnings_calendar_fn is not None
+                                       else "earnings_source_absent")
+        elif bench_dates:
+            reaction_records = _reaction_records(
+                reports, frame_loader, bench_dates, today_str, cfg)
+            gns, ev = _earnings_components_asof(reaction_records, bench_dates,
+                                                today_str or str(bench_dates[-1]), cfg)
+            if ev:
+                comp.good_news_sold, comp.earnings_evaluated = gns, ev
+            else:
+                earnings_degrade_reason = "no_reports_in_window"
+        else:
+            # No benchmark calendar → today-only fallback (round-3 path).
+            earnings_reactions, earnings_degrade_reason = build_earnings_reactions(
+                universe, frame_loader, earnings_calendar_fn, today_str, cfg)
+    if earnings_reactions and comp.earnings_evaluated == 0:
         gns, ev = count_good_news_sold(earnings_reactions, cfg["good_news_sold_reaction_pp"])
         comp.good_news_sold, comp.earnings_evaluated = gns, ev
-    else:
+    if comp.earnings_evaluated == 0:
         degraded.append("earnings_reaction")
         if earnings_degrade_reason:
             degraded.append(earnings_degrade_reason)
@@ -936,14 +1233,44 @@ def compute_market_fragility(*, universe=None, frame_loader=None,
     if not offense_defense:
         degraded.append("offense_defense")
 
-    # Hysteresis history from the snapshot memory (with dates for the adjacency
-    # check — gapped snapshots must not fabricate a "consecutive" run).
+    # ── Rolling raw-reading series (Task A — the SIGNAL trail) ────────────────
+    # Recompute raw readings for the past N trading days from cached data; derive
+    # today's breadth slope from this computed series (no day-one null) and let
+    # hysteresis consume "what the market did". Snapshot history is the FALLBACK.
+    rolling_series: list = []
+    rolling_effective = rolling_consec = None
+    universe_arrays = {tk: (_dated_arrays(df) if df is not None else None)
+                       for tk, df in (locals().get("frames") or {}).items()}
+    sector_arrays = _preload_sector_arrays(frame_loader)
+    if bench_dates:
+        lb = int(cfg["breadth_slope_lookback_sessions"])
+        pos_today = _pos_le(bench_dates, today_str or str(bench_dates[-1]))
+        if pos_today is not None and pos_today - lb >= 0 and universe_arrays:
+            _prev = _breadth_above_sma_asof(universe_arrays, 20, bench_dates[pos_today - lb])
+            if _prev is not None:
+                comp.breadth_above_sma20_prev = _prev
+                if comp.breadth_above_sma20 is not None:
+                    comp.breadth_slope = round(comp.breadth_above_sma20 - _prev, 4)
+    try:
+        rolling_series = compute_rolling_raw_series(
+            int(cfg["rolling_window_sessions"]), bench_arr=bench_arr, qqq_arr=qqq_arr,
+            universe_arrays=universe_arrays, sector_arrays=sector_arrays,
+            frame_loader=frame_loader, themes=themes,
+            reaction_records=reaction_records, bench_dates=bench_dates,
+            today_str=today_str, cfg=cfg)
+    except Exception:  # noqa: BLE001 — rolling unavailable → snapshot fallback
+        rolling_series = []
+    if len(rolling_series) >= int(cfg["hysteresis_escalate_sessions"]):
+        rolling_effective, rolling_consec = _replay_hysteresis(
+            [lv for _d, lv in rolling_series], cfg)
+
+    # Hysteresis history from the snapshot memory (FALLBACK when the rolling series
+    # is too shallow; with dates so gapped snapshots can't fabricate a run).
     prior_level, recent_raw, recent_dates = "normal", [], []
     if snapshot_dir is not None:
         metas = read_recent_meta(snapshot_dir, before_date=today_str or None)
         prior_level, recent_raw, recent_dates = history_from_snapshots(
             metas, before_date=today_str or None)
-        # carry forward a prior breadth reading for the slope, if present.
         if metas and comp.breadth_above_sma20_prev is None:
             comp.breadth_above_sma20_prev = metas[0].get("breadth_above_sma20")
 
@@ -954,6 +1281,17 @@ def compute_market_fragility(*, universe=None, frame_loader=None,
         benchmark_index=bench_index,
         degraded=degraded, config=cfg)
     reading.earnings_degrade_reason = earnings_degrade_reason
+    reading.rolling_window = int(cfg["rolling_window_sessions"])
+    reading.rolling_raw_series = rolling_series
+    if rolling_effective is not None:
+        # Rolling is authoritative: escalation = condition held N recomputed
+        # sessions (the intended meaning), adjacency inherent.
+        reading.level = rolling_effective
+        reading.consecutive_raw = rolling_consec
+        reading.adjacency_degraded = False
+        reading.hysteresis_source = "rolling"
+    else:
+        reading.hysteresis_source = "snapshot"
     return reading
 
 

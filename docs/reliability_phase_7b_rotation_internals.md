@@ -1,9 +1,41 @@
 # Phase 7B — Multi-window Relative Strength, Two-Ring Rotation Engine, and Market-Internals Fragility Layer
 
-**Status**: Implemented + Codex fix round (×2) + polish rounds (×3) (lib + tests
-green). Review-only; not investment advice.
-**Suite**: `scripts/test_reliability_phase_7b_rotation_internals.py` — **122/122**,
+**Status**: Implemented + Codex fix round (×2) + polish rounds (×3) + rolling
+internals round (lib + tests green). Review-only; not investment advice.
+**Suite**: `scripts/test_reliability_phase_7b_rotation_internals.py` — **131/131**,
 mock-only / offline.
+
+**Rolling internals round — two-track principle (audit vs signal).** Most
+fragility inputs are pure functions of cached OHLCV, so they can be **recomputed
+"as of" past trading days** at refresh time. This separates two trails:
+
+* **Audit trail = the snapshot.** `_meta` records what the system *said* that day
+  (today's reading), unchanged in meaning — plus the additive `hysteresis_source`
+  and `rolling_window` fields.
+* **Signal trail = the rolling recomputation.** `compute_rolling_raw_series`
+  recomputes the raw level for each of the past `rolling_window_sessions` (default
+  10) days from the *same* cached frames (zero new fetches), and
+  `_replay_hysteresis` walks that contiguous series. Escalation therefore means
+  **"the condition HELD N consecutive recomputed sessions"** (the originally
+  intended meaning) — not "the system recorded it N times". Trading-day adjacency
+  is inherent (the series is indexed by the benchmark calendar). `breadth_slope` is
+  derived from this computed series, so it is **no longer null on day one**.
+  Earnings: the single bulk Finnhub call's window widens to cover the lookback; a
+  report is evaluated "as of day d" when its reaction session is on/before d within
+  d's lookback. The reading carries `hysteresis_source = "rolling"`; when cache
+  depth is insufficient (< escalate sessions / undated frames) it **falls back** to
+  the snapshot-history path flagged `hysteresis_source = "snapshot"`. Performance:
+  N × the existing per-day component cost over already-cached frames; **no new
+  per-ticker network fetches** on the refresh path (pinned by a structural test).
+  Out of scope: per-ticker RS-slope ranking signals (later phase); no change to
+  regime, scoring weights, or status mapping beyond what hysteresis-source affects.
+
+**Calibration tool:** `scripts/calibrate_fragility_backfill.py` (`--days N`,
+`--fetch`) writes a per-day component/points/raw/effective table (markdown + CSV)
+to `docs/calibration/`, marks level transitions, and prints a summary — with an
+explicit hindsight caveat in the output. It is a TOOL (may fetch; not subject to
+the network-free contract); the user annotates days against remembered market feel
+and tunes `INTERNALS_CONFIG`. This is the macro layer's first feedback loop.
 
 **Polish round 3 (snapshot _meta + Codex):** (1) **Banner zero/null** — the
 fragility line distinguishes three states per component: a numeric value
