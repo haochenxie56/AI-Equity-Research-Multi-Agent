@@ -457,10 +457,14 @@ else:
     # Phase 7B Task 3 — market-internals fragility line (tighten-only context;
     # the regime label above is NEVER changed by fragility). Shows the level plus
     # the top triggered components with their numbers.
+    # The internals line ALWAYS renders after a refresh (including level=normal) —
+    # an invisible monitor is indistinguishable from a broken one. It shows the
+    # level plus the component values; gating only happens at high (tighten-only).
     _frag = st.session_state.get("cockpit_fragility") or {}
-    _flevel = str(_frag.get("level", "normal"))
-    if _frag and _flevel != "normal":
-        _fcolor = {"elevated": "#d29922", "high": "#f85149"}.get(_flevel, "#8b949e")
+    if _frag:
+        _flevel = str(_frag.get("level", "normal"))
+        _fcolor = {"normal": "#3fb950", "elevated": "#d29922",
+                   "high": "#f85149"}.get(_flevel, "#8b949e")
         _bits = []
         _dd = max([x for x in (_frag.get("distribution_days_spy"),
                                _frag.get("distribution_days_qqq")) if x is not None],
@@ -482,6 +486,9 @@ else:
             unsafe_allow_html=True,
         )
         st.caption(t("cockpit_hub_internals_note"))
+    else:
+        # Refresh ran but fragility was unavailable — say so rather than vanish.
+        st.caption(f"{t('cockpit_hub_internals')}: {t('cockpit_hub_internals_unavail')}")
     # WSL clock-drift warning (polish round) — the snapshot was still written.
     _clk = st.session_state.get("cockpit_clock_suspect")
     if _clk and _clk[0]:
@@ -520,11 +527,18 @@ else:
             with st.container(border=True):
                 _name = getattr(_th, "label_zh" if _lang == "zh" else "label_en",
                                 getattr(_th, "theme_key", "?"))
-                _r3 = getattr(_th, "return_3m", None)
+                # Item 3 fix — the headline figure is the EXCESS vs QQQ (the basis
+                # momentum_score now ranks on), not the absolute 3M return. Falls
+                # back to the absolute return only when excess is unavailable.
+                _x3 = getattr(_th, "excess_3m", None)
                 _ms = getattr(_th, "momentum_score", 0.0) or 0.0
                 st.markdown(f"**{_name}**")
-                st.metric(t("cockpit_hub_theme_3m"),
-                          f"{_r3:+.1f}%" if _r3 is not None else "—")
+                if _x3 is not None:
+                    st.metric(t("cockpit_hub_theme_3m_excess"), f"{_x3:+.1f}%")
+                else:
+                    _r3 = getattr(_th, "return_3m", None)
+                    st.metric(t("cockpit_hub_theme_3m"),
+                              f"{_r3:+.1f}%" if _r3 is not None else "—")
                 _mcolor = "#3fb950" if _ms >= 0.66 else ("#d29922" if _ms >= 0.33 else "#8b949e")
                 st.markdown(
                     f"{t('cockpit_hub_theme_momentum')}: "
@@ -630,9 +644,15 @@ def _render_opportunity_card(card: dict, rank: int, horizon: str,
         # bilingual codes — see why_now_display)
         _polished = card.get(f"why_now_polished_{_lang_c}", "")
         # Phase 7B Task 1 — the why_now RS line follows the SELECTED horizon
-        # (SHORT=5D / MID=1M / LONG=6M); fall back to the dominant-horizon list.
-        _why = ((card.get("why_now_by_horizon") or {}).get(horizon)
-                or card.get("why_now_display") or card.get("why_now", []) or [])
+        # (SHORT=5D / MID=1M / LONG=6M). Use the per-horizon list when the map is
+        # present (even if empty for this horizon — better an absent line than
+        # another horizon's window). Only fall back when the map was never built
+        # (non-enriched card).
+        _wnbh = card.get("why_now_by_horizon") or {}
+        if horizon in _wnbh:
+            _why = _wnbh[horizon]
+        else:
+            _why = card.get("why_now_display") or card.get("why_now", []) or []
         if _polished:
             st.markdown(f"**{t('opp_why_now')}**: {_polished}")
         elif _why:

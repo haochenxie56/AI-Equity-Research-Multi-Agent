@@ -1103,6 +1103,15 @@ def rank_opportunities(candidates, *, macro_regime: str = "unknown",
                         lv = None
                 except Exception:  # noqa: BLE001 — fail-closed; this horizon stays null
                     lv = None
+            # Per-horizon why_now: the RS line follows THIS horizon's window
+            # (SHORT=5D / MID=1M / LONG=6M). Built for EVERY horizon — even when the
+            # entry engine produced no levels for it (``lv`` None) — so the selected
+            # view never falls back to another horizon's RS line (7B Task 1 fix). The
+            # ``levels`` arg only adds the in-zone line; the window is horizon-driven.
+            card.why_now_by_horizon[hz] = build_reason_codes(
+                c, card.rs, card.theme_momentum, lv,
+                pullback=card.pullback_to_support, days_since_earnings=d_since,
+                horizon=hz)[0]
             if lv is None:
                 continue
             st_hz = derive_status(lv, c, card.blockers, hz,
@@ -1116,12 +1125,6 @@ def rank_opportunities(candidates, *, macro_regime: str = "unknown",
             # surface the internals_deteriorating reason (overrides the generic one).
             if hz in _gate_horizons and derive_status(lv, c, card.blockers, hz) != st_hz:
                 card.status_reason_by_horizon[hz] = dict(_internals_reason)
-            # Per-horizon why_now: RS line follows THIS horizon's window (7B Task 1).
-            wn_hz, _ = build_reason_codes(
-                c, card.rs, card.theme_momentum, lv,
-                pullback=card.pullback_to_support, days_since_earnings=d_since,
-                horizon=hz)
-            card.why_now_by_horizon[hz] = wn_hz
             if hz == dominant:
                 # convenience single-value fields + entry-zone numbers from the
                 # dominant horizon (Trading Desk single-value handoff).

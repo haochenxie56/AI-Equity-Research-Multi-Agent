@@ -619,6 +619,81 @@ check("12.13 snapshot _meta carries clock_suspect + reason",
       and _meta_line.get("clock_suspect_reason") == "test drift")
 
 
+# ===========================================================================
+# 13. Polish round 2 (Cockpit display/integration bugs)
+# ===========================================================================
+from datetime import date as _date  # noqa: E402
+
+# --- Item 2: why_now RS line strictly follows the SELECTED horizon ---
+# Structural invariant: build_reason_codes' window selection derives ONLY from the
+# horizon argument — the macro lens / active_window must never feed it.
+_brc_src = inspect.getsource(orr.build_reason_codes)
+check("13.1 build_reason_codes selects its RS window from the horizon arg only",
+      "RS_LINE_WINDOW" in _brc_src and "horizon" in _brc_src
+      and "active_window" not in _brc_src and "lens" not in _brc_src.lower())
+
+# Integration: a SHORT-dominant card whose LONG entry levels are None must still
+# get a 6M (not 5D) why_now line for the long horizon (the bug was the
+# `if lv is None: continue` skipping per-horizon population → fallback to dominant).
+def _plf_no_long(ticker, _p=None, *, thesis_status="intact", horizon="mid",
+                 eps_revision_direction="unknown", valuation_percentile=0.5,
+                 app_fair_value=None):
+    if horizon == "long":
+        return None  # engine produced no LONG levels (e.g., no valuation anchor)
+    return SimpleNamespace(
+        entry_status="in_zone", risk_overlay_passed=True,
+        valuation_confidence="medium", missing_conditions=[],
+        entry_zone_low=90.0, entry_zone_high=100.0, stop_loss=85.0,
+        target_price=120.0, risk_reward_ratio=2.0, position_size_pct=0.05)
+
+_lt_cand = {"ticker": "LONGT", "short_score": 0.8, "mid_score": 0.5,
+            "long_score": 0.6, "signal_strength": "single",
+            "candidate_type": "FUNNEL", "catalyst_recency": "none",
+            "eps_revision_direction": "unknown", "valuation_percentile": 0.5,
+            "entry_quality_label": "fair"}
+_lt_rs = {"LONGT": rsm.RelativeStrength(
+    "LONGT", ret_5d_vs_qqq=0.022, ret_1m_vs_qqq=0.03, ret_6m_vs_qqq=0.05,
+    rs_composite=0.7, data_source="live")}
+_lt_cards = orr.rank_opportunities(
+    [_lt_cand], rs_map=_lt_rs, themes=None, price_levels_fn=_plf_no_long,
+    earnings_map={}, top_n=5, today=_date(2026, 6, 5))
+_lt = _lt_cards[0]
+_long_txt = " ".join(r.text_en for r in _lt.why_now_by_horizon.get("long", []))
+_short_txt = " ".join(r.text_en for r in _lt.why_now_by_horizon.get("short", []))
+check("13.2 LONG view why_now populated even when LONG levels are None",
+      "long" in _lt.why_now_by_horizon)
+check("13.3 LONG why_now shows 6M (not 5D) RS line",
+      "6M" in _long_txt and "5D" not in _long_txt, _long_txt)
+check("13.4 SHORT why_now shows 5D RS line", "5D" in _short_txt, _short_txt)
+
+# --- Item 1: fragility internals line renders after refresh (incl. level=normal) ---
+try:
+    import streamlit as _st2  # noqa: E402
+    _st2.page_link = lambda *a, **k: None
+    from streamlit.testing.v1 import AppTest as _AT  # noqa: E402
+    _seed = {
+        "macro_regime_result": {"regime": "transition", "confidence": "low",
+                                "horizon_bias": {"short": "cautious"},
+                                "key_signals": [], "opportunity_posture": "",
+                                "data_coverage": 1.0, "signals": []},
+        "cockpit_fragility": {"level": "normal", "distribution_days_spy": 2,
+                              "distribution_days_qqq": 1,
+                              "breadth_above_sma20": 0.55, "good_news_sold": 0},
+    }
+    _atc = _AT.from_file(os.path.join(_REPO_ROOT, "pages/7_Investment_Cockpit.py"),
+                         default_timeout=60)
+    for _k, _v in _seed.items():
+        _atc.session_state[_k] = _v
+    _atc.run()
+    _blob = " ".join(str(getattr(_m, "value", "")) for _m in _atc.markdown)
+    check("13.5 internals line renders after refresh at level=normal",
+          ("Internals" in _blob and "normal" in _blob), _blob[:160])
+    check("13.6 seeded Cockpit render raised no exception",
+          not _atc.exception, str(list(_atc.exception)))
+except Exception as _e:  # noqa: BLE001 — AppTest unavailable counts as a failure
+    check("13.5 internals render-smoke ran", False, f"AppTest unavailable: {_e}")
+
+
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------

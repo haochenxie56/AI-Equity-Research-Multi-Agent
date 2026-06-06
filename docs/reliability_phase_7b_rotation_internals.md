@@ -1,11 +1,29 @@
 # Phase 7B — Multi-window Relative Strength, Two-Ring Rotation Engine, and Market-Internals Fragility Layer
 
-**Status**: Implemented + Codex fix round (×2) + polish round (lib + tests green).
-Review-only; not investment advice.
-**Suite**: `scripts/test_reliability_phase_7b_rotation_internals.py` — **103/103**,
+**Status**: Implemented + Codex fix round (×2) + polish rounds (×2) (lib + tests
+green). Review-only; not investment advice.
+**Suite**: `scripts/test_reliability_phase_7b_rotation_internals.py` — **109/109**,
 mock-only / offline.
 
-**Polish round (post-7B):** (1) `is_adjacent_session` now returns `False` for
+**Polish round 2 (Cockpit real-data verification — 3 display/integration bugs):**
+(1) **Fragility banner was invisible at level=normal** — Section A gated the line
+on `level != "normal"`, so a healthy market hid the monitor entirely. Root cause:
+the render guard, not a data/session-key problem (compute_market_fragility runs and
+stores `cockpit_fragility` correctly). Now the line ALWAYS renders after a refresh
+(incl. `normal`), showing the level + component values; a render-smoke presence
+assertion pins it. (2) **LONG why_now showed the 5D RS line** — root cause: the
+ranker populated `why_now_by_horizon[hz]` *after* `if lv is None: continue`, so when
+the entry engine returned no LONG levels that horizon was never written and the UI
+fell back to the dominant (SHORT/5D) list. The macro lens never touched
+`build_reason_codes` (red herring). Now per-horizon why_now is built for ALL
+horizons regardless of `lv`, and the UI no longer cross-falls-back once the map
+exists; a structural invariant pins that the RS window derives only from the
+`horizon` arg. (3) **Theme card "3M return" was the ABSOLUTE figure** while ranking
+uses excess vs QQQ — the headline in Cockpit Section B now shows `excess_3m`
+labeled "3月超额 (vs QQQ)" / "3M excess (vs QQQ)", and the Sector theme table gains
+a dedicated excess-vs-QQQ column beside the absolute returns.
+
+**Polish round 1 (post-7B):** (1) `is_adjacent_session` now returns `False` for
 `d1 == d2`, so a same-session duplicate snapshot can't extend a hysteresis chain.
 (2) The **leading-theme volume-shrink** flag (judgment call 5) is now implemented:
 `leading_theme_volume_shrink` aggregates constituent **dollar volume** (Close×Volume)

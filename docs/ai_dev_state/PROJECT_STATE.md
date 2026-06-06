@@ -8,10 +8,13 @@ follow. Prior status blob preserved verbatim afterward.)
 
 Makes rotation VISIBLE and market deterioration EARLY-VISIBLE. **All deterministic;
 no LLM.** Phase doc `docs/reliability_phase_7b_rotation_internals.md`; suite
-`scripts/test_reliability_phase_7b_rotation_internals.py` **103/103** (mock-only,
-incl. the Codex fix round + polish round: same-date adjacency, completed
-leading-theme volume-shrink flag, extended AST guard, WSL clock-drift defense).
-Full canonical set green: 7A 115, stopbleed 64, 6c_b
+`scripts/test_reliability_phase_7b_rotation_internals.py` **109/109** (mock-only,
+incl. Codex fix round + polish round 1: same-date adjacency, leading-theme
+volume-shrink flag, extended AST guard, WSL clock-drift; + polish round 2: always
+render the fragility line at level=normal, LONG why_now no longer falls back to the
+SHORT/5D RS line (per-horizon why_now built for all horizons), theme cards show
+EXCESS-3M vs QQQ not the absolute return). Full canonical set green: 7A 115,
+stopbleed 64, 6c_b
 47, equity_render_order 50, 6c_trading_desk 118, 6c_v3_entry_v4 47,
 6b_v3_horizon_scoring 189, theme_baskets 146, scanner_rotation_adapter 15.
 

@@ -156,7 +156,7 @@ def _render_market_themes(lang: str, dark: bool) -> None:
 
     headers = [
         t("theme_col_theme"), t("theme_col_1m"), t("theme_col_3m"),
-        t("theme_col_6m"), t("theme_col_score"),
+        t("theme_col_3m_excess"), t("theme_col_6m"), t("theme_col_score"),
         t("theme_col_stage"), t("theme_col_breadth"), t("theme_col_source"),
     ]
     head_html = "".join(
@@ -180,6 +180,9 @@ def _render_market_themes(lang: str, dark: bool) -> None:
             f"<td style='padding:6px 12px;color:{txt_c}'>{label}</td>"
             f"{_theme_ret_cell(r.return_1m, dark)}"
             f"{_theme_ret_cell(r.return_3m, dark)}"
+            # Item 3 — the EXCESS vs QQQ (ranking/stage basis) shown beside the
+            # absolute 3M return so the table's momentum columns match the score.
+            f"{_theme_ret_cell(getattr(r, 'excess_3m', None), dark)}"
             f"{_theme_ret_cell(r.return_6m, dark)}"
             f"<td style='text-align:right;color:{txt_c};font-weight:bold'>{score100}</td>"
             f"<td style='padding:6px 12px;color:{txt_c}'>{_stage_txt}</td>"
