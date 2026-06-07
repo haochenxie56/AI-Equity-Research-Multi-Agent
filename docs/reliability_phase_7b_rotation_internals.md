@@ -629,3 +629,58 @@ text and are batched into a single banner-wording pass:
   banner-wording round because it changes the banner token shape that §18 parity pins
   (`_gns_banner` / `cockpit_frag_gns` rendering), so it must land in the same pass that
   updates the parity tokens — not piecemeal.
+
+### Small-items / banner-wording round (B1 / B2 / B3) — DONE
+
+The deferred items above plus the vol_shrink calibration verdict landed together
+(branch `phase-small-items-fragility`). All three touch banner tokens, so each UI
+change updated the §18 parity assertions in the same commit. Suite count moved
+**187 → 193** (six new vol_shrink component checks: 12.3b firing-detail, 12.4b/12.4c
+single-condition no-fire, 12.4d/12.4e/12.4f threshold boundaries).
+
+* **B1 — distribution-day copy.** The banner rendered `派发日 5/25` / `distribution
+  days 5/25`, which reads as a *date*. Replaced with a full sentence — `25日内派发 N 次`
+  / `N distribution days in 25 sessions` — via a NEW key `cockpit_frag_dist_banner`
+  (existing `cockpit_frag_dist` is reused unchanged as the Macro-table row label, per
+  the "existing EN key → add a new key, don't mutate" policy). The None case still
+  renders `distribution days n/a`. Parity mirror `_dd_banner` updated.
+* **B2 — good-news-sold denominator.** Banner and Macro-table now render
+  numerator/denominator — `1/12 评估` / `1/12 evaluated` (new key
+  `cockpit_frag_gns_eval`). The denominator (`earnings_evaluated`) comes from the
+  SAME `_frag` snapshot as the numerator (single data vintage — no mixing). The
+  §18 structural classifier moved `earnings_evaluated` from EXCLUSIONS into
+  FIELD_RENDER (it now has a surface); `_gns_banner` / new `_gns_cell` mirrors updated.
+* **B3 — vol_shrink metric REPLACED (calibration-driven amendment).** The old
+  component (judgment call 5) aggregated total dollar volume and fired when the
+  recent/baseline ratio dropped below `leading_theme_vol_shrink_ratio` (0.85). The
+  calibration verdict: **that metric is structurally unable to fire during
+  distribution after a parabolic run** — late-stage distribution prints heavy
+  DOWN-day volume that inflates the recent total and holds the ratio ABOVE the
+  threshold exactly when buyers are withdrawing. It is replaced by an
+  **up/down-day volume decomposition** (`_theme_buyer_withdrawal`): the flag fires
+  only when UP-day dollar volume CONTRACTS (`up_ratio <
+  leading_theme_up_vol_contract_ratio`, 0.90) AND DOWN-day dollar volume EXPANDS
+  (`down_ratio > leading_theme_down_vol_expand_ratio`, 1.10). Single visible config
+  block; network-free / vintage-guarded / cache-only like every other component;
+  **tighten-only semantics unchanged** (the flag can only ADD a fragility point).
+  The snapshot field name (`leading_theme_volume_shrinking`, bool) and its trigger
+  code are unchanged, so **no new `_meta` field and no parity-surface change** result
+  from B3 — the field's existing FIELD_RENDER cell already covers it.
+
+  **Backfill evidence (2026-04-24 → 2026-06-05, 30 trading days, `--fetch`).** The
+  comparison run (`scripts/calibrate_fragility_backfill.py`, output
+  `docs/calibration/fragility_backfill_20260607.md` +
+  `fragility_volshrink_20260607.csv`) reports the new up/down ratios for `hbm_memory`
+  and `ai_chips` alongside the old dollar ratio. **Honest finding: neither metric
+  fired anywhere in the window, including the mid-May advance.** The decomposition
+  explains *why* — and it is the opposite of the buyer-withdrawal hypothesis: during
+  the mid-May run UP-day volume was *expanding*, not contracting (`hbm_memory`
+  up_ratio peaked ≈1.88 on 2026-05-18; `ai_chips` up_ratio ≈1.71 on 2026-05-06). The
+  advance was carried by rising up-day volume (genuine buying), so the old ratio's
+  1.4–1.8 reading was real expansion, not down-day distribution masking. By the late
+  window the signature *began* to lean the right way (e.g. `ai_chips` 2026-06-05:
+  up_ratio 1.18 vs down_ratio 1.51 — down expanding faster), but up_ratio never fell
+  below the 0.90 contraction gate, so the metric correctly did **not** fire. **The
+  metric ships on mechanical correctness; the 0.90 / 1.10 thresholds are the starting
+  calibration and were NOT tuned to force a signal** — the backfill is the evidence
+  base for any future threshold adjustment.

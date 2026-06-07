@@ -1534,6 +1534,10 @@ def _render_market_internals() -> None:
                 t("mi_triggered"): "✅" if fired else "—",
                 t("mi_degrade"): reason}
 
+    # B2: good-news-sold renders as numerator/denominator ("1/12") — the evaluated
+    # sample denominator from the SAME refresh (single vintage). None → n/a row.
+    _gns_v = frag.get("good_news_sold")
+    _gns_cell = f"{_gns_v}/{frag.get('earnings_evaluated')}" if _gns_v is not None else None
     rows = [
         _row(t("cockpit_frag_dist") + " SPY", frag.get("distribution_days_spy"),
              ("distribution_days_elevated", "distribution_days_high")),
@@ -1544,7 +1548,7 @@ def _render_market_internals() -> None:
         _row(t("cockpit_frag_breadth") + " >SMA50", frag.get("breadth_above_sma50"), ()),
         _row(t("mi_c_slope"), frag.get("breadth_slope"), ("breadth_narrowing",)),
         _row(t("mi_c_weak_bounce"), frag.get("weak_bounce"), ("weak_bounce",)),
-        _row(t("cockpit_frag_gns"), frag.get("good_news_sold"),
+        _row(t("cockpit_frag_gns"), _gns_cell,
              ("good_news_sold_elevated", "good_news_sold_high"),
              # Show the reason whenever present — including partial_frame_coverage
              # on a reported number (skipped > evaluated under the scan scope).

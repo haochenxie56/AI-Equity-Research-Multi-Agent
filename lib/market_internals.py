@@ -61,15 +61,23 @@ INTERNALS_CONFIG = {
     "rally_down_day_pct": -0.01,        # a session <= this defines the down day
     "volume_shrink_ratio": 0.90,        # bounce volume < this × down-day volume
 
-    # Leading-theme volume shrink ("buying drying up" in the leaders). Per the
-    # top-2 leading themes, aggregate constituent DOLLAR volume (Close×Volume,
-    # which normalizes across price levels) over a recent window vs a trailing
-    # baseline; shrinking beyond the ratio fires the flag (composite weight +1,
-    # see _score_components).
+    # Leading-theme BUYER-WITHDRAWAL volume signature ("buying drying up" in the
+    # leaders). REPLACES the old total-dollar-volume recent/baseline ratio — see the
+    # ``leading_theme_volume_shrink`` docstring for the calibration rationale (the
+    # old ratio is structurally unable to fire during distribution after a parabolic
+    # run). Per the top leader/ex-leader themes, decompose constituent DOLLAR volume
+    # (Close×Volume, normalizes across price levels) into UP-day vs DOWN-day buckets
+    # over a recent window vs a trailing baseline; the flag fires when up-day volume
+    # CONTRACTS while down-day volume EXPANDS — rising prices on thinning volume,
+    # selling on rising volume (composite weight +1, tighten-only, see
+    # ``_score_components``).
     "leading_theme_count": 3,             # how many leader/ex-leader themes to inspect
     "leading_theme_vol_recent_days": 10,  # recent window (sessions)
     "leading_theme_vol_baseline_days": 25,  # trailing baseline window (sessions)
-    "leading_theme_vol_shrink_ratio": 0.85,  # recent/baseline below this → shrinking
+    "leading_theme_up_day_pct": 0.0,      # a constituent session return > this is an up day
+    "leading_theme_down_day_pct": 0.0,    # a constituent session return < this is a down day
+    "leading_theme_up_vol_contract_ratio": 0.90,   # recent up-vol < this × baseline up-vol → contracting
+    "leading_theme_down_vol_expand_ratio": 1.10,   # recent down-vol > this × baseline down-vol → expanding
     "leading_theme_min_constituents": 5,  # data floor; below → flag stays degraded
 
     # Composite point thresholds.
@@ -311,34 +319,71 @@ def detect_weak_bounce(closes, volumes, down_day_pct: Optional[float] = None,
     return None
 
 
-def _theme_dollar_volume_ratio(constituent_frames: dict, recent_days: int,
-                               baseline_days: int, min_constituents: int):
-    """(recent/baseline dollar-volume ratio, n_used) for one theme, or (None, 0).
+def _theme_buyer_withdrawal(constituent_frames: dict, recent_days: int,
+                            baseline_days: int, min_constituents: int,
+                            cfg: dict):
+    """(detail | None, n_used) for one theme's buyer-withdrawal volume signature.
 
-    Per constituent: dollar volume = Close × Volume. ``recent`` = mean of the last
-    ``recent_days`` sessions; ``baseline`` = mean of the ``baseline_days`` sessions
-    immediately before that. The theme ratio is Σ(recent) / Σ(baseline) over the
-    constituents with enough history (≥ recent+baseline bars). Returns (None, n)
-    when fewer than ``min_constituents`` are usable or the baseline sum is ≤ 0."""
+    The signature = UP-day dollar volume CONTRACTING in the recent window while
+    DOWN-day dollar volume EXPANDS (rising prices on thinning volume; selling on
+    rising volume). Per constituent: dollar volume = Close × Volume (normalizes
+    across price levels); each session is classified up/down by its close-to-close
+    return (``leading_theme_up_day_pct`` / ``leading_theme_down_day_pct``). Within
+    the recent window (last ``recent_days`` sessions) and the baseline window (the
+    ``baseline_days`` immediately before it), the per-bucket MEAN dollar volume is
+    summed across the constituents with enough history (≥ recent+baseline+1 bars AND
+    at least one up day and one down day in BOTH windows, so each bucket is
+    comparable). Returns (None, n) when fewer than ``min_constituents`` constituents
+    are usable or a baseline bucket sum is ≤ 0.
+
+    Fires iff  recent_up   <  up_contract_ratio  × baseline_up    (up-day contraction)
+          AND  recent_down >  down_expand_ratio × baseline_down  (down-day expansion).
+    """
     need = recent_days + baseline_days
-    total_recent = total_baseline = 0.0
+    up_contract = float(cfg["leading_theme_up_vol_contract_ratio"])
+    down_expand = float(cfg["leading_theme_down_vol_expand_ratio"])
+    up_pct = float(cfg["leading_theme_up_day_pct"])
+    down_pct = float(cfg["leading_theme_down_day_pct"])
+    r_up = r_down = b_up = b_down = 0.0
     used = 0
+
+    def _mean(xs):
+        return (sum(xs) / len(xs)) if xs else None
+
     for df in (constituent_frames or {}).values():
         closes, volumes = _close_volume_lists(df)
+        closes, volumes = _seq(closes), _seq(volumes)
         n = min(len(closes), len(volumes))
-        if n < need:
+        # need one prior close for the first window return → need+1 bars.
+        if n < need + 1:
             continue
-        dollar = [closes[i] * volumes[i] for i in range(n)]
-        recent = dollar[-recent_days:]
-        baseline = dollar[-need:-recent_days]
-        if not recent or not baseline:
+        closes, volumes = closes[-(need + 1):], volumes[-(need + 1):]
+        # Returns + dollar volume aligned to sessions 1..need (each has a prior bar).
+        rets = [(closes[i] / closes[i - 1] - 1.0) if closes[i - 1] > 0 else 0.0
+                for i in range(1, need + 1)]
+        dollar = [closes[i] * volumes[i] for i in range(1, need + 1)]
+        # First baseline_days = baseline window; last recent_days = recent window.
+        base_r, base_d = rets[:baseline_days], dollar[:baseline_days]
+        rec_r, rec_d = rets[-recent_days:], dollar[-recent_days:]
+        ru = _mean([d for r, d in zip(rec_r, rec_d) if r > up_pct])
+        rd = _mean([d for r, d in zip(rec_r, rec_d) if r < down_pct])
+        bu = _mean([d for r, d in zip(base_r, base_d) if r > up_pct])
+        bd = _mean([d for r, d in zip(base_r, base_d) if r < down_pct])
+        # Both day types must exist in BOTH windows for a comparable constituent.
+        if None in (ru, rd, bu, bd):
             continue
         used += 1
-        total_recent += sum(recent) / len(recent)
-        total_baseline += sum(baseline) / len(baseline)
-    if used < min_constituents or total_baseline <= 0:
+        r_up += ru
+        r_down += rd
+        b_up += bu
+        b_down += bd
+    if used < min_constituents or b_up <= 0 or b_down <= 0:
         return None, used
-    return total_recent / total_baseline, used
+    up_ratio = r_up / b_up
+    down_ratio = r_down / b_down
+    fired = (up_ratio < up_contract) and (down_ratio > down_expand)
+    return ({"up_ratio": round(up_ratio, 4), "down_ratio": round(down_ratio, 4),
+             "n_used": used, "fired": bool(fired)}, used)
 
 
 def _select_leading_themes(themes, count: int) -> list:
@@ -362,17 +407,31 @@ def _select_leading_themes(themes, count: int) -> list:
 def leading_theme_volume_shrink(themes, frame_loader, config: Optional[dict] = None):
     """(shrinking_flag, degraded, detail) for the top leading themes.
 
-    Aggregates constituent dollar volume from the SAME cached OHLCV the breadth
-    computation uses (``frame_loader``, cache-only — no new fetch, no per-ticker
-    network on the ranking path). The flag fires when ANY inspected leading theme's
-    recent/baseline ratio is below ``leading_theme_vol_shrink_ratio``. ``degraded``
-    is True when NO inspected theme had enough constituents with volume data."""
+    Decomposes constituent dollar volume into UP-day vs DOWN-day buckets from the
+    SAME cached OHLCV the breadth computation uses (``frame_loader``, cache-only — no
+    new fetch, no per-ticker network on the ranking path). The flag fires when ANY
+    inspected leading theme shows the **buyer-withdrawal signature** — up-day volume
+    CONTRACTING (recent up-vol < ``leading_theme_up_vol_contract_ratio`` × baseline
+    up-vol) while down-day volume EXPANDS (recent down-vol >
+    ``leading_theme_down_vol_expand_ratio`` × baseline down-vol). ``degraded`` is
+    True when NO inspected theme had enough usable constituents.
+
+    Calibration-driven amendment (this round): this REPLACES the old total-dollar-
+    volume recent/baseline ratio (``leading_theme_vol_shrink_ratio``). The old metric
+    lumped up-day and down-day volume into a single sum, so it is **structurally
+    unable to fire during distribution after a parabolic run**: late-stage
+    distribution prints heavy DOWN-day volume that inflates the recent total, holding
+    (or raising) the recent/baseline ratio ABOVE the shrink threshold exactly when
+    buyers are withdrawing. The 30-day backfill confirmed this — the old ratio read
+    1.4–1.8 (expansion, never shrinking) right through the mid-May AVGO/ai_chips
+    distribution. Splitting the buckets isolates the real signal: buyers thinning out
+    on up days *and* sellers showing up on down days. Tighten-only semantics are
+    unchanged (the flag can only ADD a fragility point, never relax anything)."""
     cfg = config or INTERNALS_CONFIG
     if not themes or frame_loader is None:
         return False, True, {}
     recent_days = int(cfg["leading_theme_vol_recent_days"])
     baseline_days = int(cfg["leading_theme_vol_baseline_days"])
-    shrink_ratio = float(cfg["leading_theme_vol_shrink_ratio"])
     min_const = int(cfg["leading_theme_min_constituents"])
     leaders = _select_leading_themes(themes, int(cfg["leading_theme_count"]))
 
@@ -387,16 +446,15 @@ def leading_theme_volume_shrink(themes, frame_loader, config: Optional[dict] = N
                 frames[tk] = frame_loader(tk)
             except Exception:  # noqa: BLE001
                 frames[tk] = None
-        ratio, used = _theme_dollar_volume_ratio(
-            frames, recent_days, baseline_days, min_const)
+        sig, used = _theme_buyer_withdrawal(
+            frames, recent_days, baseline_days, min_const, cfg)
         key = getattr(th, "theme_key", "?")
-        if ratio is None:
-            detail[key] = {"ratio": None, "n_used": used}
+        if sig is None:
+            detail[key] = {"signature": None, "n_used": used}
             continue
         any_evaluable = True
-        detail[key] = {"ratio": round(ratio, 4), "n_used": used,
-                       "shrinking": ratio < shrink_ratio}
-        if ratio < shrink_ratio:
+        detail[key] = dict(sig)
+        if sig["fired"]:
             shrinking = True
     return shrinking, (not any_evaluable), detail
 
