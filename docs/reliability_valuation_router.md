@@ -1,7 +1,9 @@
 # Phase — Valuation Refactor v1 (method router + growth-profile peers)
 
-**Status:** Implemented — **under independent review (two REQUEST CHANGES fix
-rounds + documentation-closure round applied); NOT yet closed.** Suite
+**Status:** **COMPLETE & CLOSED** — the two REQUEST CHANGES fix rounds + the
+documentation-closure round were re-reviewed and **APPROVED at ca5ad14**. Final
+verdict: all five REQUEST CHANGES findings resolved, deterministic computation
+preserved, canonical sweep green; the phase is closed. Suite
 `scripts/test_reliability_valuation_router.py` **104/104** (54/54 originally →
 81/81 after fix round 1 → 104/104 after fix round 2); full canonical set green
 (stopbleed 65/65, 7A 115/115, 7B 187/187, 6c_b 47/47, equity_render_order 50/50,
@@ -20,7 +22,8 @@ theme_baskets 146/146, scanner_rotation_adapter 15/15).
   maps (invalidate → recompute) instead of tolerating them.
 - **F4 (I8)** — industry/sector hints are matched by **token boundary**
   (`industry_has_hint`), not substring containment.
-- **F5 (I10)** — status docs aligned: implemented, under review, not closed.
+- **F5 (I10)** — status docs aligned (now updated to COMPLETE & CLOSED on re-review
+  approval at ca5ad14).
 
 ## Fix round 2 (re-review — live cyclical band + data sanity)
 

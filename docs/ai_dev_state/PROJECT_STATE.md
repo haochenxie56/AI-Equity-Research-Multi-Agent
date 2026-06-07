@@ -1,12 +1,11 @@
 # AI Investment Agent — Project State
 
 **Last updated**: 2026-06-06 (**Valuation Refactor v1 — method router +
-growth-profile peers — Implemented; UNDER INDEPENDENT REVIEW (REQUEST CHANGES fix
-round applied; not yet closed)** — see the section immediately below; Phase 7B,
-Valuation Stop-the-Bleed, and Phase 7A sections follow. Prior status blob
-preserved verbatim afterward.)
+growth-profile peers — COMPLETE & CLOSED (re-review APPROVED at ca5ad14)** — see
+the section immediately below; Phase 7B, Valuation Stop-the-Bleed, and Phase 7A
+sections follow. Prior status blob preserved verbatim afterward.)
 
-## Valuation Refactor v1 — Method Router + Growth-Profile Peers — Implemented; Under Independent Review (CURRENT TASK)
+## Valuation Refactor v1 — Method Router + Growth-Profile Peers — COMPLETE & CLOSED (re-review APPROVED at ca5ad14)
 
 Gives each company type an appropriate valuation method menu so the
 irreconcilable-anchor rate materially drops (the KTOS class no longer dead-ends at
@@ -18,7 +17,8 @@ are Phase 8). Phase doc `docs/reliability_valuation_router.md`; suite
 theme_baskets 146/146, scanner_rotation_adapter 15/15).
 
 **Review status:** independent review returned **REQUEST CHANGES**; all five
-findings fixed (NOT yet closed — closure happens after re-review approves):
+findings fixed, and the documentation-closure round (ca5ad14) was **re-reviewed
+and APPROVED — the phase is CLOSED**. Findings as resolved:
 **F1** growth_unprofitable excludes DCF structurally (menu, not a computability
 guard); **F2** cyclical PB/PS band is a real ≤4y annual band (yfinance annual
 fundamentals + cached prices, page path only, baked into the anchor cache so

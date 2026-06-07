@@ -1118,9 +1118,13 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "cockpit_hub_internals_note":   "内部结构为收紧型预警，不改变市场状态判定",
         "cockpit_hub_internals_unavail":"暂不可用",
         "cockpit_frag_dist":            "派发日",
+        # B1: 完整句式，避免「5/25」被误读为日期。
+        "cockpit_frag_dist_banner":     "25日内派发 {n} 次",
         "cockpit_frag_breadth":         "广度",
         "cockpit_frag_gns":             "利好遭抛",
         "cockpit_frag_gns_unit":        " 例",
+        # B2: 已评估样本分母的标签（「1/12 评估」）。
+        "cockpit_frag_gns_eval":        "评估",
         "cockpit_frag_gns_concept":     "利好遭抛 = 利好出尽式抛售 (sell-the-news)：财报利好后次日放量下跌的名单占比。",
         "cockpit_frag_na":              "无数据",
         # Fragility level badge names + one-line tighten-only explainer.
@@ -2542,9 +2546,13 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "cockpit_hub_internals_note":   "Internals are a tighten-only early warning; the regime label is unchanged.",
         "cockpit_hub_internals_unavail":"unavailable",
         "cockpit_frag_dist":            "distribution days",
+        # B1: full sentence for the banner so "5/25" is never misread as a date.
+        "cockpit_frag_dist_banner":     "{n} distribution days in 25 sessions",
         "cockpit_frag_breadth":         "breadth",
         "cockpit_frag_gns":             "good-news-sold",
         "cockpit_frag_gns_unit":        "",
+        # B2: label for the evaluated-sample denominator ("1/12 evaluated").
+        "cockpit_frag_gns_eval":        "evaluated",
         "cockpit_frag_gns_concept":     "good-news-sold = sell-the-news: share of post-beat names that sold off on the next session.",
         "cockpit_frag_na":              "n/a",
         # Fragility level badge names + one-line tighten-only explainer.

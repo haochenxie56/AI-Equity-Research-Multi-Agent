@@ -554,36 +554,88 @@ _dup, _ = mi.apply_hysteresis(
 check("12.2 duplicate same-date record does not escalate", _dup == "normal", _dup)
 
 
-def _vol_frame(close, vol):
-    return _df([close] * len(vol), vol)
+# --- Item 2: leading-theme volume shrink (BUYER-WITHDRAWAL signature) ---
+# REPLACES the old total-dollar-volume recent/baseline ratio. The signature fires
+# when up-day volume CONTRACTS while down-day volume EXPANDS. Build a 40-session
+# constituent frame (need recent10 + baseline25 + 1 prior bar) that alternates
+# up/down days; per-bucket / per-window volume decides whether the signature fires.
+def _bw_frame(ru, rd, bu, bd, recent_days=10, baseline_days=25):
+    """Constituent frame with recent up/down dollar-vol driven by ru/rd and
+    baseline up/down by bu/bd. Closes alternate +1%/-1% (price ≈ flat) so the
+    aggregate up/down ratios track the supplied volumes."""
+    import pandas as pd
+    n = recent_days + baseline_days + 1
+    closes, vols = [100.0], [bu]
+    for i in range(1, n):
+        up = (i % 2 == 1)               # i=1 is up; strict alternation
+        closes.append(closes[-1] * (1.01 if up else 0.99))
+        in_recent = i > baseline_days   # last recent_days sessions
+        if not in_recent:
+            vols.append(bu if up else bd)
+        else:
+            vols.append(ru if up else rd)
+    idx = pd.bdate_range(end="2026-06-05", periods=len(closes))
+    return pd.DataFrame({"Close": closes, "Volume": vols}, index=idx)
 
 
-# --- Item 2: leading-theme volume shrink ---
-# 40 sessions: high baseline volume, then a low recent 10d window → ratio ≪ 0.85.
-_shrink_vol = [1_000_000.0] * 30 + [100_000.0] * 10
-_steady_vol = [1_000_000.0] * 40
-_shrink_consts = [f"S{i}" for i in range(6)]
-_theme_shrink = _NS(theme_key="ai_chips", constituents=_shrink_consts,
-                    stage="leading", momentum_score=0.9)
-_flag, _deg, _detail = mi.leading_theme_volume_shrink(
-    [_theme_shrink], lambda tk: _vol_frame(100.0, _shrink_vol))
-check("12.3 shrink fixture fires the volume flag (not degraded)",
+_bw_consts = [f"S{i}" for i in range(6)]
+_theme_bw = _NS(theme_key="ai_chips", constituents=_bw_consts,
+                stage="leading", momentum_score=0.9)
+# Firing: recent up-vol LOW (0.8M vs 2M baseline → contraction), recent down-vol
+# HIGH (3M vs 1M baseline → expansion).
+_fire = _bw_frame(0.8e6, 3.0e6, 2.0e6, 1.0e6)
+_flag, _deg, _detail = mi.leading_theme_volume_shrink([_theme_bw], lambda tk: _fire)
+check("12.3 buyer-withdrawal fixture fires the volume flag (not degraded)",
       _flag is True and _deg is False, f"{_flag}/{_deg}/{_detail}")
-# Steady volume → ratio ~1.0 → no shrink.
-_flag2, _deg2, _ = mi.leading_theme_volume_shrink(
-    [_theme_shrink], lambda tk: _vol_frame(100.0, _steady_vol))
-check("12.4 steady volume does not fire the flag", _flag2 is False and _deg2 is False)
+_d = _detail["ai_chips"]
+_ur, _dr = _d["up_ratio"], _d["down_ratio"]
+check("12.3b detail reports up-contraction (<1) and down-expansion (>1) ratios",
+      _ur < 1.0 and _dr > 1.0, f"up={_ur} down={_dr}")
+
+# Steady: recent == baseline character → up_ratio≈down_ratio≈1 → no fire.
+_steady = _bw_frame(2.0e6, 1.0e6, 2.0e6, 1.0e6)
+_flag2, _deg2, _det2 = mi.leading_theme_volume_shrink([_theme_bw], lambda tk: _steady)
+check("12.4 steady up/down volume does not fire the flag",
+      _flag2 is False and _deg2 is False, f"{_flag2}/{_deg2}/{_det2}")
+
+# Only up-contraction (down-day volume unchanged) → BOTH conditions required → no fire.
+_up_only = _bw_frame(0.8e6, 1.0e6, 2.0e6, 1.0e6)
+_flag_uo, _deg_uo, _det_uo = mi.leading_theme_volume_shrink([_theme_bw], lambda tk: _up_only)
+check("12.4b up-contraction WITHOUT down-expansion does not fire (both required)",
+      _flag_uo is False and _deg_uo is False, f"{_flag_uo}/{_det_uo}")
+# Only down-expansion (up-day volume unchanged) → no fire.
+_down_only = _bw_frame(2.0e6, 3.0e6, 2.0e6, 1.0e6)
+_flag_do, _deg_do, _det_do = mi.leading_theme_volume_shrink([_theme_bw], lambda tk: _down_only)
+check("12.4c down-expansion WITHOUT up-contraction does not fire (both required)",
+      _flag_do is False and _deg_do is False, f"{_flag_do}/{_det_do}")
+
+# Threshold boundaries — drive the measured ratios against thresholds set just on
+# either side (strict < / >), so the exact comparison is pinned without data drift.
+def _cfg(up_thr, down_thr):
+    return {**mi.INTERNALS_CONFIG,
+            "leading_theme_up_vol_contract_ratio": up_thr,
+            "leading_theme_down_vol_expand_ratio": down_thr}
+
+_fb = mi.leading_theme_volume_shrink([_theme_bw], lambda tk: _fire,
+                                     _cfg(_ur + 0.01, _dr - 0.01))[0]
+check("12.4d fires when both thresholds sit just outside the measured ratios", _fb is True)
+_ufail = mi.leading_theme_volume_shrink([_theme_bw], lambda tk: _fire,
+                                        _cfg(_ur - 0.01, _dr - 0.01))[0]
+check("12.4e up-threshold just inside the measured up-ratio → no fire", _ufail is False)
+_dfail = mi.leading_theme_volume_shrink([_theme_bw], lambda tk: _fire,
+                                        _cfg(_ur + 0.01, _dr + 0.01))[0]
+check("12.4f down-threshold just inside the measured down-ratio → no fire", _dfail is False)
+
 # Insufficient data (too few constituents with usable history) → stays degraded.
 _theme_thin = _NS(theme_key="ai_chips", constituents=["A", "B"],
                   stage="leading", momentum_score=0.9)
-_flag3, _deg3, _ = mi.leading_theme_volume_shrink(
-    [_theme_thin], lambda tk: _vol_frame(100.0, _shrink_vol))
+_flag3, _deg3, _ = mi.leading_theme_volume_shrink([_theme_thin], lambda tk: _fire)
 check("12.5 insufficient-data fixture stays degraded (flag False)",
       _flag3 is False and _deg3 is True)
 # Flag contributes points ONLY when not degraded: via the orchestrator a degraded
 # volume read leaves the component False (no points) and lists it in degraded.
 _orch = mi.compute_market_fragility(
-    themes=[_theme_thin], frame_loader=lambda tk: _vol_frame(100.0, _shrink_vol))
+    themes=[_theme_thin], frame_loader=lambda tk: _fire)
 check("12.6 orchestrator: degraded volume → component False + listed",
       _orch.components.leading_theme_volume_shrinking is False
       and "leading_theme_volume" in _orch.degraded)
@@ -785,9 +837,13 @@ try:
         return " ".join(str(getattr(_m, "value", "")) for _m in _a.markdown)
 
     _blob0 = _render_frag({"fragility_level": "normal", "distribution_days_spy": 3,
-                           "breadth_above_sma20": 0.55, "good_news_sold": 0})
-    check("14.12 good_news_sold=0 renders as '0' (not suppressed)",
-          "good-news-sold: 0" in _blob0, _blob0[:200])
+                           "breadth_above_sma20": 0.55, "good_news_sold": 0,
+                           "earnings_evaluated": 5})
+    # B1: distribution count renders as a full sentence (never "3/25"). B2:
+    # good-news-sold=0 still renders (not suppressed) WITH its evaluated denominator.
+    check("14.12 good_news_sold=0 renders as '0/5 evaluated' (not suppressed)",
+          "good-news-sold: 0/5 evaluated" in _blob0
+          and "3 distribution days in 25 sessions" in _blob0, _blob0[:200])
     _blobN = _render_frag({"fragility_level": "normal", "distribution_days_spy": None,
                            "breadth_above_sma20": None, "good_news_sold": None})
     check("14.13 None components render the n/a marker, never omitted",
@@ -942,6 +998,7 @@ check("16.5 rolling series carries per-day points (3-tuples)",
 # 16.6 — Item 1: the canonical session object is the FLAT snapshot — level AND
 # components are top-level (to_dict() nests components → the banner-n/a bug).
 _high = mi.compute_fragility(distribution_days_spy=8, good_news_sold=3,
+                             earnings_evaluated=6,
                              prior_level="high", recent_raw_levels=["high", "high"])
 _flat = mi.fragility_snapshot(_high, "2026-06-05")
 _nested = _high.to_dict()
@@ -968,8 +1025,8 @@ try:
     _a4.run()
     _b4 = " ".join(str(getattr(_m, "value", "")) for _m in _a4.markdown)
     check("16.10 non-normal banner shows level AND non-null component numbers",
-          "high" in _b4 and "distribution days 8/25" in _b4
-          and "good-news-sold: 3" in _b4, _b4[:240])
+          "high" in _b4 and "8 distribution days in 25 sessions" in _b4
+          and "good-news-sold: 3/6 evaluated" in _b4, _b4[:240])
 except Exception as _e:  # noqa: BLE001
     check("16.10 banner one-source render-smoke ran", False, f"AppTest: {_e}")
 
@@ -1377,9 +1434,11 @@ def _lvl_token(level, lang="en"):
 
 
 def _dd_banner(m):
+    # B1: the banner renders a full sentence ("N distribution days in 25 sessions"),
+    # mirroring pages/7; None → the n/a marker ("distribution days n/a").
     dd = max([x for x in (m.get("distribution_days_spy"), m.get("distribution_days_qqq"))
               if x is not None], default=None)
-    return f"{dd}/25" if dd is not None else _NA
+    return _EN["cockpit_frag_dist_banner"].format(n=dd) if dd is not None else _NA
 
 
 def _breadth_banner(m):
@@ -1392,11 +1451,20 @@ def _breadth_banner(m):
 
 
 def _gns_banner(m):
+    # B2: numerator/denominator with the evaluated label ("1/12 evaluated"),
+    # mirroring pages/7. None → the n/a marker (+ reason when present).
     g, r = m.get("good_news_sold"), str(m.get("earnings_degrade_reason") or "")
-    lbl = _EN["cockpit_frag_gns"]
+    ev = m.get("earnings_evaluated")
+    lbl, evl = _EN["cockpit_frag_gns"], _EN["cockpit_frag_gns_eval"]
     if g is not None:
-        return f"{lbl}: {g}" + (f" ({r})" if r else "")
+        return f"{lbl}: {g}/{ev} {evl}" + (f" ({r})" if r else "")
     return f"{lbl}: " + (f"{_NA} ({r})" if r else _NA)
+
+
+def _gns_cell(m):
+    """Mirror the Macro gns row value: 'g/ev' when evaluated, else n/a (B2)."""
+    g = m.get("good_news_sold")
+    return _NA if g is None else f"{g}/{m.get('earnings_evaluated')}"
 
 
 def _macro_cell(v):
@@ -1428,7 +1496,11 @@ FIELD_RENDER = {
     "breadth_slope": lambda m: [("cell", _macro_cell(m.get("breadth_slope")))],
     "weak_bounce": lambda m: [("cell", _macro_cell(m.get("weak_bounce")))],
     "good_news_sold": lambda m: [("banner", _gns_banner(m)),
-                                 ("cell", _macro_cell(m.get("good_news_sold")))],
+                                 ("cell", _gns_cell(m))],
+    # B2: the evaluated denominator is now surfaced (banner "g/ev evaluated" +
+    # Macro cell "g/ev"); both surfaces carry it, so a diverged count is caught.
+    "earnings_evaluated": lambda m: ([("banner", _gns_banner(m)), ("cell", _gns_cell(m))]
+                                     if m.get("good_news_sold") is not None else []),
     "earnings_degrade_reason": lambda m: (
         [("banner", _gns_banner(m))]
         + ([("macro", str(m["earnings_degrade_reason"]))] if m.get("earnings_degrade_reason") else [])),
@@ -1462,7 +1534,6 @@ EXCLUSIONS = {
     "fragility_adjacency_degraded": "folded into fragility_degraded as 'hysteresis_adjacency'; no distinct surface",
     "rolling_window": "config echo (window length); the trend renders the series itself, length implicit",
     "leading_theme_breadth_narrowing": "scaffolded component (always False, no history); no table row, folded into degraded",
-    "earnings_evaluated": "internal count behind good_news_sold; surfaces render good_news_sold + skipped, not evaluated",
 }
 
 # Macro internals table: component-ROW label → the trigger code(s) that put a ✅ in

@@ -186,6 +186,26 @@ investment-agents/
   parity test must FAIL if the rendered banner and the `_meta` written by that same
   refresh disagree.
 
+### Development Discipline (additional rules)
+
+- **Real-path verification DoD.** Any phase that touches a data path must include
+  **at least one test that drives the REAL fetch/refresh path** — one that would
+  have FAILED on the broken commit it is meant to guard. A fixture-injected
+  shortcut (seeding `session_state` / passing a prebuilt reading straight into the
+  renderer) does **not** satisfy acceptance: it bypasses exactly the call-site
+  details (loader choice, universe argument, field nesting) where the documented
+  mismatches live. The real-path test is the Definition of Done, not an extra.
+- **Fixture honesty.** Tests MAY stub network transport (mock the fetch/calendar
+  call), but MUST NOT fabricate field VALUES that contradict documented production
+  reality (e.g. inventing live yfinance `industry` strings that the real API never
+  returns). When the real live values have been dumped during diagnosis, fixtures
+  MUST use those dumped values rather than convenient stand-ins. A test that passes
+  only because its fixture lies is a false green.
+- **Session startup.** Run `git stash list` at the start of every session. A
+  **non-empty stash must be reported to the user before any git operation**. Never
+  `git stash pop` without listing first — popping blind can silently resurrect or
+  clobber unrelated work.
+
 ### Phase 0: Reliability Foundation
 
 Phase 0 is the **Reliability Foundation**. Its purpose is to create a standalone evidence and validation layer that can later wrap existing deterministic tools and LLM outputs **without changing** the current Streamlit UI or the existing research workflow.
@@ -232,3 +252,41 @@ Expected behavior after Phase 0 is implemented:
 - A run directory is created under `research/runs/`.
 - `tool_results.jsonl` is persisted.
 - `evidence_manifest.json` is persisted.
+
+---
+
+## Development Discipline
+
+### Git Delegation Rules
+
+- **Push/merge only after an explicit review APPROVE relayed by the user.** Do not
+  push branches or merge into `main` on your own initiative; wait for the user to
+  relay an approval.
+- **Merges to `main` are plain `--no-ff` merge commits.** Never rebase or
+  force-push published history. Preserve the original branch tips as visible merge
+  parents.
+- **Any unexpected git state → stop and report.** Never clean up unilaterally
+  (no blind `stash pop`, no destructive resets, no branch deletion) when the
+  repository is not in the state the task expects. Surface the discrepancy to the
+  user first.
+
+### Single-Actor Rule
+
+- **One working tree = one agent session at a time.** While a git-touching task is
+  in flight, no second agent session, external tool, or Windows-side edit may touch
+  the repository. Concurrent mutation is the documented cause of aborted runs.
+- **Parallel work requires separate git worktrees.** If two streams of work must
+  proceed at once, give each its own worktree rather than sharing one tree.
+
+### Serial Barrier
+
+- **Git-topology tasks (merge / push / branch surgery) are serial barriers.**
+  Dependent prompts must wait for the completion report of the topology task before
+  starting. Nothing that depends on the new `main` may begin until the merge/push
+  report has landed.
+
+### Diagnostic Scripts
+
+- **Throwaway diagnostic scripts live in `scripts/diag/`**, which is gitignored
+  except for its `README.md`. Do not commit ad-hoc diagnostic dumps or one-off
+  probe scripts into tracked paths.

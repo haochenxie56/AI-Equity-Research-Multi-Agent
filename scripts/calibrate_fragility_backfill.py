@@ -75,6 +75,73 @@ def _today_str() -> str:
     return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d")
 
 
+# ── vol_shrink calibration: new buyer-withdrawal metric vs the OLD dollar ratio ──
+# The OLD metric (total-dollar-volume recent/baseline ratio) was REMOVED from the
+# library this round; it is reimplemented HERE, local to the calibration tool, purely
+# so the backfill can report the old reading alongside the new one as evidence.
+VOL_COMPARE_THEMES = ("hbm_memory", "ai_chips")
+
+
+def _theme_obj(theme_key: str):
+    """A minimal ThemeMomentum-like object (constituents only) for a fixed theme."""
+    from types import SimpleNamespace
+    try:
+        from lib.theme_baskets import THEME_BASKETS
+        cfg_t = THEME_BASKETS.get(theme_key) or {}
+    except Exception:  # noqa: BLE001
+        cfg_t = {}
+    return SimpleNamespace(theme_key=theme_key,
+                           constituents=list(cfg_t.get("constituents", [])),
+                           stage="leading", momentum_score=1.0)
+
+
+def _old_dollar_ratio(frames, recent_days, baseline_days, min_const):
+    """The OLD metric: Σ(recent mean dollar-vol)/Σ(baseline mean dollar-vol), or None.
+
+    Reimplemented verbatim from the removed ``mi._theme_dollar_volume_ratio`` so the
+    backfill can show what the old metric WOULD have read on each day."""
+    need = recent_days + baseline_days
+    tr = tb = 0.0
+    used = 0
+    for df in (frames or {}).values():
+        c, v = mi._close_volume_lists(df)
+        n = min(len(c), len(v))
+        if n < need:
+            continue
+        dollar = [c[i] * v[i] for i in range(n)]
+        recent = dollar[-recent_days:]
+        baseline = dollar[-need:-recent_days]
+        if not recent or not baseline:
+            continue
+        used += 1
+        tr += sum(recent) / len(recent)
+        tb += sum(baseline) / len(baseline)
+    if used < min_const or tb <= 0:
+        return None, used
+    return tr / tb, used
+
+
+def _vol_metrics_asof(theme_key, frame_loader, as_of, cfg):
+    """(new_sig|None, old_ratio|None, n_used) for a fixed theme AS OF ``as_of``.
+
+    Both metrics read the SAME constituent frames truncated to bars <= as_of (the
+    library's own as-of loader), so the new/old comparison is on identical data."""
+    rec = int(cfg["leading_theme_vol_recent_days"])
+    base = int(cfg["leading_theme_vol_baseline_days"])
+    minc = int(cfg["leading_theme_min_constituents"])
+    th = _theme_obj(theme_key)
+    loader = mi._trunc_loader(frame_loader, as_of)
+    frames = {}
+    for tk in th.constituents:
+        try:
+            frames[tk] = loader(tk)
+        except Exception:  # noqa: BLE001
+            frames[tk] = None
+    new_sig, _ = mi._theme_buyer_withdrawal(frames, rec, base, minc, cfg)
+    old_ratio, _ = _old_dollar_ratio(frames, rec, base, minc)
+    return new_sig, old_ratio
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Fragility backfill calibration tool")
     ap.add_argument("--days", type=int, default=30, help="trading days to backfill")
@@ -166,6 +233,24 @@ def main() -> int:
             "effective": effective,
         })
 
+    # ── vol_shrink metric comparison (B3): new buyer-withdrawal vs old ratio ────
+    # Day-by-day, for hbm_memory and ai_chips, report the NEW metric (up/down ratios
+    # + fired) alongside what the OLD dollar-volume ratio WOULD have read.
+    vol_cols = ["date"]
+    for _tk in VOL_COMPARE_THEMES:
+        vol_cols += [f"{_tk}_old_ratio", f"{_tk}_up_ratio",
+                     f"{_tk}_down_ratio", f"{_tk}_fired"]
+    vol_rows = []
+    for d in window_dates:
+        vr = {"date": str(d)}
+        for _tk in VOL_COMPARE_THEMES:
+            new_sig, old_ratio = _vol_metrics_asof(_tk, frame_loader, d, cfg)
+            vr[f"{_tk}_old_ratio"] = ("" if old_ratio is None else round(old_ratio, 4))
+            vr[f"{_tk}_up_ratio"] = ("" if not new_sig else new_sig["up_ratio"])
+            vr[f"{_tk}_down_ratio"] = ("" if not new_sig else new_sig["down_ratio"])
+            vr[f"{_tk}_fired"] = ("" if not new_sig else new_sig["fired"])
+        vol_rows.append(vr)
+
     # Mark level-transition days (effective changed vs the prior day).
     prev_eff = None
     for r in rows:
@@ -185,6 +270,13 @@ def main() -> int:
         w = csv.DictWriter(fh, fieldnames=cols)
         w.writeheader()
         w.writerows(rows)
+
+    vol_csv_path = os.path.join(
+        out_dir, f"fragility_volshrink_{today.replace('-', '')}.csv")
+    with open(vol_csv_path, "w", newline="", encoding="utf-8") as fh:
+        w = csv.DictWriter(fh, fieldnames=vol_cols)
+        w.writeheader()
+        w.writerows(vol_rows)
 
     lines = [
         f"# Fragility backfill — {today}",
@@ -206,6 +298,30 @@ def main() -> int:
         lines.append("| " + " | ".join(str(r.get(c, "")) for c in cols) + " |")
     transitions = [r["date"] for r in rows if r["transition"]]
     lines += ["", f"**Level transitions:** {', '.join(transitions) or 'none'}", ""]
+
+    # ── vol_shrink comparison table (B3) ─────────────────────────────────────
+    lines += [
+        "## vol_shrink metric comparison — new buyer-withdrawal vs old dollar ratio",
+        "",
+        "New metric fires when up-day volume CONTRACTS "
+        f"(up_ratio < {cfg['leading_theme_up_vol_contract_ratio']}) AND down-day "
+        f"volume EXPANDS (down_ratio > {cfg['leading_theme_down_vol_expand_ratio']}). "
+        "`*_old_ratio` is the REMOVED total-dollar-volume recent/baseline ratio "
+        f"(old flag fired when < {0.85}), shown for comparison only. Empty cells = "
+        "fewer than the minimum usable constituents that day (degraded).",
+        "",
+        "| " + " | ".join(vol_cols) + " |",
+        "| " + " | ".join("---" for _ in vol_cols) + " |",
+    ]
+    for r in vol_rows:
+        lines.append("| " + " | ".join(str(r.get(c, "")) for c in vol_cols) + " |")
+    _fired_days = {tk: [r["date"] for r in vol_rows if r.get(f"{tk}_fired") is True]
+                   for tk in VOL_COMPARE_THEMES}
+    lines += [""]
+    for tk in VOL_COMPARE_THEMES:
+        lines.append(f"**{tk} new-metric fired on:** "
+                     f"{', '.join(_fired_days[tk]) or 'none in window'}")
+    lines += [""]
     with open(md_path, "w", encoding="utf-8") as fh:
         fh.write("\n".join(lines) + "\n")
 
@@ -221,8 +337,12 @@ def main() -> int:
         last = rows[-1]
         print(f"Today ({last['date']}): raw={last['raw']} points={last['points']} "
               f"effective={last['effective']}")
+    for tk in VOL_COMPARE_THEMES:
+        print(f"vol_shrink[{tk}] new-metric fired on: "
+              f"{', '.join(_fired_days[tk]) or 'none in window'}")
     print(f"Wrote: {os.path.relpath(md_path, _REPO_ROOT)} + "
-          f"{os.path.relpath(csv_path, _REPO_ROOT)}")
+          f"{os.path.relpath(csv_path, _REPO_ROOT)} + "
+          f"{os.path.relpath(vol_csv_path, _REPO_ROOT)}")
     return 0
 
 

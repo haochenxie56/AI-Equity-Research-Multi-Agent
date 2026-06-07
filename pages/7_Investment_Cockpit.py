@@ -515,8 +515,10 @@ else:
         _dd = max([x for x in (_frag.get("distribution_days_spy"),
                                _frag.get("distribution_days_qqq")) if x is not None],
                   default=None)
-        _bits.append(f"{t('cockpit_frag_dist')} "
-                     + (f"{_dd}/25" if _dd is not None else _na))
+        # B1: render the full sentence ("N distribution days in 25 sessions" /
+        # 「25日内派发 N 次」) so the count is never misread as a 5/25 date.
+        _bits.append(t("cockpit_frag_dist_banner").format(n=_dd) if _dd is not None
+                     else f"{t('cockpit_frag_dist')} {_na}")
         _b20 = _frag.get("breadth_above_sma20")
         _b20p = _frag.get("breadth_above_sma20_prev")
         if _b20 is None:
@@ -529,12 +531,15 @@ else:
         # Always show WHY on screen when a reason is present (the same
         # earnings_degrade_reason carried in the _meta) so a report/UI divergence is
         # self-explanatory: dark → "无数据 (no_reports_in_window)"; a real reading
-        # under thin coverage → "2 (partial_frame_coverage)".
+        # under thin coverage → "2/5 评估 (partial_frame_coverage)".
         _greason = str(_frag.get("earnings_degrade_reason") or "")
-        # ZH appends a counter unit ("N 例"); EN unit is empty → "N" (parity-pinned).
-        _gunit = t("cockpit_frag_gns_unit")
+        # B2: surface the evaluated-sample DENOMINATOR ("1/12 evaluated"). The
+        # denominator (earnings_evaluated) comes from the SAME refresh that produced
+        # the numerator (good_news_sold) — one _frag snapshot, one data vintage.
+        _gev = _frag.get("earnings_evaluated")
         if _gns is not None:
-            _gns_txt = f"{_gns}{_gunit}" + (f" ({_greason})" if _greason else "")
+            _gns_txt = (f"{_gns}/{_gev} {t('cockpit_frag_gns_eval')}"
+                        + (f" ({_greason})" if _greason else ""))
         else:
             _gns_txt = f"{_na} ({_greason})" if _greason else _na
         _bits.append(f"{t('cockpit_frag_gns')}: {_gns_txt}")
