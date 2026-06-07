@@ -252,3 +252,41 @@ Expected behavior after Phase 0 is implemented:
 - A run directory is created under `research/runs/`.
 - `tool_results.jsonl` is persisted.
 - `evidence_manifest.json` is persisted.
+
+---
+
+## Development Discipline
+
+### Git Delegation Rules
+
+- **Push/merge only after an explicit review APPROVE relayed by the user.** Do not
+  push branches or merge into `main` on your own initiative; wait for the user to
+  relay an approval.
+- **Merges to `main` are plain `--no-ff` merge commits.** Never rebase or
+  force-push published history. Preserve the original branch tips as visible merge
+  parents.
+- **Any unexpected git state → stop and report.** Never clean up unilaterally
+  (no blind `stash pop`, no destructive resets, no branch deletion) when the
+  repository is not in the state the task expects. Surface the discrepancy to the
+  user first.
+
+### Single-Actor Rule
+
+- **One working tree = one agent session at a time.** While a git-touching task is
+  in flight, no second agent session, external tool, or Windows-side edit may touch
+  the repository. Concurrent mutation is the documented cause of aborted runs.
+- **Parallel work requires separate git worktrees.** If two streams of work must
+  proceed at once, give each its own worktree rather than sharing one tree.
+
+### Serial Barrier
+
+- **Git-topology tasks (merge / push / branch surgery) are serial barriers.**
+  Dependent prompts must wait for the completion report of the topology task before
+  starting. Nothing that depends on the new `main` may begin until the merge/push
+  report has landed.
+
+### Diagnostic Scripts
+
+- **Throwaway diagnostic scripts live in `scripts/diag/`**, which is gitignored
+  except for its `README.md`. Do not commit ad-hoc diagnostic dumps or one-off
+  probe scripts into tracked paths.
