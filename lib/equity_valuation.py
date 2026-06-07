@@ -208,11 +208,28 @@ CAVEAT_SINGLE_ANCHOR_BLEND = "single_anchor_blend"
 CAVEAT_IMPLAUSIBLE_FORWARD_EPS = "implausible_forward_eps"
 CAVEAT_ANCHOR_IMPLAUSIBLE_VS_PRICE = "anchor_implausible_vs_price"
 CAVEAT_IMPLAUSIBLE_GROWTH_INPUT = "implausible_growth_input"
+# Anchor Intelligence v2 (U2): the structured analyst pool (median/mean/high/low/n)
+# is too dispersed to trust the consensus as a high/medium-confidence anchor. The
+# median STILL enters the blend (robust to outliers) — this token gates CONFIDENCE
+# only (capped at low), it does NOT exclude the anchor.
+CAVEAT_ANALYST_POOL_DISPERSED = "analyst_pool_dispersed"
 VALUATION_CAVEATS: tuple = (
     CAVEAT_CYCLICAL_BAND_UNAVAILABLE, CAVEAT_SINGLE_ANCHOR_BLEND,
     CAVEAT_IMPLAUSIBLE_FORWARD_EPS, CAVEAT_ANCHOR_IMPLAUSIBLE_VS_PRICE,
-    CAVEAT_IMPLAUSIBLE_GROWTH_INPUT,
+    CAVEAT_IMPLAUSIBLE_GROWTH_INPUT, CAVEAT_ANALYST_POOL_DISPERSED,
 )
+
+# Anchor Intelligence v2 (U2) — pool-dispersion confidence gate. The structured
+# analyst pool carries the sell-side target distribution (median/mean/high/low/n).
+# When the pool is wide relative to its median AND there are enough analysts to
+# trust the measurement, the consensus is too noisy to support a high/medium
+# confidence rating: confidence is CAPPED at "low" and CAVEAT_ANALYST_POOL_DISPERSED
+# is emitted. This is independent of (and runs alongside) the inter-method
+# ANCHOR_DISPERSION_THRESHOLD gate, which is untouched and still runs last.
+#   pool_dispersion = (high − low) / median   (when median > 0 and n >= min)
+# MU's verified live pool (median 575, high 1750, low 249, n 40) → 2.61× > 1.0×.
+ANALYST_POOL_DISPERSION_THRESHOLD = 1.0
+MIN_ANALYST_POOL_N = 3
 
 # --- Deterministic data-sanity guards (fix round 2, X4) — ONE visible block ---
 # Corrupt yfinance ``info`` (observed live for MU: forward_eps 105.95 vs trailing
@@ -271,6 +288,13 @@ class AppFairValue:
     relative_value: Optional[float] = None
     analyst_target: Optional[float] = None
     analyst_count: int = 0
+    # --- Structured analyst anchor (Anchor Intelligence v2, U2) ------------
+    # The sell-side target distribution carried as one structured object:
+    # {"median", "mean", "high", "low", "n", "as_of"}. ``median`` is the central
+    # estimate that enters the blend (robust to a single extreme target — the MU
+    # case); ``mean``/``high``/``low``/``n`` drive the pool-dispersion confidence
+    # gate. ``None`` when no analyst coverage is available.
+    analyst_pool: Optional[dict] = None
     fair_value_low: float = 0.0
     fair_value_mid: float = 0.0
     fair_value_high: float = 0.0
@@ -350,6 +374,54 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def analyst_pool_dispersion(pool: Optional[dict]) -> Optional[float]:
+    """``(high − low) / median`` for a structured analyst pool, else ``None``.
+
+    Returns ``None`` (gate inert) unless the pool carries a positive ``median``
+    AND both a finite ``high`` and ``low`` AND ``n >= MIN_ANALYST_POOL_N`` — i.e.
+    there is enough coverage to trust the spread measurement. Deterministic; never
+    raises. See :data:`ANALYST_POOL_DISPERSION_THRESHOLD`.
+    """
+    if not isinstance(pool, dict):
+        return None
+    median = _finite_pos(pool.get("median"))
+    hi = _finite_pos(pool.get("high"))
+    lo = _finite_pos(pool.get("low"))
+    try:
+        n = int(pool.get("n") or 0)
+    except (TypeError, ValueError):
+        n = 0
+    if median is None or hi is None or lo is None or hi < lo or n < MIN_ANALYST_POOL_N:
+        return None
+    return round((hi - lo) / median, 4)
+
+
+def _normalize_analyst_pool(pool: Optional[dict], as_of: str) -> Optional[dict]:
+    """Round a raw analyst-pool dict and stamp ``as_of`` (else ``None``).
+
+    Returns ``None`` when no pool field carries data (so ``AppFairValue.analyst_pool``
+    stays ``None`` for tickers without analyst coverage). ``as_of`` defaults to the
+    fair-value compute time when the caller did not supply one.
+    """
+    if not isinstance(pool, dict):
+        return None
+
+    def _r(x):
+        v = _finite(x)
+        return round(v, 2) if v is not None else None
+
+    median, mean = _r(pool.get("median")), _r(pool.get("mean"))
+    hi, lo = _r(pool.get("high")), _r(pool.get("low"))
+    try:
+        n = int(pool.get("n") or 0)
+    except (TypeError, ValueError):
+        n = 0
+    if median is None and mean is None and hi is None and lo is None and n == 0:
+        return None
+    return {"median": median, "mean": mean, "high": hi, "low": lo, "n": n,
+            "as_of": (pool.get("as_of") or as_of)}
+
+
 # ---------------------------------------------------------------------------
 # Pure assembler (no I/O) — used directly by tests
 # ---------------------------------------------------------------------------
@@ -381,6 +453,7 @@ def build_app_fair_value(
     backlog_note: str = "",
     caveats: Optional[list] = None,
     sanity_exclude: Optional[set] = None,
+    analyst_pool: Optional[dict] = None,
 ) -> AppFairValue:
     """Assemble an :class:`AppFairValue` from the routed anchor set (pure).
 
@@ -406,6 +479,18 @@ def build_app_fair_value(
     ``anchors_irreconcilable``. Routing reduces irreconcilables; the gate still
     catches the rest.
     """
+    # One compute timestamp for the whole result (epoch stamping, U3) — also the
+    # default ``as_of`` for the structured analyst pool.
+    _computed_at = _now_iso()
+    # Structured analyst pool + pool-dispersion confidence gate (U2). The gate is
+    # inert unless the pool has median + high + low + n>=min; when it fires it caps
+    # confidence at "low" and emits CAVEAT_ANALYST_POOL_DISPERSED. The median still
+    # enters the blend below (this gates confidence, not inclusion).
+    _pool_out = _normalize_analyst_pool(analyst_pool, _computed_at)
+    _pool_disp = analyst_pool_dispersion(_pool_out)
+    _pool_dispersed = (_pool_disp is not None
+                       and _pool_disp > ANALYST_POOL_DISPERSION_THRESHOLD)
+
     cp = _finite_pos(current_price) or 0.0
     dcf = _finite_pos(dcf_value)
     rel = _finite_pos(relative_value)
@@ -445,6 +530,10 @@ def build_app_fair_value(
     # single_anchor_blend / sanity tokens all surface together. The dispersion
     # gate below then runs LAST on the surviving (sane) blended set.
     _caveats = list(caveats or [])
+    # Pool-dispersion caveat (U2): surfaced in BOTH the blended and irreconcilable
+    # results — the pool being wide is an honest fact independent of the band state.
+    if _pool_dispersed and CAVEAT_ANALYST_POOL_DISPERSED not in _caveats:
+        _caveats.append(CAVEAT_ANALYST_POOL_DISPERSED)
     _sanity_keys = set(sanity_exclude or [])
     _price_mult = DATA_SANITY_CONFIG["anchor_max_x_price"]
     sanity_excluded: list = []
@@ -533,6 +622,7 @@ def build_app_fair_value(
         peer_basis=peer_basis,
         backlog_note=backlog_note,
         caveats=_caveats,
+        analyst_pool=_pool_out,
     )
 
     if irreconcilable:
@@ -559,7 +649,7 @@ def build_app_fair_value(
             confidence="low",
             upside_pct=0.0,
             methodology=methodology,
-            computed_at=_now_iso(),
+            computed_at=_computed_at,
             data_source=data_source,
             dcf_note=dcf_note,
             blend_state=_BLEND_IRRECONCILABLE,
@@ -601,6 +691,11 @@ def build_app_fair_value(
         confidence = "medium"
     else:
         confidence = "low"
+    # Pool-dispersion gate (U2): a too-wide analyst pool caps confidence at low.
+    # The median already entered the blend above — this gates confidence only. The
+    # inter-method dispersion gate (anchor_dispersion) ran earlier and is untouched.
+    if _pool_dispersed:
+        confidence = "low"
 
     upside_pct = ((fair_value_mid - cp) / cp) if cp > 0 else 0.0
 
@@ -630,7 +725,7 @@ def build_app_fair_value(
         confidence=confidence,
         upside_pct=round(upside_pct, 4),
         methodology=methodology,
-        computed_at=_now_iso(),
+        computed_at=_computed_at,
         data_source=data_source,
         dcf_note=dcf_note,
         blend_state=blend_state,
@@ -666,6 +761,8 @@ def _fetch_raw(ticker: str) -> dict:
         "sector": None,
         "analyst_median": None,
         "analyst_mean": None,
+        "analyst_high": None,
+        "analyst_low": None,
         "analyst_count": 0,
         "live": False,
         # --- Method-router classifier / extra-anchor inputs (Valuation Refactor
@@ -715,6 +812,10 @@ def _fetch_raw(ticker: str) -> dict:
         out["shares"] = _finite_pos(info.get("sharesOutstanding"))
         out["analyst_median"] = _finite_pos(info.get("targetMedianPrice"))
         out["analyst_mean"] = _finite_pos(info.get("targetMeanPrice"))
+        # Pool extremes for the structured analyst anchor (U2): the sell-side
+        # target high/low. Same info dict — no extra per-ticker network.
+        out["analyst_high"] = _finite_pos(info.get("targetHighPrice"))
+        out["analyst_low"] = _finite_pos(info.get("targetLowPrice"))
         try:
             out["analyst_count"] = int(info.get("numberOfAnalystOpinions") or 0)
         except (TypeError, ValueError):
@@ -1281,6 +1382,18 @@ def _assemble_fair_value(ticker: str, current_price: float,
     # analyst_target = targetMedianPrice if available else targetMeanPrice
     analyst_target = raw.get("analyst_median") or raw.get("analyst_mean")
 
+    # Structured analyst pool (U2): carry median/mean/high/low/n for the
+    # pool-dispersion confidence gate (build_app_fair_value applies it). The median
+    # remains the central estimate entering the blend via analyst_target above.
+    analyst_pool = {
+        "median": raw.get("analyst_median"),
+        "mean": raw.get("analyst_mean"),
+        "high": raw.get("analyst_high"),
+        "low": raw.get("analyst_low"),
+        "n": raw.get("analyst_count", 0),
+        "as_of": None,  # stamped to computed_at inside build_app_fair_value
+    }
+
     # X4 rule 3: an implausible revenue_growth (MU live: 1.963 = 196%) poisons the
     # classifier AND peer matching. Treat it as MISSING for BOTH (they fall to
     # their existing missing-data handling) and caveat — never replaced.
@@ -1416,6 +1529,7 @@ def _assemble_fair_value(ticker: str, current_price: float,
         backlog_note=backlog_note,
         caveats=caveats + sanity_caveats,
         sanity_exclude=sanity_exclude,
+        analyst_pool=analyst_pool,
     )
 
 
