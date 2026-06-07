@@ -1045,6 +1045,13 @@ def _render_order_card(h, rec) -> None:
                     + _badge(f"{t('td_fair_value_source')}: {_fvs_lbl}", _fvs_color),
                     unsafe_allow_html=True,
                 )
+                # Epoch stamp (Anchor Intel v2, U3) — the AppFairValue compute time
+                # behind this anchor, surfaced unobtrusively (caption only). All
+                # anchor-derived numbers on this card come from that one instance.
+                _fvc = getattr(levels, "fair_value_computed_at", "") or ""
+                if _fvc:
+                    st.caption(
+                        f"{t('cockpit_fv_computed_at')}: {_fvc[:16].replace('T', ' ')} UTC")
             st.caption(t("td_kelly_note"))
             _src = t("td_data_live") if levels.data_source == "live" else t("td_data_fixture")
             st.caption(f"· {_src}")
