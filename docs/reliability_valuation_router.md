@@ -1,9 +1,10 @@
 # Phase — Valuation Refactor v1 (method router + growth-profile peers)
 
-**Status:** Implemented — **under independent review (REQUEST CHANGES fix round
-applied); NOT yet closed.** Suite `scripts/test_reliability_valuation_router.py`
-**81/81** (was 54/54 before the fix round); full canonical set green (stopbleed
-65/65, 7A 115/115, 7B 187/187, 6c_b 47/47, equity_render_order 50/50,
+**Status:** Implemented — **under independent review (two REQUEST CHANGES fix
+rounds + documentation-closure round applied); NOT yet closed.** Suite
+`scripts/test_reliability_valuation_router.py` **104/104** (54/54 originally →
+81/81 after fix round 1 → 104/104 after fix round 2); full canonical set green
+(stopbleed 65/65, 7A 115/115, 7B 187/187, 6c_b 47/47, equity_render_order 50/50,
 6c_trading_desk 118/118, 6c_v3_entry_v4 47/47, 6b_v3_horizon_scoring 189/189,
 theme_baskets 146/146, scanner_rotation_adapter 15/15).
 
@@ -20,6 +21,90 @@ theme_baskets 146/146, scanner_rotation_adapter 15/15).
 - **F4 (I8)** — industry/sector hints are matched by **token boundary**
   (`industry_has_hint`), not substring containment.
 - **F5 (I10)** — status docs aligned: implemented, under review, not closed.
+
+## Fix round 2 (re-review — live cyclical band + data sanity)
+
+This round made the cyclical band a genuinely live page-path computation and
+hardened the valuation against corrupt yfinance `info` (observed live for MU:
+`forwardEps` 105.95 vs trailing 21.17, `revenue_growth` 1.963 = 196%, a $2966.66
+relative anchor). Every guard is an **exclusion + caveat only** — a bad number is
+dropped and flagged, never silently corrected or replaced with an invention.
+
+- **Cyclical band builder — tz normalization + narrowed exceptions.** The PB/PS
+  history builder now normalizes price-index timezones before the as-of join (a
+  tz-aware vs tz-naive index silently produced an empty band) and narrows its
+  exception handling to the specific lookup/arithmetic failures instead of a bare
+  `except`, so a real defect surfaces rather than degrading to analyst-only
+  silently. A parity check pins the tz-aware and tz-naive paths to identical
+  `pb_history`.
+- **Multi-year price window (page path only).** The cyclical fundamentals/price
+  fetch pulls a multi-year price window so the ≤4y annual band has enough as-of
+  prices to clear `MIN_CYCLICAL_BAND_OBS`. This is on the per-ticker page path
+  only; the cached / ranking / Cockpit paths still read the baked band and stay
+  network-free.
+- **Update-Valuation call-site parity.** The "Update Valuation" button call site
+  was passing a different argument set than the initial render path, so a manual
+  refresh could produce a band that disagreed with the auto-render. The two call
+  sites are now parity-aligned (page path only).
+- **`DATA_SANITY_CONFIG` guards (ONE visible block).** Three deterministic
+  plausibility rules, all exclude-and-flag, each with a bilingual caveat token in
+  `VALUATION_CAVEATS`:
+  | Rule | Config | Caveat token | Effect |
+  |------|--------|--------------|--------|
+  | forward/trailing EPS blow-up | `forward_eps_max_x_trailing = 3.0` (floor `eps_epsilon = 0.01`) | `implausible_forward_eps` | drop the relative anchor |
+  | anchor wildly off vs price | `anchor_max_x_price = 10.0` (**high-side only**) | `anchor_implausible_vs_price` | drop that anchor |
+  | corrupt revenue growth | `max_revenue_growth = 1.0` (100% yoy) | `implausible_growth_input` | treat growth as MISSING for the classifier + peer matching |
+- **High-side-only price-plausibility scoping (rationale).** The
+  `anchor_max_x_price` rule drops anchors only on the HIGH side. The magnitude /
+  unit defects actually observed (corrupt `forwardEps`, stale share counts →
+  4-digit anchors) are all high-side blow-ups. A LOW-side anchor (e.g. a $3
+  trailing-PE relative anchor against a $100 price) is a real-but-inappropriate
+  anchor that the **method router (PE exclusion) and the dispersion gate already
+  handle** by marking the set `anchors_irreconcilable`. Dropping it here would
+  silently UNDO that stop-the-bleed contract (regressing the $3.23-vs-$112.50
+  audit case), so low-side anchors are deliberately delegated downstream to the
+  dispersion gate.
+- **`CYCLICAL_TICKER_OVERRIDES` — documented yfinance-taxonomy workaround.**
+  `frozenset({"MU", "WDC", "STX"})` (`lib/valuation_router.py`) forces these
+  memory / HDD makers to `cyclical` regardless of the industry string yfinance
+  reports, because the live taxonomy mislabels them and the token matcher will
+  not (and must not) treat the broad "Semiconductors" string as cyclical. The
+  override is checked as a clear, deterministic signal and **beats** a (possibly
+  corrupt) high-growth reading — exactly the live MU case where `revenue_growth`
+  read 196%. X5a live dump (2026-06):
+
+  | Ticker | yfinance `industry` (X5a live dump, 2026-06) | Why the override is needed |
+  |--------|----------------------------------------------|----------------------------|
+  | MU | `Semiconductors` | broad/growth-coded string; the token matcher correctly will not treat "Semiconductors" as cyclical |
+  | WDC | `Computer Hardware` | not present in any cyclical hint list at all |
+  | STX | `Computer Hardware` | not present in any cyclical hint list at all |
+
+  All three are structurally cyclical, so a ticker-level override is the honest
+  fix; the test fixtures (Section 12) carry these exact live strings. Control:
+  NVDA / AVGO / TXN report the same `Semiconductors` string but are NOT in the
+  override set and correctly stay `growth_profitable` (broadening the industry
+  hint was rejected).
+- **Deliberate assertion rewrites.** Two existing assertions were intentionally
+  updated to match the corrected behavior, not worked around: router check **2.7**
+  (DCF is now excluded for `growth_unprofitable`, per fix round 1 F1) and stopbleed
+  check **5.17** (a bare un-versioned legacy anchor cache is now rejected, per F3).
+  Suite grew 81/81 → **104/104**.
+
+## Known limitations
+
+- **`forward_eps > 3× trailing` guard can false-positive on recovering earnings.**
+  The `forward_eps_max_x_trailing = 3.0` rule (caveat `implausible_forward_eps`)
+  is a blunt magnitude check. A name whose earnings are recovering off a depressed
+  trailing base legitimately shows a forward EPS several times the trailing EPS,
+  and the guard will exclude its relative anchor even when that anchor is sound.
+  Live AMD example: the relative anchor **$366.15** was excluded despite sitting
+  *between* the two surviving anchors (EV/S **$356.64**, analyst **$487.50**) — so
+  the band lost a perfectly reasonable input. The direction is conservative by
+  design (exclude + caveat, never invent a number), so the failure mode is "a
+  slightly wider / analyst-leaning band", not a wrong number. Calibration of the
+  `K` multiplier (or a recovering-earnings carve-out) is **deferred** until
+  snapshot history provides enough cases to tune it on evidence rather than a
+  single anecdote. Cross-reference: caveat token `implausible_forward_eps`.
 
 ## Problem
 
@@ -235,5 +320,5 @@ stop-the-bleed.
 - `lib/financial_tab.py` — honest DCF-excluded note
 - `pages/4_Equity.py` — company-type badge + methods + excluded anchors; peer wiring
 - `ui_utils.py` — EN/ZH `cockpit_fv_*` router keys
-- `scripts/test_reliability_valuation_router.py` *(new, 54 checks)*
+- `scripts/test_reliability_valuation_router.py` *(new, 104 checks)*
 - `scripts/test_reliability_valuation_stopbleed.py` — version-bump-aware assertions

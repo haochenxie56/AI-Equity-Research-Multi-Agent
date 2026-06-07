@@ -708,11 +708,16 @@ check("11.3 tz-aware and tz-naive inputs produce identical pb_history",
 check("12.1 CYCLICAL_TICKER_OVERRIDES contains MU/WDC/STX",
       {"MU", "WDC", "STX"} <= set(vr.CYCLICAL_TICKER_OVERRIDES),
       detail=str(vr.CYCLICAL_TICKER_OVERRIDES))
-for _tk in ("MU", "WDC", "STX"):
+# MU reports the real yfinance string 'Semiconductors'; WDC/STX report
+# 'Computer Hardware' (X5a live dump, 2026-06) — NOT 'Semiconductors'. All three
+# route to cyclical purely via CYCLICAL_TICKER_OVERRIDES, independent of the
+# industry string, so the corrected fixture truth does not change the outcome.
+for _tk, _ind in (("MU", "Semiconductors"), ("WDC", "Computer Hardware"),
+                  ("STX", "Computer Hardware")):
     _ov = vr.classify_company(
-        ticker=_tk, sector="Technology", industry="Semiconductors",
+        ticker=_tk, sector="Technology", industry=_ind,
         revenue_growth=0.20, profit_margin=0.10, market_cap=1.0e11)
-    check(f"12.2 {_tk} 'Semiconductors' -> cyclical via override",
+    check(f"12.2 {_tk} '{_ind}' -> cyclical via override",
           _ov.company_type == "cyclical" and _ov.confidence == "clear",
           detail=f"{_ov.company_type}/{_ov.confidence}")
 # The override BEATS a (possibly corrupt) high-growth signal — exactly the live MU

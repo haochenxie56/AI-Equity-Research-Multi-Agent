@@ -11,7 +11,7 @@ Each company type gets an appropriate valuation method menu so the
 irreconcilable-anchor rate drops (KTOS class no longer dead-ends). **Deterministic;
 no LLM** (reverse DCF + debate = Phase 8). Phase doc
 `docs/reliability_valuation_router.md`; suite
-`scripts/test_reliability_valuation_router.py` **81/81**. Full canonical set green:
+`scripts/test_reliability_valuation_router.py` **104/104**. Full canonical set green:
 stopbleed 65, 7A 115, 7B 187, 6c_b 47, equity_render_order 50, 6c_trading_desk
 118, 6c_v3_entry_v4 47, 6b_v3_horizon_scoring 189, theme_baskets 146,
 scanner_rotation_adapter 15.
