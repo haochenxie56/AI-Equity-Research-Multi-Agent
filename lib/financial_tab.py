@@ -223,6 +223,34 @@ def render_financial_tab(ticker: str) -> None:
         with col_dcf:
             st.subheader(t("p5_dcf"))
 
+            # Method router (Valuation Refactor v1): when the company type routes
+            # AWAY from DCF, say so honestly — this is a different message from
+            # "not computable". The manual DCF below still runs for reference.
+            try:
+                from lib.valuation_router import classify_company, select_method_menu
+                from lib.equity_valuation import METHOD_MENUS
+
+                _cls = classify_company(
+                    ticker=ticker, sector=info.get("sector"),
+                    industry=info.get("industry"),
+                    revenue_growth=info.get("revenueGrowth"),
+                    profit_margin=info.get("profitMargins"),
+                    operating_margin=info.get("operatingMargins"),
+                    market_cap=info.get("marketCap"),
+                )
+                _menu_key = select_method_menu(_cls)
+                if "dcf" in METHOD_MENUS.get(_menu_key, {}).get("excluded", []):
+                    _type_lbl = t(f"cockpit_fv_type_{_cls.company_type}")
+                    st.info(
+                        f"ℹ️ {t('cockpit_fv_company_type')}: **{_type_lbl}** — "
+                        + (f"DCF 非该类公司的主要估值方法（仅供参考）。"
+                           if st.session_state.get("language", "en") == "zh"
+                           else "DCF is not the primary valuation method for this "
+                                "company type (shown for reference).")
+                    )
+            except Exception:  # noqa: BLE001 — never block the DCF form
+                pass
+
             beta   = info.get("beta", 1.0) or 1.0
             shares = info.get("sharesOutstanding", 1e9) or 1e9
             debt_v = info.get("totalDebt", 0) or 0

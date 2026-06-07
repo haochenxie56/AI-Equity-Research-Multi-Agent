@@ -1,8 +1,84 @@
 # AI Investment Agent — Project State
 
-**Last updated**: 2026-06-05 (**Phase 7B — Rotation & Internals — Implemented** —
-see the section immediately below; Valuation Stop-the-Bleed and Phase 7A sections
-follow. Prior status blob preserved verbatim afterward.)
+**Last updated**: 2026-06-06 (**Valuation Refactor v1 — method router +
+growth-profile peers — Implemented; UNDER INDEPENDENT REVIEW (REQUEST CHANGES fix
+round applied; not yet closed)** — see the section immediately below; Phase 7B,
+Valuation Stop-the-Bleed, and Phase 7A sections follow. Prior status blob
+preserved verbatim afterward.)
+
+## Valuation Refactor v1 — Method Router + Growth-Profile Peers — Implemented; Under Independent Review (CURRENT TASK)
+
+Gives each company type an appropriate valuation method menu so the
+irreconcilable-anchor rate materially drops (the KTOS class no longer dead-ends at
+"we don't know"). **All deterministic; no LLM** (reverse DCF + debate integration
+are Phase 8). Phase doc `docs/reliability_valuation_router.md`; suite
+`scripts/test_reliability_valuation_router.py` **104/104**; full canonical set green
+(stopbleed 65/65, 7A 115/115, 7B 187/187, 6c_b 47/47, equity_render_order 50/50,
+6c_trading_desk 118/118, 6c_v3_entry_v4 47/47, 6b_v3_horizon_scoring 189/189,
+theme_baskets 146/146, scanner_rotation_adapter 15/15).
+
+**Review status:** independent review returned **REQUEST CHANGES**; all five
+findings fixed (NOT yet closed — closure happens after re-review approves):
+**F1** growth_unprofitable excludes DCF structurally (menu, not a computability
+guard); **F2** cyclical PB/PS band is a real ≤4y annual band (yfinance annual
+fundamentals + cached prices, page path only, baked into the anchor cache so
+ranking/Cockpit stay network-free; degrades to analyst-only + caveat);
+**F3** anchor cache rejects bare un-versioned legacy maps; **F4** industry/sector
+hints matched by token boundary (`industry_has_hint`); **F5** status docs aligned.
+**Fix round 2** then added the live cyclical-band page path + data-sanity guards
+(tz normalization, narrowed exception handling, multi-year price window,
+Update-Valuation call-site parity, `DATA_SANITY_CONFIG` exclude-and-flag,
+`CYCLICAL_TICKER_OVERRIDES` taxonomy workaround, high-side-only price-plausibility
+rule) and expanded the suite to **104/104**; two deliberate assertion rewrites:
+router check 2.7 (DCF now excluded for growth_unprofitable) and stopbleed 5.17
+(bare legacy cache now rejected). **Documentation-closure round** (this commit)
+corrects the WDC/STX fixture taxonomy (Computer Hardware) and syncs all docs.
+
+**Task 1 — Classifier** (`lib/valuation_router.py`, NEW): `classify_company`
+classifies into mature_profitable / growth_profitable / growth_unprofitable /
+project_driven / cyclical from deterministic rules over the SAME `tk.info` dict
+the valuation path already fetches (no new network). ONE visible
+`CLASSIFIER_CONFIG` block (growth/margin/FCF/volatility/size thresholds) + sector
+& industry hint lists; auditable `fired_rules`; `clear`/`borderline` confidence
+(borderline routes to the default mature menu via `select_method_menu`). Fixture
+distribution: mature 3 · growth_profitable 1 · growth_unprofitable 2 ·
+project_driven 2 · cyclical 2.
+
+**Task 2 — Method menus** (`lib/equity_valuation.py`): `build_app_fair_value(...,
+company_type=)` routes the blend's INPUT SET via `METHOD_MENUS`. mature = DCF +
+relative-PE + analyst (byte-identical default); growth_profitable = EV/S +
+relative-PE + analyst (Rule-of-40 modifier on EV/S, DCF excluded);
+growth_unprofitable = EV/S + analyst (**DCF excluded structurally** — fix round 1
+F1, the menu, not a computability guard — and **PE excluded** as the garbage
+source); project_driven = EV/EBITDA + analyst (DCF/PE excluded +
+`backlog_note`); cyclical = PB/PS band + analyst (DCF excluded, trailing-PE
+flagged `cycle_distorted`). New anchor helpers `_compute_ev_s` / `_compute_ev_ebitda`
+/ `_compute_pb_ps_band` + sector fallback maps. **The stop-the-bleed dispersion
+gate (3.0×) still runs LAST** on the menu-produced set.
+
+**Task 3 — Growth-profile peers** (`lib/valuation_router.py`):
+`match_growth_profile_peers` = same sector AND growth band (<10/10–25/>25) AND
+size band (large ≥$10B/mid ≥$2B), falling back to sector-only with
+`peer_basis="sector_fallback"` when < `min_peers` (default 4). `pages/4` collects
+peer `info` in the existing peer loop and passes it to the routed valuation (no
+new fan-out); the cached/Cockpit path uses `peers=None` → sector fallback.
+
+**Task 4 — Integration**: `AppFairValue` carries `company_type` +
+`routing_rationale` + `methods_used` + `excluded_anchors` + the extra anchors +
+`peer_basis` + `backlog_note`. **Anchor cache schema 1 → 2** (entry adds
+company_type/peer_basis; the version guard migrates old entries to empty). `pages/4`
+shows the company-type badge + per-anchor method labels + excluded anchors;
+`lib/financial_tab.py` shows an honest "DCF not the primary method for this type"
+note; Cockpit needs no change beyond the cache version bump (verified — the LONG
+consumer reads only the band + blend_state). KTOS acceptance: relative $3.80 vs
+analyst $30 (7.89× → irreconcilable, $0 band) → project_driven EV/EBITDA $23.46 +
+analyst $30 (1.28× → **blended $19.94 / $25.91 / $31.50**).
+
+**Created:** `lib/valuation_router.py`,
+`scripts/test_reliability_valuation_router.py`,
+`docs/reliability_valuation_router.md`. **Modified:** `lib/equity_valuation.py`,
+`lib/anchor_cache.py`, `lib/financial_tab.py`, `pages/4_Equity.py`, `ui_utils.py`,
+`scripts/test_reliability_valuation_stopbleed.py` (version-bump-aware), state docs.
 
 ## Phase 7B — Multi-window RS, Two-Ring Rotation, Market-Internals Fragility — Implemented (CURRENT TASK)
 

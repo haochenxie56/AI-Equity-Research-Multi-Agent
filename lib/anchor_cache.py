@@ -58,7 +58,11 @@ _log = logging.getLogger("anchor_cache")
 _DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 ANCHOR_CACHE_PATH = _DATA_DIR / "anchor_cache.json"
 
-_SCHEMA_VERSION = 1
+# Schema version. Bumped to 2 by "Valuation Refactor v1" (the cache entry now
+# carries company_type + routing fields). The version guard in load_all() handles
+# migration automatically: a stale version-1 envelope loads as empty (the Cockpit
+# falls back to its prior Research-Required behavior until the cache is rewarmed).
+_SCHEMA_VERSION = 2
 
 # Default staleness window: ~5 trading days ≈ 7 calendar days. A cached anchor
 # older than this is treated as stale (the Cockpit falls back to its prior
@@ -127,10 +131,14 @@ def is_fresh(entry: dict, max_age_days: Optional[float] = None,
 def load_all(path: Optional[Path] = None) -> dict:
     """Return the full ``{ticker: entry}`` map (fail-closed → ``{}``).
 
-    The envelope ``version`` is **respected**: a versioned envelope whose
-    ``version`` does not equal :data:`_SCHEMA_VERSION` is treated as an empty
-    cache (logged, never raised) so future schema migrations are safe. A bare,
-    un-versioned ``{ticker: entry}`` object is still tolerated (legacy).
+    Only a **valid current-schema envelope** is accepted: a dict carrying
+    ``version == _SCHEMA_VERSION`` with an ``anchors`` mapping. Any other shape —
+    a version mismatch OR a bare, un-versioned ``{ticker: entry}`` legacy object —
+    is **invalidated and recomputed** (returns ``{}``, logged, never raised). This
+    is a deliberate behavior correction (review fix I4): bare legacy maps predate
+    the routed schema and would surface entries without ``company_type``. Old
+    cache files on disk degrade gracefully to "no cached anchor" rather than
+    crashing the loader; the page path recomputes and rewrites a v2 envelope.
     """
     p = Path(path) if path else ANCHOR_CACHE_PATH
     try:
@@ -140,19 +148,19 @@ def load_all(path: Optional[Path] = None) -> dict:
             raw = json.load(fh)
     except Exception:  # noqa: BLE001 — fail-closed (missing / corrupt)
         return {}
-    if isinstance(raw, dict):
-        if "version" in raw:
-            ver = raw.get("version")
-            if ver != _SCHEMA_VERSION:
-                _log.warning(
-                    "anchor_cache version mismatch (%r != %r); treating as empty",
-                    ver, _SCHEMA_VERSION,
-                )
-                return {}
-            anchors = raw.get("anchors")
-            return anchors if isinstance(anchors, dict) else {}
-        # Tolerate a bare ticker->entry object (no version envelope; legacy).
-        return {k: v for k, v in raw.items() if isinstance(v, dict)}
+    if isinstance(raw, dict) and "version" in raw:
+        ver = raw.get("version")
+        if ver != _SCHEMA_VERSION:
+            _log.warning(
+                "anchor_cache version mismatch (%r != %r); treating as empty",
+                ver, _SCHEMA_VERSION,
+            )
+            return {}
+        anchors = raw.get("anchors")
+        return anchors if isinstance(anchors, dict) else {}
+    # Bare un-versioned legacy object (or any non-envelope) -> invalidate.
+    if isinstance(raw, dict) and raw:
+        _log.warning("anchor_cache: unversioned/legacy object rejected; treating as empty")
     return {}
 
 
@@ -218,6 +226,12 @@ def entry_from_app_fair_value(fv) -> dict:
         "confidence": str(g("confidence", "low") or "low"),
         "relative_basis": str(g("relative_basis", "") or ""),
         "peer_pe_basis": str(g("peer_pe_basis", "") or ""),
+        # Method-router fields (schema v2). Carried transparently for review /
+        # the Cockpit LONG enrichment; the LONG band consumer still reads only
+        # the fair_value_low/mid/high + blend_state below.
+        "company_type": str(g("company_type", "") or ""),
+        "peer_basis": str(g("peer_basis", "") or ""),
+        "caveats": list(g("caveats", []) or []),
         "fair_value_low": low,
         "fair_value_mid": float(g("fair_value_mid", 0.0) or 0.0),
         "fair_value_high": float(g("fair_value_high", 0.0) or 0.0),
