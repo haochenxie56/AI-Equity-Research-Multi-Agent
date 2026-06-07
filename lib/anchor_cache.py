@@ -10,8 +10,9 @@ band) instead of collapsing every candidate to *Research Required*.
 Write-through happens from the places anchors are actually computed today — the
 Equity Research page valuation hand-off
 (``lib.equity_valuation.store_equity_research_result``) and any research/scanner
-path that produces a :class:`lib.equity_valuation.AppFairValue` or
-:class:`lib.valuation_anchor.FairValueAnchor`.
+path that produces a :class:`lib.equity_valuation.AppFairValue` (the single
+fair-value producer since Anchor Intelligence v2; the legacy
+``lib.valuation_anchor.FairValueAnchor`` producer is retired).
 
 Schema (``data/anchor_cache.json``)::
 
