@@ -49,6 +49,7 @@ import pandas as pd  # noqa: E402
 
 import lib.order_advisor as oa  # noqa: E402
 import lib.valuation_anchor as va  # noqa: E402
+import lib.equity_valuation as eqv  # noqa: E402
 import lib.holdings as holds  # noqa: E402
 
 
@@ -104,12 +105,17 @@ def _snap(price, *, ema10=None, ema20=None, sma50=None, sma200=None, rsi=None,
 
 @contextmanager
 def _patched(snap: dict, fva_obj=None):
+    # Anchor Intel v2 (U1): order_advisor consumes the unified
+    # lib.equity_valuation.compute_app_fair_value (AppFairValue) — patch THAT. The
+    # default stand-in is a low-confidence no_anchor band (no LONG zone).
     if fva_obj is None:
-        fva_obj = va.FairValueAnchor(ticker="MU", fair_value_anchor=85.0,
-                                     data_sources=["mock"], data_source="fixture")
+        fva_obj = eqv.AppFairValue(ticker="MU", fair_value_low=80.0,
+                                   fair_value_mid=85.0, fair_value_high=95.0,
+                                   confidence="low", blend_state="no_anchor",
+                                   data_source="fixture")
     with mock.patch("ui_utils.load_ohlcv", return_value=_dummy_df()), \
             mock.patch("lib.technical.snapshot", return_value=snap), \
-            mock.patch("lib.valuation_anchor.compute_fair_value_anchor",
+            mock.patch("lib.equity_valuation.compute_app_fair_value",
                        return_value=fva_obj):
         yield
 
@@ -188,30 +194,39 @@ check("1.7 low conservative_anchor is None", _lo.conservative_anchor is None,
 # Section 2 — LONG entry-zone high per confidence tier
 # ---------------------------------------------------------------------------
 
-_fva_hi = va.FairValueAnchor(ticker="MU", confidence="high", conservative_anchor=120.0,
-                             analyst_anchor=120.0, relative_anchor=120.0,
-                             fair_value_anchor=108.0, data_source="fixture")
+# MIGRATION (Anchor Intel v2 U1): the LONG three-tier now consumes the unified
+# AppFairValue (high tier anchor = fair_value_mid, medium tier = analyst_target).
+# Entry-zone FORMULAS are unchanged (×0.90 high, ×0.85 medium), so the expected
+# numbers are IDENTICAL to the retired FairValueAnchor fixtures — only the object
+# type + mocked producer changed: high mid=120 -> 120×0.90 = 108 (was
+# conservative_anchor=120 -> 108); medium analyst_target=120 -> 120×0.85 = 102
+# (was analyst_anchor=120 -> 102).
+_fva_hi = eqv.AppFairValue(ticker="MU", confidence="high", blend_state="blended",
+                           fair_value_low=110.0, fair_value_mid=120.0,
+                           fair_value_high=140.0, analyst_target=120.0,
+                           data_source="fixture")
 with _patched(_snap(100.0, sma200=80.0, rsi=50.0, vol_ratio=1.0), fva_obj=_fva_hi), \
         _patched_portfolio([]):
     r = oa.compute_price_levels("MU", None, horizon="long", valuation_percentile=0.3)
-check("2.1 LONG high-conf entry_zone_high == conservative_anchor × 0.90",
+check("2.1 LONG high-conf entry_zone_high == fair_value_mid × 0.90 (was conservative×0.90)",
       r.entry_zone_high is not None and abs(r.entry_zone_high - 108.0) < 0.5,
       detail=str(r.entry_zone_high))
 check("2.1b LONG high-conf valuation_confidence surfaced",
       r.valuation_confidence == "high", detail=r.valuation_confidence)
 
-_fva_med = va.FairValueAnchor(ticker="MU", confidence="medium", conservative_anchor=120.0,
-                              analyst_anchor=120.0, fair_value_anchor=102.0,
-                              data_source="fixture")
+_fva_med = eqv.AppFairValue(ticker="MU", confidence="medium", blend_state="blended",
+                            fair_value_low=115.0, fair_value_mid=130.0,
+                            fair_value_high=150.0, analyst_target=120.0,
+                            data_source="fixture")
 with _patched(_snap(100.0, sma200=80.0, rsi=50.0, vol_ratio=1.0), fva_obj=_fva_med), \
         _patched_portfolio([]):
     r = oa.compute_price_levels("MU", None, horizon="long", valuation_percentile=0.3)
-check("2.2 LONG medium-conf entry_zone_high == analyst_anchor × 0.85",
+check("2.2 LONG medium-conf entry_zone_high == analyst_target × 0.85 (was analyst_anchor×0.85)",
       r.entry_zone_high is not None and abs(r.entry_zone_high - 102.0) < 0.5,
       detail=str(r.entry_zone_high))
 
-_fva_low = va.FairValueAnchor(ticker="MU", confidence="low", conservative_anchor=None,
-                              fair_value_anchor=85.0, data_source="fixture")
+_fva_low = eqv.AppFairValue(ticker="MU", confidence="low", blend_state="no_anchor",
+                            fair_value_mid=85.0, data_source="fixture")
 with _patched(_snap(100.0, sma200=80.0, rsi=50.0, vol_ratio=1.0), fva_obj=_fva_low), \
         _patched_portfolio([]):
     r = oa.compute_price_levels("MU", None, horizon="long", valuation_percentile=0.3)
@@ -401,6 +416,66 @@ for name, src in _SRCS.items():
     bad = any(tok in src.lower() for tok in ("sqlite", "psycopg", "chromadb", "pinecone",
                                              "faiss", "import sqlalchemy"))
     check(f"9.5 no DB / vector store in {name}", not bad)
+
+
+# ---------------------------------------------------------------------------
+# Section 10 — Anchor Intelligence v2 (U1/U3): REAL unified-path + parity (DoD)
+# ---------------------------------------------------------------------------
+
+# 10.A REAL PATH (DoD): order_advisor drives the ACTUAL unified producer
+# lib.equity_valuation.compute_app_fair_value (NOT a stubbed FairValueAnchor). We
+# mock only the network transport (_fetch_raw) + the OHLCV/snapshot, then assert
+# the Trading-Desk anchor equals the Equity-page anchor for the SAME ticker/price.
+_RP_RAW = {
+    "fcf_ttm": None, "fcf_source": "", "ebitda": None, "shares": 1.0e9,
+    "growth_rate": 0.05, "trailing_eps": 5.0, "forward_eps": 5.5,
+    "sector": "Technology", "industry": None,
+    "analyst_median": 120.0, "analyst_mean": 122.0,
+    "analyst_high": 140.0, "analyst_low": 105.0, "analyst_count": 12,
+    "revenue_growth": 0.10, "earnings_growth": 0.08, "profit_margin": 0.20,
+    "operating_margin": 0.25, "market_cap": 1.2e11, "enterprise_value": 1.2e11,
+    "total_revenue": 2.5e10, "total_debt": 1.0e10, "total_cash": 9.0e9,
+    "book_value": 30.0, "price_to_book": 3.0, "price_to_sales": 4.0, "live": True,
+}
+with mock.patch.object(eqv, "_fetch_raw", return_value=dict(_RP_RAW)):
+    _equity_fv = eqv.compute_app_fair_value("MU", 100.0)  # Equity-page producer (real)
+    with mock.patch("ui_utils.load_ohlcv", return_value=_dummy_df()), \
+            mock.patch("lib.technical.snapshot",
+                       return_value=_snap(100.0, sma200=80.0, rsi=50.0, vol_ratio=1.0)), \
+            _patched_portfolio([]):
+        _pl_rp = oa.compute_price_levels("MU", None, horizon="long",
+                                         valuation_percentile=0.3)
+check("10.1 real path: order_advisor anchor == Equity-page AppFairValue.fair_value_mid",
+      _pl_rp.fair_value_anchor is not None
+      and abs(_pl_rp.fair_value_anchor - _equity_fv.fair_value_mid) < 0.01,
+      detail=f"desk={_pl_rp.fair_value_anchor} equity={_equity_fv.fair_value_mid}")
+check("10.2 real path: anchor is live analyst_proxy (unified producer, no stub)",
+      _pl_rp.data_source == "live" and _pl_rp.fair_value_source == "analyst_proxy",
+      detail=f"{_pl_rp.data_source}/{_pl_rp.fair_value_source}")
+check("10.3 real path: epoch stamp populated (ISO, T-separated)",
+      bool(_pl_rp.fair_value_computed_at) and "T" in _pl_rp.fair_value_computed_at,
+      detail=_pl_rp.fair_value_computed_at)
+
+# 10.B EPOCH PARITY: one AppFairValue instance feeds BOTH surfaces -> the Trading
+# Desk anchor AND its epoch equal the Equity-page anchor's (same producer + epoch).
+_one = eqv.AppFairValue(ticker="MU", confidence="high", blend_state="blended",
+                        fair_value_low=110.0, fair_value_mid=120.0,
+                        fair_value_high=140.0, analyst_target=120.0,
+                        computed_at="2026-06-07T12:00:00+00:00", data_source="live")
+with mock.patch("lib.equity_valuation.compute_app_fair_value", return_value=_one):
+    _equity_anchor = eqv.compute_app_fair_value("MU", 100.0)  # Equity page reads this
+    with mock.patch("ui_utils.load_ohlcv", return_value=_dummy_df()), \
+            mock.patch("lib.technical.snapshot",
+                       return_value=_snap(100.0, sma200=80.0, rsi=50.0, vol_ratio=1.0)), \
+            _patched_portfolio([]):
+        _pl_par = oa.compute_price_levels("MU", None, horizon="long",
+                                          valuation_percentile=0.3)
+check("10.4 parity: Trading-Desk anchor == Equity-page anchor (one instance)",
+      _pl_par.fair_value_anchor == _equity_anchor.fair_value_mid,
+      detail=f"{_pl_par.fair_value_anchor} vs {_equity_anchor.fair_value_mid}")
+check("10.5 parity: Trading-Desk epoch == Equity-page epoch (same producer epoch)",
+      _pl_par.fair_value_computed_at == _equity_anchor.computed_at,
+      detail=f"{_pl_par.fair_value_computed_at} vs {_equity_anchor.computed_at}")
 
 
 # ---------------------------------------------------------------------------
