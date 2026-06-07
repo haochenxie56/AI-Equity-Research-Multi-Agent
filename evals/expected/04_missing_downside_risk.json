@@ -1,0 +1,12 @@
+{
+  "case_id": "missing_downside_risk",
+  "expected_status": "fail",
+  "expected_issue_types": ["missing_risk"],
+  "allowed_issue_types": ["weak_evidence"],
+  "expected_min_critical": 0,
+  "expected_min_warnings": 1,
+  "expected_detected": true,
+  "metadata": {
+    "notes": "Empty risks list should trigger missing_risk warning via critique_agent_result_structure."
+  }
+}

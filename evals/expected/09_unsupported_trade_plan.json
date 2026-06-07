@@ -1,0 +1,12 @@
+{
+  "case_id": "unsupported_trade_plan",
+  "expected_status": "fail",
+  "expected_issue_types": ["numeric_claim_issue"],
+  "allowed_issue_types": ["weak_evidence", "unsupported_claim"],
+  "expected_min_critical": 0,
+  "expected_min_warnings": 1,
+  "expected_detected": true,
+  "metadata": {
+    "notes": "Specific dollar price levels ($148.50 etc.) in finding text with no evidence_refs should trigger numeric_claim_issue."
+  }
+}

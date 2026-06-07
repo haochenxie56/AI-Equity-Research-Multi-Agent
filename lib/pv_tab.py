@@ -51,6 +51,12 @@ def render_pv_tab(ticker: str) -> None:
         prepost = load_prepost(ticker)
 
     df = raw_df.copy()
+    # Fail-closed: an empty fetch / missing or all-NaN Close column would make the
+    # downstream .iloc[-1] reads raise IndexError/KeyError. Show a notice instead.
+    if (df is None or getattr(df, "empty", True) or "Close" not in df.columns
+            or df["Close"].dropna().empty):
+        st.warning(t("p6_data_unavailable"))
+        return
     df = add_sma(df, [20, 50, 200])
     df = add_rsi(df)
     df = add_macd(df)

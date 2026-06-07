@@ -1,3 +1,7 @@
+# ── Reliability foundation ────────────────────────────────────────────────────
+pydantic>=2,<3              # explicit; do not rely on transitive dep from Streamlit
+pytest>=8                   # unit tests for lib/reliability/
+
 # ── Core data & numerics ──────────────────────────────────────────────────────
 pandas>=2.2
 numpy>=1.26

@@ -1,0 +1,38 @@
+{
+  "case_id": "option_strategy_without_risk_budget",
+  "description": "Agent suggests an option expression (buy calls) without declaring any max loss or risk budget context. No risk section populated.",
+  "failure_mode": "option_strategy_without_risk_budget",
+  "inputs": {
+    "agent_result": {
+      "agent_name": "option_strategy_agent",
+      "run_id": "TEST_OPT_RISK_001",
+      "findings": [
+        {
+          "text": "Buy 2-month call options as a leveraged expression of the bullish thesis.",
+          "evidence": [],
+          "confidence": 0.7
+        }
+      ],
+      "assumptions": [
+        {
+          "name": "IV assumption",
+          "rationale": "Current implied volatility is reasonable",
+          "value": "moderate",
+          "source": "agent",
+          "sensitivity": "high"
+        }
+      ],
+      "risks": [],
+      "confidence": {
+        "level": "medium",
+        "rationale": "Option strategy aligned with directional view",
+        "score": 0.6
+      }
+    },
+    "tool_results": []
+  },
+  "metadata": {
+    "severity_expected": "warning",
+    "notes": "Empty risks list should trigger missing_risk. Option strategy without max loss budget is a safety concern."
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "case_id": "missing_downside_risk",
+  "description": "Agent provides a bullish thesis with findings but declares no risks.",
+  "failure_mode": "missing_downside_risk",
+  "inputs": {
+    "agent_result": {
+      "agent_name": "equity_research_agent",
+      "run_id": "TEST_NORISK_001",
+      "findings": [
+        {
+          "text": "Company has strong competitive moat and growing market share.",
+          "evidence": [],
+          "confidence": 0.8
+        },
+        {
+          "text": "Management has consistently delivered on guidance over the past three years.",
+          "evidence": [],
+          "confidence": 0.75
+        }
+      ],
+      "assumptions": [
+        {
+          "name": "Market growth",
+          "rationale": "Industry growing at 15% CAGR",
+          "value": "15%",
+          "source": "agent",
+          "sensitivity": "medium"
+        }
+      ],
+      "risks": [],
+      "confidence": {
+        "level": "medium",
+        "rationale": "Strong qualitative evidence",
+        "score": 0.65
+      }
+    },
+    "tool_results": []
+  },
+  "metadata": {
+    "severity_expected": "warning",
+    "notes": "critique_agent_result_structure should fire missing_risk because risks list is empty."
+  }
+}

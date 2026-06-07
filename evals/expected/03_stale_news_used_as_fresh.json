@@ -1,0 +1,12 @@
+{
+  "case_id": "stale_news_used_as_fresh",
+  "expected_status": "fail",
+  "expected_issue_types": ["stale_evidence"],
+  "allowed_issue_types": ["weak_evidence", "validation_failure"],
+  "expected_min_critical": 1,
+  "expected_min_warnings": 0,
+  "expected_detected": true,
+  "metadata": {
+    "notes": "Expired staleness finding in news domain should become stale_evidence critic issue at critical severity."
+  }
+}

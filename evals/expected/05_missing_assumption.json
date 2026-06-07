@@ -1,0 +1,12 @@
+{
+  "case_id": "missing_assumption",
+  "expected_status": "fail",
+  "expected_issue_types": ["missing_assumption"],
+  "allowed_issue_types": ["weak_evidence"],
+  "expected_min_critical": 0,
+  "expected_min_warnings": 1,
+  "expected_detected": true,
+  "metadata": {
+    "notes": "Empty assumptions list should trigger missing_assumption warning via critique_agent_result_structure."
+  }
+}

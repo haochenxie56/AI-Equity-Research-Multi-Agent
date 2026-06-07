@@ -1,0 +1,60 @@
+{
+  "case_id": "horizon_mismatch",
+  "description": "Agent makes a short-term trade recommendation but the validation aggregate flags a scope mismatch because available evidence only supports long-term horizon analysis.",
+  "failure_mode": "horizon_mismatch",
+  "inputs": {
+    "agent_result": {
+      "agent_name": "trade_plan_agent",
+      "run_id": "TEST_HORIZON_001",
+      "findings": [
+        {
+          "text": "Short-term momentum trade: buy within the next 3 days on breakout above $150.",
+          "evidence": [],
+          "confidence": 0.7
+        }
+      ],
+      "assumptions": [
+        {
+          "name": "Breakout catalyst",
+          "rationale": "Expected earnings in 5 days",
+          "value": "earnings",
+          "source": "agent",
+          "sensitivity": "high"
+        }
+      ],
+      "risks": [
+        {
+          "name": "False breakout",
+          "description": "Price may reverse quickly after initial breakout.",
+          "severity": "high",
+          "evidence": []
+        }
+      ],
+      "confidence": {
+        "level": "medium",
+        "rationale": "Technical pattern identified",
+        "score": 0.65
+      }
+    },
+    "tool_results": [],
+    "validation_aggregate": {
+      "aggregate_id": "va_horizon_001",
+      "as_of": "2026-01-15",
+      "items": [
+        {
+          "item_id": "vi_horizon_001",
+          "domain": "agent_result",
+          "severity": "warning",
+          "item_type": "mismatch",
+          "message": "Short-term recommendation (3-day) relies on long-term-only fundamental evidence. Horizon mismatch detected.",
+          "source_name": "horizon_validator",
+          "blocking": false
+        }
+      ]
+    }
+  },
+  "metadata": {
+    "severity_expected": "warning",
+    "notes": "Horizon mismatch injected via validation_aggregate mismatch item. Critic should surface conflicting_evidence or validation_failure."
+  }
+}

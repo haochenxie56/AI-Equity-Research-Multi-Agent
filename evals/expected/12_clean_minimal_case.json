@@ -1,0 +1,12 @@
+{
+  "case_id": "clean_minimal_case",
+  "expected_status": "pass",
+  "expected_issue_types": [],
+  "allowed_issue_types": ["other"],
+  "expected_min_critical": 0,
+  "expected_min_warnings": 0,
+  "expected_detected": false,
+  "metadata": {
+    "notes": "Clean case with valid evidence refs and no validation/staleness issues should not produce critical or warning issues."
+  }
+}

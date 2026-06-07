@@ -1,0 +1,12 @@
+{
+  "case_id": "overconfident_with_stale_data",
+  "expected_status": "fail",
+  "expected_issue_types": ["overconfidence"],
+  "allowed_issue_types": ["stale_evidence"],
+  "expected_min_critical": 0,
+  "expected_min_warnings": 1,
+  "expected_detected": true,
+  "metadata": {
+    "notes": "detect_overconfidence fires when confidence=high and staleness_report status=stale. Also stale_evidence from critique_staleness_report."
+  }
+}

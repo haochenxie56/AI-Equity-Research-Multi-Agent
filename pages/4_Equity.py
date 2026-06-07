@@ -51,19 +51,97 @@ st.title(t("p4_title"))
 page_header()
 render_workflow_bar()
 
-# In-page ticker input — defaults to workflow state ticker if set
-_wf_ticker = st.session_state.get("research_state", {}).get("ticker", "")
+# In-page ticker input. Priority for the prefilled value:
+#   1. Investment Cockpit "View Full Research" hand-off (equity_prefill_ticker),
+#   2. the workflow-state ticker (existing behavior).
+# We seed the widget's session_state key BEFORE the widget is created so the
+# prefill takes effect even if the page was visited earlier this session. The
+# hand-off key is popped (one-shot) so it does not stick across manual edits.
+_prefill_ticker = (st.session_state.pop("equity_prefill_ticker", "") or "").upper().strip()
+if _prefill_ticker:
+    st.session_state["p4_ticker_input"] = _prefill_ticker
+elif "p4_ticker_input" not in st.session_state:
+    _wf_ticker = st.session_state.get("research_state", {}).get("ticker", "")
+    if _wf_ticker:
+        st.session_state["p4_ticker_input"] = _wf_ticker
 ticker = st.text_input(
     t("p1_wf_ticker_lbl"),
-    value=_wf_ticker,
     placeholder="e.g. NVDA",
     key="p4_ticker_input",
 ).upper().strip()
 
 if not ticker:
     st.info(t("no_ticker"))
+    # Keep the key section frames visible (with a placeholder) even before a
+    # ticker is entered, so navigating here never shows a blank page.
+    for _ph_key in ("p4_biz", "p4_report", "cockpit_fv_header"):
+        with st.expander(t(_ph_key), expanded=False):
+            st.caption(t("cockpit_fv_enter_ticker"))
     st.stop()
 
+# ══════════════════════════════════════════════════════════════════════════════
+# LAYOUT-FIRST PASS — create EVERY section frame BEFORE any blocking call
+# ══════════════════════════════════════════════════════════════════════════════
+# Streamlit streams element deltas in script-execution order: a section appears
+# in the browser only once the line that CREATES it runs. So every top-level
+# section frame — company header, earnings banner, key-metrics row, the four
+# analysis tabs, the Overview tab's sub-sections (moat+peers area, Company
+# Business Description, Research Report) and the AI Valuation Summary — is created
+# HERE as an empty slot (or tab/container frame), BEFORE load_info / load_earnings
+# / any yfinance / Finnhub / translation / LLM call runs. Each slot is filled in
+# the FILL PASS below, once the data arrives.
+#
+# The ONLY things allowed above this block are imports, session_state reads
+# (incl. the equity_prefill_ticker hand-off) and the ticker-input widget — no
+# blocking call precedes it. On a cold cache (first page entry — the exact
+# acceptance scenario) every frame, including the AI Valuation Summary, is on
+# screen immediately rather than after the data fetches complete.
+header_slot = st.empty()
+with header_slot.container():
+    # Lightweight placeholder: the ticker is known without any fetch.
+    st.markdown(f"### `{ticker}` …")
+st.divider()
+earnings_slot = st.empty()
+metrics_slot  = st.empty()
+st.divider()
+
+tab_overview, tab_financial, tab_pv, tab_news = st.tabs([
+    t("p4_tab_overview"),
+    t("p4_tab_financial"),
+    t("p4_tab_pv"),
+    t("p4_tab_news"),
+])
+
+# Reserve the Overview tab's sub-section frames, in their on-page vertical order,
+# so each appears immediately and is filled in the FILL PASS below:
+#   ov_top_slot  — moat radar + peer comparison (container; filled in place)
+#   biz_slot     — Company Business Description (st.empty; placeholder → content)
+#   report_slot  — Research Report (st.empty; placeholder → auto-generated report)
+with tab_overview:
+    ov_top_slot = st.container()
+    st.divider()
+    biz_slot = st.empty()
+    with biz_slot.container():
+        with st.expander(t("p4_biz"), expanded=False):
+            st.caption(f"⏳ {t('p4_loading')}")
+    st.divider()
+    report_slot = st.empty()
+    with report_slot.container():
+        st.subheader(t("p4_report"))
+        st.caption(f"⏳ {t('p4_loading')}")
+
+st.divider()
+_fv_key = f"app_fair_value_{ticker}"
+fv_slot = st.empty()
+if _fv_key not in st.session_state:
+    with fv_slot.container():
+        with st.expander(t("cockpit_fv_header"), expanded=True):
+            st.info("📊 AI Valuation summarizing...")
+# ── End layout block — every section frame now exists on screen ───────────────
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FILL PASS — blocking data fetches, then fill the pre-created slots
+# ══════════════════════════════════════════════════════════════════════════════
 # ── Load shared data ──────────────────────────────────────────────────────────
 with st.spinner(f"Loading {ticker}..."):
     info  = load_info(ticker)
@@ -76,16 +154,16 @@ chg   = (price - prev) / prev * 100 if prev else 0
 arrow = "▲" if chg >= 0 else "▼"
 color = "green" if chg >= 0 else "red"
 
-st.markdown(
-    f"### {name} &nbsp; `{ticker}` &nbsp; **${price:.2f}** "
-    f"<span style='color:{color}'>{arrow} {chg:+.2f}%</span>",
-    unsafe_allow_html=True,
-)
-st.caption(
-    f"**{info.get('sector','N/A')}** / {info.get('industry','N/A')} | "
-    f"{info.get('exchange','N/A')} | {t('employees')}: {info.get('fullTimeEmployees', 'N/A')}"
-)
-st.divider()
+with header_slot.container():
+    st.markdown(
+        f"### {name} &nbsp; `{ticker}` &nbsp; **${price:.2f}** "
+        f"<span style='color:{color}'>{arrow} {chg:+.2f}%</span>",
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        f"**{info.get('sector','N/A')}** / {info.get('industry','N/A')} | "
+        f"{info.get('exchange','N/A')} | {t('employees')}: {info.get('fullTimeEmployees', 'N/A')}"
+    )
 
 # ── Earnings banner ───────────────────────────────────────────────────────────
 if cal.get("next_earnings_date"):
@@ -97,35 +175,28 @@ if cal.get("next_earnings_date"):
     _surp_part = (f" | {t('earn_last_surp')}: {_sign}{cal.get('surprise_pct_last','N/A')}%"
                   if cal.get("surprise_pct_last") is not None else "")
     banner     = f"📅 {t('earn_next_lbl')}: **{d_str}** — {_day_lbl}{_eps_part}{_surp_part}"
-    if 0 <= days <= 14:
-        st.warning(f"⚠️ {t('earn_window_lbl')} — {banner}")
-    elif days < 0 and abs(days) <= 7:
-        st.info(f"🗓️ {t('earn_just_rel')} — {banner}")
-    else:
-        st.info(banner)
+    with earnings_slot.container():
+        if 0 <= days <= 14:
+            st.warning(f"⚠️ {t('earn_window_lbl')} — {banner}")
+        elif days < 0 and abs(days) <= 7:
+            st.info(f"🗓️ {t('earn_just_rel')} — {banner}")
+        else:
+            st.info(banner)
 
 # ── Key metrics ───────────────────────────────────────────────────────────────
-m = st.columns(6)
-m[0].metric(t("mkt_cap"),      fmt_large(info.get("marketCap")))
-m[1].metric("Trailing P/E",    fmt_val(info.get("trailingPE"), decimals=1, suffix="x"))
-m[2].metric("Forward P/E",     fmt_val(info.get("forwardPE"),  decimals=1, suffix="x"))
-m[3].metric(t("gross_margin"), fmt_pct(info.get("grossMargins")))
-m[4].metric("ROE",             fmt_pct(info.get("returnOnEquity")))
-m[5].metric(t("analyst_rtg"),  str(info.get("recommendationKey", "N/A")).upper())
-st.divider()
-
-# ── Tabs ──────────────────────────────────────────────────────────────────────
-tab_overview, tab_financial, tab_pv, tab_news = st.tabs([
-    t("p4_tab_overview"),
-    t("p4_tab_financial"),
-    t("p4_tab_pv"),
-    t("p4_tab_news"),
-])
+with metrics_slot.container():
+    m = st.columns(6)
+    m[0].metric(t("mkt_cap"),      fmt_large(info.get("marketCap")))
+    m[1].metric("Trailing P/E",    fmt_val(info.get("trailingPE"), decimals=1, suffix="x"))
+    m[2].metric("Forward P/E",     fmt_val(info.get("forwardPE"),  decimals=1, suffix="x"))
+    m[3].metric(t("gross_margin"), fmt_pct(info.get("grossMargins")))
+    m[4].metric("ROE",             fmt_pct(info.get("returnOnEquity")))
+    m[5].metric(t("analyst_rtg"),  str(info.get("recommendationKey", "N/A")).upper())
 
 # ════════════════════════════════════════════════════════════════════════════════
-# TAB 1: OVERVIEW
+# TAB 1: OVERVIEW — fill the slots reserved in the layout block above
 # ════════════════════════════════════════════════════════════════════════════════
-with tab_overview:
+with ov_top_slot:
     left_col, right_col = st.columns([1, 2])
 
     with left_col:
@@ -249,20 +320,30 @@ with tab_overview:
                 )
             render_table(peer_display)
 
-    st.divider()
-
-    # ── Business description ──────────────────────────────────────────────────
+# ── Business description (fills the biz_slot reserved in the layout block) ─────
+# Replaces the placeholder in place; always renders a final state (text / "N/A" /
+# source-text fallback) so the slot is never left on the placeholder.
+with biz_slot.container():
     with st.expander(t("p4_biz"), expanded=False):
         raw = info.get("longBusinessSummary", "")
         if raw:
             _lang = st.session_state.get("language", "en")
-            st.markdown(raw if _lang == "en" else translate_to_chinese(raw))
+            try:
+                st.markdown(raw if _lang == "en" else translate_to_chinese(raw))
+            except Exception:
+                # Translation failed (e.g. network) — fall back to the source text
+                # rather than leaving the section hanging on the placeholder.
+                st.markdown(raw)
         else:
             st.markdown("N/A")
 
-    st.divider()
-
-    # ── Generate & download report ────────────────────────────────────────────
+# ── Research Report (fills the report_slot reserved in the layout block) ──────
+# Deterministically assembled from already-fetched data on page load — no LLM
+# call — so the auto-run behavior is unchanged; this only fills the pre-created
+# frame. The render below is pure string formatting (cannot hang on the
+# placeholder); the only I/O — writing the .md to disk — is guarded so a
+# read-only / failed write still leaves a fully-rendered report on screen.
+with report_slot.container():
     st.subheader(t("p4_report"))
     today    = datetime.now().strftime("%Y-%m-%d")
     date_pfx = datetime.now().strftime("%Y%m%d")
@@ -347,12 +428,16 @@ with tab_overview:
 """
 
     with st.expander(t("p4_view_md"), expanded=False):
-        st.markdown(report_md)
+        with st.spinner(t("p4_loading")):
+            st.markdown(report_md)
 
     report_path = (Path(__file__).parent.parent / "research" / "stock"
                    / f"{date_pfx}_{ticker}_equity.md")
-    report_path.parent.mkdir(parents=True, exist_ok=True)
-    report_path.write_text(report_md, encoding="utf-8")
+    try:
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(report_md, encoding="utf-8")
+    except Exception:
+        pass  # read-only / failed write — the rendered report above still stands
     download_report_button(report_md, report_path.name, t("download_report"))
 
 # ════════════════════════════════════════════════════════════════════════════════
@@ -530,3 +615,233 @@ with tab_news:
                             else translate_to_chinese(_a["summary"])
                         )
                         st.caption(_summary_txt)
+
+
+# ════════════════════════════════════════════════════════════════════════════════
+# Phase 6C-B — AI Valuation Summary (app-computed fair value + optional AI debate)
+# ════════════════════════════════════════════════════════════════════════════════
+# Computes a deterministic, code-only fair value (DCF + relative + analyst) on
+# page load, surfaces a low/mid/high range, and can store the result for the
+# Trading Desk to consume as its primary valuation anchor. Review-only; not
+# investment advice; no order is placed.
+#
+# ── AI Valuation Summary content (fills the slot reserved in the layout block) ─
+# The expander FRAME + placeholder were already painted into ``fv_slot`` up in the
+# LAYOUT-FIRST PASS (before any blocking fetch). Here we run the (synchronous)
+# fair-value compute and write the result into that SAME slot, replacing the
+# placeholder in place — no st.rerun(), no layout shift, no second frame.
+# ``fv_slot.container()`` re-targets the st.empty() slot, so the result renders at
+# its original below-the-tabs position.
+from lib.equity_valuation import compute_app_fair_value, store_equity_research_result
+from lib.llm_orchestrator import analyze_equity_fair_value_debate
+
+_fv_lang = st.session_state.get("language", "en")
+_debate_key = f"equity_debate_{ticker}"
+
+
+def _macro_regime_str_p4() -> str:
+    _ro = st.session_state.get("macro_regime_result")
+    if isinstance(_ro, dict):
+        return str(_ro.get("regime", "unknown"))
+    if _ro is not None:
+        return str(getattr(_ro, "regime", "unknown"))
+    return "unknown"
+
+
+if _fv_key not in st.session_state:
+    st.session_state[_fv_key] = compute_app_fair_value(ticker, price)
+_fv = st.session_state[_fv_key]
+
+_fv_irreconcilable = getattr(_fv, "blend_state", "blended") == "anchors_irreconcilable"
+
+with fv_slot.container().expander(t("cockpit_fv_header"), expanded=True):
+    if _fv.fair_value_mid <= 0 and not _fv_irreconcilable:
+        st.info(t("cockpit_fv_na"))
+    elif _fv_irreconcilable:
+        # ── Anchor consistency gate (Task 1): render the irreconcilable state
+        # honestly — each anchor side by side with its basis, an explanation
+        # line, and NO range bar pretending precision. Bilingual via t().
+        st.warning(t("cockpit_fv_irreconcilable"))
+        st.caption(t("cockpit_fv_irreconcilable_note"))
+        _anchors = list(getattr(_fv, "anchors", []) or [])
+        if _anchors:
+            _acols = st.columns(len(_anchors))
+            for _i, _a in enumerate(_anchors):
+                _acols[_i].metric(
+                    str(_a.get("name", "")).upper(),
+                    f"${float(_a.get('value', 0.0)):.2f}",
+                    help=str(_a.get("basis", "")),
+                )
+                # Mixed-basis warning next to the relative anchor.
+                if (str(_a.get("name", "")) == "relative"
+                        and getattr(_fv, "peer_pe_basis", "") == "mixed"):
+                    _acols[_i].caption(t("cockpit_fv_basis_mixed"))
+        st.caption(f"📍 ${price:.2f}  ·  {_fv.methodology}")
+        # Still allow hand-off to the Trading Desk: store_equity_research_result
+        # propagates the irreconcilable state so the LONG path degrades to a
+        # technical-only reference (never a blended mid).
+        if st.button(t("cockpit_fv_send_desk"), key=f"fv_send_irr_{ticker}",
+                     use_container_width=True):
+            store_equity_research_result(ticker, _fv)
+            st.success(t("cockpit_fv_sent"))
+    else:
+        # ── Range bar (plotly) low → mid → high + current price marker ──────────
+        _flo, _fmid, _fhi = _fv.fair_value_low, _fv.fair_value_mid, _fv.fair_value_high
+        fig_fv = go.Figure()
+        fig_fv.add_trace(go.Scatter(
+            x=[_flo, _fhi], y=[0, 0], mode="lines",
+            line=dict(color="#388bfd", width=10), hoverinfo="skip", showlegend=False,
+        ))
+        fig_fv.add_trace(go.Scatter(
+            x=[_fmid], y=[0], mode="markers+text",
+            marker=dict(size=16, color="#3fb950"),
+            text=[f"{t('cockpit_fv_mid')} ${_fmid:.2f}"], textposition="top center",
+            hoverinfo="skip", showlegend=False,
+        ))
+        fig_fv.add_trace(go.Scatter(
+            x=[price], y=[0], mode="markers+text",
+            marker=dict(size=13, color="#f85149", symbol="diamond"),
+            text=[f"${price:.2f}"], textposition="bottom center",
+            hoverinfo="skip", showlegend=False,
+        ))
+        apply_layout(fig_fv, title=t("cockpit_fv_range"), height=170)
+        fig_fv.update_yaxes(visible=False, showgrid=False, range=[-1, 1])
+        fig_fv.update_xaxes(title_text="")
+        st.plotly_chart(fig_fv, use_container_width=True)
+
+        # ── Upside (colored) + confidence badge ─────────────────────────────────
+        _up = _fv.upside_pct
+        _up_color = "#3fb950" if _up > 0.10 else ("#f85149" if _up < -0.10 else "#8b949e")
+        _conf_color = {"high": "#3fb950", "medium": "#d29922", "low": "#8b949e"}.get(
+            _fv.confidence, "#8b949e")
+        _bcols = st.columns(3)
+        _bcols[0].markdown(
+            f"{t('cockpit_fv_upside')}: "
+            f"<span style='color:{_up_color};font-weight:700'>{_up*100:+.1f}%</span>",
+            unsafe_allow_html=True,
+        )
+        _bcols[1].markdown(
+            f"{t('cockpit_fv_confidence')}: "
+            f"<span style='background:{_conf_color}22;color:{_conf_color};"
+            f"border:1px solid {_conf_color}55;padding:2px 9px;border-radius:10px;"
+            f"font-weight:600'>{_fv.confidence}</span>",
+            unsafe_allow_html=True,
+        )
+        _bcols[2].caption(
+            t("td_data_live") if _fv.data_source == "live" else t("td_data_fixture")
+        )
+        st.caption(f"{t('cockpit_fv_methodology')}: {_fv.methodology}")
+
+        # ── Individual source contributions ─────────────────────────────────────
+        _scols = st.columns(3)
+        if _fv.dcf_value is not None:
+            _scols[0].metric(t("cockpit_fv_dcf"), f"${_fv.dcf_value:.2f}")
+        else:
+            # Show the concrete reason DCF is unavailable rather than a bare N/A.
+            _scols[0].metric(t("cockpit_fv_dcf"), "N/A")
+            _scols[0].caption(_fv.dcf_note or t("cockpit_fv_fcf_unavailable"))
+        _scols[1].metric(
+            t("cockpit_fv_relative"),
+            f"${_fv.relative_value:.2f}" if _fv.relative_value is not None else "N/A")
+        # Relative-anchor EPS basis badge (Task 2): forward consensus vs trailing.
+        _rbasis = getattr(_fv, "relative_basis", "")
+        if _fv.relative_value is not None and _rbasis:
+            _basis_label = (t("cockpit_fv_basis_forward") if _rbasis == "forward"
+                            else t("cockpit_fv_basis_trailing"))
+            _scols[1].caption(f"{t('cockpit_fv_basis')}: {_basis_label}")
+        # Visible mixed-basis warning (forward EPS × trailing peer P/E).
+        if _fv.relative_value is not None and getattr(_fv, "peer_pe_basis", "") == "mixed":
+            _scols[1].caption(t("cockpit_fv_basis_mixed"))
+        _scols[2].metric(
+            t("cockpit_fv_analyst"),
+            (f"${_fv.analyst_target:.2f} (n={_fv.analyst_count})"
+             if _fv.analyst_target is not None else "N/A"))
+
+        st.divider()
+
+        # ── Action buttons: Run AI Debate / Update Valuation / Send to Desk ──────
+        _bcol1, _bcol2, _bcol3 = st.columns(3)
+        if _bcol1.button(t("cockpit_fv_run_debate"), key=f"fv_debate_{ticker}",
+                         use_container_width=True):
+            with st.spinner(t("cockpit_fv_debate_running")):
+                _debate = analyze_equity_fair_value_debate(
+                    ticker, _fv,
+                    thesis_text=info.get("longBusinessSummary", "")[:600],
+                    macro_regime=_macro_regime_str_p4(), lang=_fv_lang,
+                )
+            st.session_state[_debate_key] = _debate
+            # Persist the fair value + debate summary for the Trading Desk.
+            _synth = _debate.get(f"synthesis_{_fv_lang}") or _debate.get("synthesis_en", "")
+            store_equity_research_result(
+                ticker, _fv, debate_summary=_synth,
+                analyst_action=_debate.get("analyst_action", ""),
+            )
+
+        # Update Valuation — recompute using the user-adjusted DCF intrinsic value
+        # from the Financials tab (published to st.session_state["dcf_params"]),
+        # then re-run the debate. Disabled when no matching DCF params exist.
+        _dcf_params = st.session_state.get("dcf_params")
+        _dcf_ready = (
+            isinstance(_dcf_params, dict)
+            and str(_dcf_params.get("ticker", "")).upper().strip() == ticker
+            and float(_dcf_params.get("intrinsic_value") or 0) > 0
+        )
+        if _bcol2.button(t("cockpit_fv_update"), key=f"fv_update_{ticker}",
+                         use_container_width=True, disabled=not _dcf_ready):
+            with st.spinner(t("cockpit_fv_running")):
+                _fv2 = compute_app_fair_value(
+                    ticker, price,
+                    dcf_override=float(_dcf_params["intrinsic_value"]),
+                )
+                st.session_state[_fv_key] = _fv2
+                _dbt = analyze_equity_fair_value_debate(
+                    ticker, _fv2,
+                    thesis_text=info.get("longBusinessSummary", "")[:600],
+                    macro_regime=_macro_regime_str_p4(), lang=_fv_lang,
+                )
+                st.session_state[_debate_key] = _dbt
+                _synth = _dbt.get(f"synthesis_{_fv_lang}") or _dbt.get("synthesis_en", "")
+                store_equity_research_result(
+                    ticker, _fv2, debate_summary=_synth,
+                    analyst_action=_dbt.get("analyst_action", ""),
+                )
+            st.toast(t("cockpit_fv_updated"))
+            st.rerun()
+
+        if _bcol3.button(t("cockpit_fv_send_desk"), key=f"fv_send_{ticker}",
+                         use_container_width=True):
+            store_equity_research_result(ticker, _fv)
+            st.success(t("cockpit_fv_sent"))
+
+        if not _dcf_ready:
+            st.caption(t("cockpit_fv_update_hint"))
+
+        # ── Render a previously-run debate (persists across reruns) ─────────────
+        _debate = st.session_state.get(_debate_key)
+        if _debate:
+            # If the debate fell back (no API key / bad JSON / API error), show the
+            # concrete reason instead of silently rendering the fallback prose.
+            if _debate.get("debate_status") == "fallback":
+                st.warning(
+                    f"{t('cockpit_fv_debate_failed')}: "
+                    f"{_debate.get('debate_error') or t('cockpit_fv_na')}"
+                )
+
+            def _dbi(field: str) -> str:
+                return (_debate.get(f"{field}_{_fv_lang}")
+                        or _debate.get(f"{field}_en", "") or "")
+            st.markdown(f"**🟢 {t('cockpit_fv_bull')}**")
+            st.write(_dbi("bull_case"))
+            st.markdown(f"**🔴 {t('cockpit_fv_bear')}**")
+            st.write(_dbi("bear_case"))
+            st.markdown(f"**⚠️ {t('cockpit_fv_risk')}**")
+            st.write(_dbi("risk_factors"))
+            st.markdown(f"**🔍 {t('cockpit_fv_synthesis')}**")
+            st.write(_dbi("synthesis"))
+            _el = _debate.get("endorsed_fair_value_low")
+            _eh = _debate.get("endorsed_fair_value_high")
+            _act = _debate.get("analyst_action", "")
+            st.caption(
+                f"{t('cockpit_fv_endorsed')}: ${_el} – ${_eh}  ·  "
+                f"{t('cockpit_fv_action')}: **{_act}**"
+            )
