@@ -83,6 +83,19 @@ CYCLICAL_INDUSTRY_HINTS: tuple = (
     "auto manufacturers", "airlines", "copper", "aluminum", "coal",
 )
 
+# --- Ticker-level cyclical overrides (fix round 2, X5 — taxonomy WORKAROUND) ---
+# EVIDENCE (live yfinance dump, 2026-06): memory / storage cyclicals are NOT
+# distinguishable by industry string — yfinance reports MU / NVDA / AVGO / TXN ALL
+# as industry "Semiconductors", and WDC / STX as "Computer Hardware". The "memory"
+# industry hint therefore NEVER fires in production for MU, and broadening the hint
+# to "semiconductor" was already rejected (it would wrongly route NVDA/AVGO/TXN —
+# genuine growth names — to the cyclical menu). Oil/gas/materials cyclicals (e.g.
+# XOM "Oil & Gas Integrated") DO route correctly via the industry/sector hints, so
+# this override set is the SURGICAL workaround for the memory/storage gap only.
+# Keep it tight and ticker-specific; do NOT use it as a dumping ground for borderline
+# names. Reviewed against the dump: MU (DRAM), WDC + STX (NAND / HDD storage).
+CYCLICAL_TICKER_OVERRIDES: frozenset = frozenset({"MU", "WDC", "STX"})
+
 COMPANY_TYPES: tuple = (
     "mature_profitable", "growth_profitable", "growth_unprofitable",
     "project_driven", "cyclical",
@@ -288,20 +301,29 @@ def classify_company(
                        else "Lumpy revenue (volatility-only) — borderline")
 
     # --- 2. cyclical: commodity / memory / industrial-cycle hint -------------
+    # ticker_cyc (X5): a ticker-level override for memory/storage cyclicals that
+    # yfinance's taxonomy cannot distinguish by industry string (see
+    # CYCLICAL_TICKER_OVERRIDES). A clear, deterministic signal.
+    ticker_cyc = t in CYCLICAL_TICKER_OVERRIDES
     sector_cyc = sector_s in CYCLICAL_SECTORS
     industry_cyc = industry_has_hint(industry_l, CYCLICAL_INDUSTRY_HINTS)
     margin_volatile = (mcov is not None and mcov >= config["margin_cov_cyclical"])
+    fired.append(_rule("cyclical_ticker_override", t, "in",
+                       sorted(CYCLICAL_TICKER_OVERRIDES), ticker_cyc))
     fired.append(_rule("cyclical_sector", sector_s, "in", CYCLICAL_SECTORS, sector_cyc))
     fired.append(_rule("cyclical_industry_hint", industry or "", "contains",
                        CYCLICAL_INDUSTRY_HINTS, industry_cyc))
     fired.append(_rule("margin_cov_cyclical", mcov, ">=",
                        config["margin_cov_cyclical"], margin_volatile))
-    if sector_cyc or industry_cyc or margin_volatile:
-        conf = "clear" if (sector_cyc or industry_cyc) else "borderline"
-        return _result("cyclical", conf,
-                       "Commodity / memory / industrial-cycle sector hint"
-                       if (sector_cyc or industry_cyc)
-                       else "Volatile margins (volatility-only) — borderline")
+    if ticker_cyc or sector_cyc or industry_cyc or margin_volatile:
+        conf = "clear" if (ticker_cyc or sector_cyc or industry_cyc) else "borderline"
+        if ticker_cyc:
+            rationale = "Memory / storage cyclical (ticker override — yfinance taxonomy)"
+        elif sector_cyc or industry_cyc:
+            rationale = "Commodity / memory / industrial-cycle sector hint"
+        else:
+            rationale = "Volatile margins (volatility-only) — borderline"
+        return _result("cyclical", conf, rationale)
 
     # --- 3. growth_unprofitable: high growth + negative/near-zero margin -----
     high_growth = (gb == "high")

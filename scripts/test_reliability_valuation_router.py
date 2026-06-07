@@ -441,10 +441,14 @@ _lmt = vr.classify_company(
     revenue_growth=0.05, profit_margin=0.10, market_cap=1.0e11)
 check("8.4 'Aerospace & Defense' -> project_driven (LMT)",
       _lmt.company_type == "project_driven", detail=_lmt.company_type)
+# FIXTURE HONESTY (X5c): yfinance reports MU's industry as the bare
+# "Semiconductors" (same string as NVDA/AVGO/TXN) — the "memory" hint NEVER fires
+# in production. MU must route to cyclical via the ticker-level override, tested
+# here with the REAL live industry string (not a fabricated "Semiconductor Memory").
 _mu_cls = vr.classify_company(
-    ticker="MU", sector="Technology", industry="Semiconductor Memory",
+    ticker="MU", sector="Technology", industry="Semiconductors",
     revenue_growth=0.20, profit_margin=0.10, market_cap=1.0e11)
-check("8.5 'Semiconductor Memory' -> cyclical (memory token, MU)",
+check("8.5 MU 'Semiconductors' (real yfinance string) -> cyclical via ticker override",
       _mu_cls.company_type == "cyclical", detail=_mu_cls.company_type)
 
 # Matcher-level structural pins.
@@ -503,7 +507,9 @@ check("9.6 build_pb_ps_history pb + ps series populated",
 _MU_RAW = {
     "fcf_ttm": 2.0e9, "fcf_source": "", "ebitda": 8.0e9, "shares": 1.1e9,
     "growth_rate": 0.15, "trailing_eps": 5.0, "forward_eps": None,
-    "sector": "Technology", "industry": "Semiconductor Memory",
+    # FIXTURE HONESTY (X5c): real live yfinance string, not "Semiconductor Memory".
+    # Cyclical routing comes from the ticker override on "MU".
+    "sector": "Technology", "industry": "Semiconductors",
     "analyst_median": 110.0, "analyst_mean": 108.0, "analyst_count": 20,
     "revenue_growth": 0.20, "earnings_growth": 0.10, "profit_margin": 0.10,
     "operating_margin": 0.12, "market_cap": 1.1e11, "enterprise_value": 1.2e11,
@@ -554,7 +560,7 @@ check("9.15 XOM blended band (mid > 0, not analyst-parroting)",
 # 9.16 Degradation: cyclical with NO fetcher (cached/ranking path) -> analyst-only
 # + the real caveat tokens. Network-free path takes this degrade.
 with mock.patch.object(eqv, "_fetch_raw", return_value=dict(_MU_RAW)):
-    _mu_deg = eqv.compute_app_fair_value("MUDEG", 100.0)  # no fetcher
+    _mu_deg = eqv.compute_app_fair_value("MU", 100.0)  # no fetcher (cyclical via override)
 check("9.17 degraded cyclical -> analyst-only blend",
       _names(_mu_deg.anchors) == {"analyst"}, detail=str(_names(_mu_deg.anchors)))
 check("9.18 degraded cyclical emits cyclical_band_unavailable caveat",
@@ -571,12 +577,165 @@ def _short_fetcher(_tk):
 
 
 with mock.patch.object(eqv, "_fetch_raw", return_value=dict(_MU_RAW)):
-    _mu_short = eqv.compute_app_fair_value("MUSHORT", 100.0,
+    _mu_short = eqv.compute_app_fair_value("MU", 100.0,
                                            cyclical_history_fetcher=_short_fetcher)
 check("9.22 < 3 annual obs -> band degraded + caveat",
       _mu_short.pb_ps_value is None
       and "cyclical_band_unavailable" in (_mu_short.caveats or []),
       detail=f"{_mu_short.pb_ps_value}/{_mu_short.caveats}")
+
+
+# ===========================================================================
+# Section 10 — X4 deterministic data-sanity guards (fix round 2)
+# ===========================================================================
+
+# Base mature_profitable raw (low growth, profitable, no sector/industry hint).
+_SAN_RAW = {
+    "fcf_ttm": 1.0e9, "fcf_source": "", "ebitda": 2.0e9, "shares": 1.0e8,
+    "growth_rate": 0.05, "trailing_eps": 10.0, "forward_eps": None,
+    "sector": "Technology", "industry": "Software—Application",
+    "analyst_median": 300.0, "analyst_mean": 300.0, "analyst_count": 10,
+    "revenue_growth": 0.05, "earnings_growth": 0.05, "profit_margin": 0.15,
+    "operating_margin": 0.18, "market_cap": 4.0e10, "enterprise_value": 4.0e10,
+    "total_revenue": 5.0e9, "total_debt": 0.0, "total_cash": 1.0e9,
+    "book_value": 50.0, "price_to_book": 8.0, "price_to_sales": 8.0, "live": True,
+}
+
+# 10.1–10.3 Rule 1: forward_eps (100) > 3× trailing_eps (10) -> relative anchor
+# EXCLUDED + caveat. Price (400) kept high enough that the garbage relative
+# (28×100=2800) is within the price band, so ONLY rule 1 (not rule 2) excludes it.
+_SAN_FE = dict(_SAN_RAW)
+_SAN_FE.update({"forward_eps": 100.0, "trailing_eps": 10.0})
+with mock.patch.object(eqv, "_fetch_raw", return_value=dict(_SAN_FE)):
+    _fe = eqv.compute_app_fair_value("SANFE", 400.0)
+check("10.1 implausible forward_eps -> relative excluded from blend",
+      "relative" not in _names(_fe.anchors), detail=str(_names(_fe.anchors)))
+check("10.2 implausible forward_eps -> relative flagged 'implausible'",
+      _excluded_flag(_fe, "relative") == "implausible", detail=str(_fe.excluded_anchors))
+check("10.3 implausible_forward_eps caveat emitted",
+      "implausible_forward_eps" in (_fe.caveats or []), detail=str(_fe.caveats))
+check("10.4 a bad number is NEVER replaced — relative_value still the raw garbage",
+      _fe.relative_value == round(eqv.get_sector_median_pe("Technology") * 100.0, 2),
+      detail=str(_fe.relative_value))
+
+# 10.5–10.6 Rule 2 (high side): an anchor > 10× current price -> excluded + caveat.
+_p2 = eqv.build_app_fair_value(
+    "P2", 100.0, dcf_value=110.0, relative_value=105.0, analyst_target=9000.0,
+    analyst_count=5, company_type="mature_profitable")
+check("10.5 anchor > 10× price excluded (analyst 9000 vs price 100)",
+      "analyst" not in _names(_p2.anchors)
+      and _excluded_flag(_p2, "analyst") == "implausible_vs_price",
+      detail=str(_p2.excluded_anchors))
+check("10.6 anchor_implausible_vs_price caveat emitted",
+      "anchor_implausible_vs_price" in (_p2.caveats or []), detail=str(_p2.caveats))
+check("10.7 surviving sane anchors still blend (mid > 0)",
+      _p2.blend_state == "blended" and _p2.fair_value_mid > 0,
+      detail=f"{_p2.blend_state}/{_p2.fair_value_mid}")
+
+# 10.8 Rule 2 is HIGH-SIDE ONLY by design: a LOW-side anchor ($3 relative vs $100
+# price) is NOT dropped by price-sanity — it flows to the dispersion gate and the
+# pair is marked anchors_irreconcilable (preserving the stop-the-bleed contract;
+# dropping it here would silently undo the $3.23-vs-$112.50 audit guarantee).
+_p3 = eqv.build_app_fair_value(
+    "P3", 100.0, dcf_value=None, relative_value=3.0, analyst_target=112.0,
+    analyst_count=5, company_type="mature_profitable")
+check("10.8 low-side anchor NOT price-excluded -> dispersion gate -> irreconcilable",
+      _excluded_flag(_p3, "relative") != "implausible_vs_price"
+      and _p3.blend_state == "anchors_irreconcilable"
+      and "anchor_implausible_vs_price" not in (_p3.caveats or []),
+      detail=f"{_p3.blend_state}/{_p3.excluded_anchors}/{_p3.caveats}")
+
+# 10.9–10.10 Rule 3: implausible revenue_growth (196%) treated as MISSING for
+# classification — a name that WOULD be growth_profitable with the bad number
+# falls back to mature_profitable, and the caveat is emitted.
+_BADGROW_RAW = dict(_SAN_RAW)
+_BADGROW_RAW.update({"revenue_growth": 1.963, "profit_margin": 0.15})
+with mock.patch.object(eqv, "_fetch_raw", return_value=dict(_BADGROW_RAW)):
+    _bg = eqv.compute_app_fair_value("ZZZ", 100.0)
+check("10.9 implausible_growth_input caveat emitted",
+      "implausible_growth_input" in (_bg.caveats or []), detail=str(_bg.caveats))
+check("10.10 implausible growth -> classifier falls back (NOT growth_profitable)",
+      _bg.company_type == "mature_profitable", detail=_bg.company_type)
+
+# 10.11 Default path byte-compat: sane inputs trip NO sanity guard.
+_clean = eqv.build_app_fair_value(
+    "CLN", 100.0, dcf_value=100.0, relative_value=102.0, analyst_target=101.0,
+    analyst_count=12, company_type="mature_profitable")
+check("10.11 sane inputs -> no sanity caveats, all 3 anchors blend",
+      not ({"implausible_forward_eps", "anchor_implausible_vs_price",
+            "implausible_growth_input"} & set(_clean.caveats or []))
+      and _names(_clean.anchors) == {"dcf", "relative", "analyst"},
+      detail=f"{_clean.caveats}/{_names(_clean.anchors)}")
+
+
+# ===========================================================================
+# Section 11 — X1 live-path: build_pb_ps_history with a tz-AWARE price frame
+# (the regression test that would have caught the root-cause tz bug)
+# ===========================================================================
+
+_fdates = [pd.Timestamp("2025-08-31"), pd.Timestamp("2024-08-31"),
+           pd.Timestamp("2023-08-31"), pd.Timestamp("2022-08-31")]  # tz-NAIVE fiscal cols
+_bs_tz = pd.DataFrame({
+    d: {"Stockholders Equity": 1.0e10 - i * 1.0e9, "Ordinary Shares Number": 1.0e9}
+    for i, d in enumerate(_fdates)})
+_is_tz = pd.DataFrame({
+    d: {"Total Revenue": 2.0e10 - i * 1.0e9} for i, d in enumerate(_fdates)})
+# Multi-year, MONTHLY, tz-AWARE price index (both yfinance .history() and the
+# local OHLCV cache produce tz-aware indexes — this is the exact shape that
+# previously raised a swallowed TypeError and zeroed the band).
+_pidx_tz = pd.date_range("2021-06-30", "2025-12-31", freq="ME", tz="America/New_York")
+_px_tz = pd.DataFrame({"Close": [20.0 + i * 0.3 for i in range(len(_pidx_tz))]},
+                      index=_pidx_tz)
+_hist_tz = eqv.build_pb_ps_history(_bs_tz, _is_tz, _px_tz, ticker="TZAWARE")
+check("11.1 tz-AWARE price frame still builds the band (>= 3 annual obs)",
+      _hist_tz.get("years", 0) >= 3, detail=str(_hist_tz.get("years")))
+check("11.2 tz-AWARE band is non-empty (pb + ps populated)",
+      len(_hist_tz.get("pb_history", [])) >= 3 and len(_hist_tz.get("ps_history", [])) >= 3,
+      detail=str(_hist_tz))
+# Parity: tz-aware vs tz-naive copies of the SAME prices yield the SAME band.
+_px_naive = _px_tz.copy()
+_px_naive.index = _px_naive.index.tz_localize(None)
+_hist_naive = eqv.build_pb_ps_history(_bs_tz, _is_tz, _px_naive, ticker="TZNAIVE")
+check("11.3 tz-aware and tz-naive inputs produce identical pb_history",
+      _hist_tz.get("pb_history") == _hist_naive.get("pb_history"),
+      detail=f"{_hist_tz.get('pb_history')} vs {_hist_naive.get('pb_history')}")
+
+
+# ===========================================================================
+# Section 12 — X5 ticker-level cyclical overrides (taxonomy workaround)
+# ===========================================================================
+
+check("12.1 CYCLICAL_TICKER_OVERRIDES contains MU/WDC/STX",
+      {"MU", "WDC", "STX"} <= set(vr.CYCLICAL_TICKER_OVERRIDES),
+      detail=str(vr.CYCLICAL_TICKER_OVERRIDES))
+for _tk in ("MU", "WDC", "STX"):
+    _ov = vr.classify_company(
+        ticker=_tk, sector="Technology", industry="Semiconductors",
+        revenue_growth=0.20, profit_margin=0.10, market_cap=1.0e11)
+    check(f"12.2 {_tk} 'Semiconductors' -> cyclical via override",
+          _ov.company_type == "cyclical" and _ov.confidence == "clear",
+          detail=f"{_ov.company_type}/{_ov.confidence}")
+# The override BEATS a (possibly corrupt) high-growth signal — exactly the live MU
+# case where revenue_growth read 196%.
+_mu_hi = vr.classify_company(
+    ticker="MU", sector="Technology", industry="Semiconductors",
+    revenue_growth=0.60, profit_margin=0.40, market_cap=1.0e11)
+check("12.3 MU override beats high-growth signal -> still cyclical",
+      _mu_hi.company_type == "cyclical", detail=_mu_hi.company_type)
+# Control: NVDA/AVGO/TXN report the SAME 'Semiconductors' string but are NOT in the
+# override set -> must stay growth (broadening the hint was correctly rejected).
+for _tk in ("NVDA", "AVGO", "TXN"):
+    _ng = vr.classify_company(
+        ticker=_tk, sector="Technology", industry="Semiconductors",
+        revenue_growth=0.40, profit_margin=0.30, market_cap=1.0e12)
+    check(f"12.4 {_tk} 'Semiconductors' NOT in override -> stays growth_profitable",
+          _ng.company_type == "growth_profitable", detail=_ng.company_type)
+# XOM-class oil/gas still routes via the industry string (override not needed).
+_xom_cls = vr.classify_company(
+    ticker="XOM", sector="Energy", industry="Oil & Gas Integrated",
+    revenue_growth=0.05, profit_margin=0.12, market_cap=4.0e11)
+check("12.5 XOM 'Oil & Gas Integrated' -> cyclical via industry/sector (no override)",
+      _xom_cls.company_type == "cyclical", detail=_xom_cls.company_type)
 
 
 # ===========================================================================

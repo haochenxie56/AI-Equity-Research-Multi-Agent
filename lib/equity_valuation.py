@@ -202,9 +202,43 @@ CYCLICAL_BAND_MAX_YEARS = 4  # free-tier annual statements yield ~4 observations
 # Real degradation tokens surfaced in pages/4 and carried on AppFairValue.caveats.
 CAVEAT_CYCLICAL_BAND_UNAVAILABLE = "cyclical_band_unavailable"
 CAVEAT_SINGLE_ANCHOR_BLEND = "single_anchor_blend"
+# X4 data-sanity tokens (fix round 2): an anchor / input was EXCLUDED because the
+# underlying yfinance value was implausible. The system never replaces a bad
+# number with an invented one — it drops the offending anchor and says so.
+CAVEAT_IMPLAUSIBLE_FORWARD_EPS = "implausible_forward_eps"
+CAVEAT_ANCHOR_IMPLAUSIBLE_VS_PRICE = "anchor_implausible_vs_price"
+CAVEAT_IMPLAUSIBLE_GROWTH_INPUT = "implausible_growth_input"
 VALUATION_CAVEATS: tuple = (
     CAVEAT_CYCLICAL_BAND_UNAVAILABLE, CAVEAT_SINGLE_ANCHOR_BLEND,
+    CAVEAT_IMPLAUSIBLE_FORWARD_EPS, CAVEAT_ANCHOR_IMPLAUSIBLE_VS_PRICE,
+    CAVEAT_IMPLAUSIBLE_GROWTH_INPUT,
 )
+
+# --- Deterministic data-sanity guards (fix round 2, X4) — ONE visible block ---
+# Corrupt yfinance ``info`` (observed live for MU: forward_eps 105.95 vs trailing
+# 21.17, revenue_growth 1.963 = 196%, analyst_median 575, market_cap $974B)
+# produced a garbage relative anchor ($2966.66) and poisoned classification + peer
+# matching. These plausibility rules are EXCLUSIONS + CAVEATS ONLY — a bad number
+# is dropped and flagged, NEVER silently corrected or replaced with an invention.
+DATA_SANITY_CONFIG: dict = {
+    # forward_eps > K × max(trailing_eps, eps_epsilon) -> drop the relative anchor.
+    "forward_eps_max_x_trailing": 3.0,
+    # any blended anchor ABOVE current_price × M -> drop it. HIGH-SIDE ONLY by
+    # design: the magnitude/unit defects we actually observed (corrupt forwardEps,
+    # stale share counts -> 4-digit anchors) are all high-side blow-ups. LOW-SIDE
+    # implausibility (e.g. a $3 trailing-PE anchor vs a $100 price) is a real-but-
+    # inappropriate anchor that the method router (PE exclusion) and the dispersion
+    # gate already handle by marking the set anchors_irreconcilable — dropping it
+    # here would silently UNDO that stop-the-bleed contract (regressing the
+    # $3.23-vs-$112.50 audit case). So low-side anchors flow to the dispersion gate.
+    "anchor_max_x_price": 10.0,
+    # revenue_growth above this fraction (100% yoy) -> treat as MISSING for the
+    # classifier and peer matching (they fall to their existing missing-data path).
+    "max_revenue_growth": 1.0,
+    # floor for the trailing-EPS denominator so a ~0 / negative trailing EPS does
+    # not make the forward/trailing ratio explode or divide-by-zero.
+    "eps_epsilon": 0.01,
+}
 
 
 def get_sector_median_pe(sector: Optional[str]) -> float:
@@ -346,6 +380,7 @@ def build_app_fair_value(
     peer_basis: str = "",
     backlog_note: str = "",
     caveats: Optional[list] = None,
+    sanity_exclude: Optional[set] = None,
 ) -> AppFairValue:
     """Assemble an :class:`AppFairValue` from the routed anchor set (pure).
 
@@ -402,6 +437,39 @@ def build_app_fair_value(
         if candidates.get(k, (None, ""))[0] is not None and k not in blend_keys:
             blend_keys.append(k)
 
+    # --- X4 deterministic data-sanity exclusions (over the menu's blend set) ---
+    # Rule 1 (caller-flagged, e.g. implausible forward_eps) and Rule 2 (anchor
+    # wildly off vs current price, see DATA_SANITY_CONFIG) EXCLUDE an anchor from
+    # the blend and FLAG it — they NEVER replace a value. Excluded anchors are
+    # still computed and shown (excluded_anchors). Caveats accumulate here so the
+    # single_anchor_blend / sanity tokens all surface together. The dispersion
+    # gate below then runs LAST on the surviving (sane) blended set.
+    _caveats = list(caveats or [])
+    _sanity_keys = set(sanity_exclude or [])
+    _price_mult = DATA_SANITY_CONFIG["anchor_max_x_price"]
+    sanity_excluded: list = []
+    eff_blend_keys: list = []
+    for k in blend_keys:
+        v, basis = candidates.get(k, (None, ""))
+        if v is None:
+            continue
+        name = _ANCHOR_DISPLAY.get(k, k)
+        if k in _sanity_keys:
+            sanity_excluded.append({"name": name, "value": round(v, 2),
+                                    "basis": basis, "flag": "implausible"})
+            continue
+        # X4 rule 2 (HIGH-SIDE ONLY — see DATA_SANITY_CONFIG): an anchor blown up
+        # far ABOVE the market price is a unit/data defect; drop + caveat. Low-side
+        # disagreements are deliberately left to the dispersion gate below.
+        if cp > 0 and v > cp * _price_mult:
+            sanity_excluded.append({"name": name, "value": round(v, 2),
+                                    "basis": basis, "flag": "implausible_vs_price"})
+            if CAVEAT_ANCHOR_IMPLAUSIBLE_VS_PRICE not in _caveats:
+                _caveats.append(CAVEAT_ANCHOR_IMPLAUSIBLE_VS_PRICE)
+            continue
+        eff_blend_keys.append(k)
+    blend_keys = eff_blend_keys
+
     # --- Blended anchor list (present only), in menu order ------------------
     anchors: list = []
     for k in blend_keys:
@@ -430,6 +498,8 @@ def build_app_fair_value(
             continue
         excluded_anchors.append({"name": name, "value": round(v, 2),
                                  "basis": basis, "flag": flag})
+    # Data-sanity exclusions (X4) appended after the menu's structural exclusions.
+    excluded_anchors.extend(sanity_excluded)
 
     # A routing tag is shown only for a non-default routed type (the default
     # mature path keeps the legacy methodology wording byte-for-byte).
@@ -445,9 +515,9 @@ def build_app_fair_value(
     irreconcilable = (anchor_dispersion is not None
                       and anchor_dispersion > ANCHOR_DISPERSION_THRESHOLD)
 
-    # Caveats: caller-supplied tokens (e.g. cyclical_band_unavailable) plus a
-    # generic single_anchor_blend when exactly one anchor entered the blend.
-    _caveats = list(caveats or [])
+    # Caveats: caller-supplied tokens (e.g. cyclical_band_unavailable) + any X4
+    # sanity tokens accumulated above, plus a generic single_anchor_blend when
+    # exactly one anchor survived into the blend.
     if len(anchors) == 1 and CAVEAT_SINGLE_ANCHOR_BLEND not in _caveats:
         _caveats.append(CAVEAT_SINGLE_ANCHOR_BLEND)
 
@@ -989,20 +1059,40 @@ def build_pb_ps_history(balance_sheet, income_stmt, price_history, *,
                     close = price_history  # already a Series
                 close = close.dropna()
                 close = close.sort_index()
-            except Exception:  # noqa: BLE001
+                # X1 (fix round 2): normalize the price index to tz-NAIVE so the
+                # as-of comparison against the (tz-naive) fiscal-period dates cannot
+                # raise. Both yfinance ``.history()`` AND the local OHLCV cache
+                # produce tz-AWARE indexes (e.g. America/New_York); comparing them
+                # with a tz-naive Timestamp raised a TypeError that was previously
+                # swallowed silently — dropping EVERY observation and degrading the
+                # band. Stripping tz on both sides is explicit and lossless here
+                # (we only need date-level as-of lookups).
+                if getattr(close.index, "tz", None) is not None:
+                    close.index = close.index.tz_localize(None)
+            except (KeyError, IndexError, AttributeError, ValueError) as exc:
+                _log.warning("build_pb_ps_history: price series prep failed for "
+                             "%s: %s", ticker, exc)
                 close = None
 
         def _price_asof(date):
             if close is None or len(close) == 0:
                 return None
+            # Coerce the fiscal date to a tz-naive Timestamp (the close index is
+            # already tz-naive, normalized above). Only the narrow, expected
+            # bad-date case is swallowed; any unexpected error PROPAGATES to the
+            # function-level fail-closed boundary (which logs it loudly) rather than
+            # being silently dropped per-row — silent swallowing is exactly what
+            # hid the tz bug.
             try:
                 ts = pd.Timestamp(date)
-                sub = close[close.index <= ts]
-                if len(sub) == 0:
-                    return None
-                return float(sub.iloc[-1])
-            except Exception:  # noqa: BLE001
+            except (ValueError, TypeError):
                 return None
+            if ts.tzinfo is not None:
+                ts = ts.tz_localize(None)
+            sub = close[close.index <= ts]
+            if len(sub) == 0:
+                return None
+            return float(sub.iloc[-1])
 
         cols = list(equity_row.index)[:max_years]
         pb_history, ps_history = [], []
@@ -1038,19 +1128,29 @@ def build_pb_ps_history(balance_sheet, income_stmt, price_history, *,
             return {}
         return {"pb_history": pb_history, "ps_history": ps_history,
                 "years": years, "source": "yfinance annual (≤4y)"}
-    except Exception:  # noqa: BLE001 — fully fail-closed
+    except Exception:  # noqa: BLE001 — fail-closed boundary, but log LOUDLY (X1)
+        _log.warning("build_pb_ps_history failed for %s — degrading to no band",
+                     ticker, exc_info=True)
         return {}
 
 
 def fetch_cyclical_band_history(ticker: str, *, price_loader=None) -> dict:
-    """Fetch annual fundamentals (yfinance) + cached prices → PB/PS history.
+    """Fetch annual fundamentals (yfinance) + a MULTI-YEAR price window → PB/PS history.
 
-    **PAGE PATH ONLY** — the per-ticker fundamentals fetch is allowed only where
-    existing per-ticker fetches happen (pages/4 context). The price history comes
-    from the local OHLCV cache (no fetch). Results are written through to the
-    anchor cache by the page hand-off, so subsequent loads and ALL ranking /
-    Cockpit refresh paths read the baked band and stay network-free. Fail-closed
-    → ``{}`` (caller degrades with the ``cyclical_band_unavailable`` caveat).
+    **PAGE PATH ONLY** — invoked solely when the Equity page passes this callable
+    as ``cyclical_history_fetcher``; the network-free cached / ranking / Cockpit
+    refresh paths pass no fetcher and therefore never reach here (so they stay
+    network-free). Results are written through to the anchor cache by the page
+    hand-off.
+
+    The band needs prices reaching the OLDEST fiscal period (~4y back), so the
+    default ``price_loader`` (X2, fix round 2) prefers an existing **multi-year**
+    OHLCV cache (``ohlcv_5y_1wk`` / ``ohlcv_2y_1d``) and otherwise FETCHES a 5y
+    monthly history (a per-ticker fetch — permitted only on this page path). A 1y /
+    6mo cache is insufficient: it covers at most the most-recent fiscal date and
+    caps the band at ~1 observation (< ``MIN_CYCLICAL_BAND_OBS``), forcing the
+    degrade. Fail-closed → ``{}`` (caller degrades with the
+    ``cyclical_band_unavailable`` caveat).
     """
     try:
         import yfinance as yf
@@ -1062,20 +1162,42 @@ def fetch_cyclical_band_history(ticker: str, *, price_loader=None) -> dict:
             istmt = getattr(tk, "financials", None)
 
         if price_loader is None:
-            def price_loader(t):  # default: local OHLCV cache (no fetch)
-                try:
-                    from lib import cache_manager
-                    for dt in ("ohlcv_1y_1d", "ohlcv", "ohlcv_2y_1d", "ohlcv_5y_1wk"):
+            def price_loader(t):
+                # Page path only: prefer a MULTI-YEAR cache, else fetch 5y monthly.
+                from lib import cache_manager
+
+                def _cache(dt):
+                    try:
                         df = cache_manager.load(t, dt)
-                        if df is not None and not getattr(df, "empty", True):
-                            return df
+                    except Exception:  # noqa: BLE001
+                        return None
+                    return df if (df is not None and not getattr(df, "empty", True)) else None
+
+                # 1. existing multi-year cache (network-free).
+                for dt in ("ohlcv_5y_1wk", "ohlcv_2y_1d"):
+                    df = _cache(dt)
+                    if df is not None:
+                        return df
+                # 2. fetch a 5y monthly history (page-path per-ticker network).
+                try:
+                    df = yf.Ticker(t).history(period="5y", interval="1mo")
+                    if df is not None and not getattr(df, "empty", True):
+                        return df
                 except Exception:  # noqa: BLE001
-                    return None
+                    pass
+                # 3. last resort: a short cache (likely yields < 3 obs -> the
+                #    caller degrades with the cyclical_band_unavailable caveat).
+                for dt in ("ohlcv_1y_1d", "ohlcv"):
+                    df = _cache(dt)
+                    if df is not None:
+                        return df
                 return None
 
         px = price_loader(ticker)
         return build_pb_ps_history(bs, istmt, px, ticker=ticker)
     except Exception:  # noqa: BLE001 — fail-closed (page path)
+        _log.warning("fetch_cyclical_band_history failed for %s", ticker,
+                     exc_info=True)
         return {}
 
 
@@ -1128,27 +1250,53 @@ def _assemble_fair_value(ticker: str, current_price: float,
                     "DCF 无法计算"
                 )
 
-    # --- relative-PE anchor (Task 2 forward basis; unchanged) --------------
+    # --- X4 data-sanity guards (deterministic; exclude + flag, NEVER correct) ---
+    # Accumulate sanity caveats / per-anchor exclusions here; merged into the
+    # build call below. No bad value is ever replaced with an invented one.
+    sanity_exclude: set = set()
+    sanity_caveats: list = []
+
+    # --- relative-PE anchor (Task 2 forward basis) -------------------------
     relative_value: Optional[float] = None
     relative_basis = ""
     peer_pe_basis = ""
     fwd_eps = _finite_pos(raw.get("forward_eps"))
     eps = _finite_pos(raw.get("trailing_eps"))
+    # X4 rule 1: a forward EPS wildly above trailing EPS is corrupt yfinance data
+    # (MU live: 105.95 vs 21.17). We still COMPUTE the relative anchor (so it shows
+    # in excluded_anchors for transparency) but EXCLUDE it from the blend + caveat.
+    _k = DATA_SANITY_CONFIG["forward_eps_max_x_trailing"]
+    _eps_floor = DATA_SANITY_CONFIG["eps_epsilon"]
+    forward_eps_implausible = (
+        fwd_eps is not None and fwd_eps > _k * max(eps or 0.0, _eps_floor))
     chosen_eps = fwd_eps if fwd_eps is not None else eps
     if chosen_eps is not None:
         relative_value = round(get_sector_median_pe(raw.get("sector")) * chosen_eps, 2)
         relative_basis = "forward" if fwd_eps is not None else "trailing_fallback"
         peer_pe_basis = "mixed" if fwd_eps is not None else "trailing"
+    if forward_eps_implausible:
+        sanity_exclude.add("relative_pe")
+        sanity_caveats.append(CAVEAT_IMPLAUSIBLE_FORWARD_EPS)
 
     # analyst_target = targetMedianPrice if available else targetMeanPrice
     analyst_target = raw.get("analyst_median") or raw.get("analyst_mean")
+
+    # X4 rule 3: an implausible revenue_growth (MU live: 1.963 = 196%) poisons the
+    # classifier AND peer matching. Treat it as MISSING for BOTH (they fall to
+    # their existing missing-data handling) and caveat — never replaced.
+    _rg_raw = _finite(raw.get("revenue_growth"))
+    if _rg_raw is not None and _rg_raw > DATA_SANITY_CONFIG["max_revenue_growth"]:
+        rev_growth_sane: Optional[float] = None
+        sanity_caveats.append(CAVEAT_IMPLAUSIBLE_GROWTH_INPUT)
+    else:
+        rev_growth_sane = _rg_raw
 
     # --- Classify + route (Task 1 / Task 2) --------------------------------
     classification = classify_company(
         ticker=ticker,
         sector=raw.get("sector"),
         industry=raw.get("industry"),
-        revenue_growth=raw.get("revenue_growth"),
+        revenue_growth=rev_growth_sane,
         profit_margin=raw.get("profit_margin"),
         operating_margin=raw.get("operating_margin"),
         fcf=raw.get("fcf_ttm"),
@@ -1175,7 +1323,7 @@ def _assemble_fair_value(ticker: str, current_price: float,
     if peers and (needs_ev_s or needs_ev_ebitda):
         target_profile = {
             "ticker": ticker, "sector": raw.get("sector"),
-            "revenue_growth": raw.get("revenue_growth"),
+            "revenue_growth": rev_growth_sane,  # X4 rule 3: sanitized for matching
             "market_cap": raw.get("market_cap"),
         }
         if needs_ev_s:
@@ -1193,7 +1341,7 @@ def _assemble_fair_value(ticker: str, current_price: float,
     if needs_ev_s:
         r40 = None
         if menu_key == "growth_profitable":
-            rg = _finite(raw.get("revenue_growth"))
+            rg = rev_growth_sane  # X4 rule 3: sanitized growth (None if implausible)
             fcf = _finite(raw.get("fcf_ttm"))
             rev = _finite_pos(raw.get("total_revenue"))
             if rg is not None and fcf is not None and rev:
@@ -1266,7 +1414,8 @@ def _assemble_fair_value(ticker: str, current_price: float,
         pb_ps_basis=pb_ps_basis,
         peer_basis=peer_basis,
         backlog_note=backlog_note,
-        caveats=caveats,
+        caveats=caveats + sanity_caveats,
+        sanity_exclude=sanity_exclude,
     )
 
 

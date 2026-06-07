@@ -852,9 +852,16 @@ with fv_slot.container().expander(t("cockpit_fv_header"), expanded=True):
         if _bcol2.button(t("cockpit_fv_update"), key=f"fv_update_{ticker}",
                          use_container_width=True, disabled=not _dcf_ready):
             with st.spinner(t("cockpit_fv_running")):
+                # X3 (fix round 2): a recompute MUST pass the same routed inputs as
+                # the initial render (line ~668) — the cyclical band fetcher AND the
+                # peer list — otherwise it silently strips the cyclical PB/PS band
+                # (degrading to analyst-only) and the growth-matched peer basis.
+                _peers_upd = globals().get("peer_infos") or None
                 _fv2 = compute_app_fair_value(
                     ticker, price,
                     dcf_override=float(_dcf_params["intrinsic_value"]),
+                    peers=_peers_upd,
+                    cyclical_history_fetcher=fetch_cyclical_band_history,
                 )
                 st.session_state[_fv_key] = _fv2
                 _dbt = analyze_equity_fair_value_debate(
