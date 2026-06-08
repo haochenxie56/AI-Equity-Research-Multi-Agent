@@ -1032,10 +1032,10 @@ def _render_order_card(h, rec) -> None:
             _fva = getattr(levels, "fair_value_anchor", None)
             if _fva is not None:
                 # Phase 6C-B — surface the provenance of the fair-value anchor.
-                _fvs = getattr(levels, "fair_value_source", "analyst_proxy")
+                _fvs = getattr(levels, "fair_value_source", "app_fair_value")
                 _fvs_lbl = {
                     "app_computed": t("td_fv_src_app"),
-                    "analyst_proxy": t("td_fv_src_analyst"),
+                    "app_fair_value": t("td_fv_src_app_fair_value"),
                     "fixture": t("td_fv_src_fixture"),
                 }.get(_fvs, _fvs)
                 _fvs_color = "#3fb950" if _fvs == "app_computed" else (

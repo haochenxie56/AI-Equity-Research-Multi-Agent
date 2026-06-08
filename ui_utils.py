@@ -1263,7 +1263,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         # ── Phase 6C-B: Trading Desk fair-value source badge ────────────────────
         "td_fair_value_source":         "估值来源",
         "td_fv_src_app":                "应用计算",
-        "td_fv_src_analyst":            "分析师代理",
+        "td_fv_src_app_fair_value":     "应用估值",
         "td_fv_src_fixture":            "占位数据",
         # ── Phase 6C-A: Trading Desk ─────────────────────────────────────────────
         "td_page_title":      "交易台",
@@ -2694,7 +2694,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         # ── Phase 6C-B: Trading Desk fair-value source badge ────────────────────
         "td_fair_value_source":         "Fair value source",
         "td_fv_src_app":                "app-computed",
-        "td_fv_src_analyst":            "analyst proxy",
+        "td_fv_src_app_fair_value":     "app fair value",
         "td_fv_src_fixture":            "fixture",
         # ── Phase 6C-A: Trading Desk ─────────────────────────────────────────────
         "td_page_title":      "Trading Desk",
