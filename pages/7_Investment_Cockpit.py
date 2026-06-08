@@ -370,6 +370,7 @@ def _run_equity_research(tickers: list) -> dict:
     try:
         from lib.equity_valuation import (
             compute_app_fair_value, store_equity_research_result,
+            fetch_cyclical_band_history,
         )
         from lib.llm_orchestrator import analyze_equity_fair_value_debate
     except Exception:  # noqa: BLE001 — fail-closed
@@ -380,7 +381,19 @@ def _run_equity_research(tickers: list) -> dict:
     prog = st.progress(0, text=t("cockpit_hub_equity_running"))
     for i, tk in enumerate(tickers):
         try:
-            fv = compute_app_fair_value(tk, _current_price(tk))
+            # Anchor Intel v2 r2 (X2 — no poisoning): this on-demand equity research
+            # is a genuine INTERACTIVE page path (not the network-free refresh, which
+            # is _run_refresh -> rank_opportunities consuming anchor_cache). It must
+            # therefore pass the cyclical band fetcher so its cached entry is
+            # band-capable — exactly like pages/4_Equity.py and the Trading Desk. If
+            # it omitted the fetcher it would (because the fetcher is excluded from
+            # the cache key) become a first-writer that POISONS the shared entry: a
+            # later band-requiring page caller would silently reuse a non-band entry
+            # as if the band were genuinely unavailable. All three live-compute call
+            # sites now pass the fetcher, so no path writes a poisoning entry.
+            fv = compute_app_fair_value(
+                tk, _current_price(tk),
+                cyclical_history_fetcher=fetch_cyclical_band_history)
             debate = analyze_equity_fair_value_debate(
                 tk, fv, macro_regime=regime, lang=lang)
             if (debate.get("debate_status") == "fallback"
