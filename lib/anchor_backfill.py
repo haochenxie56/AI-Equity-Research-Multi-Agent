@@ -82,6 +82,21 @@ _DAYS_PER_MONTH = 30
 # Degrade caveats unique to backfill (the live caveats are reused where they fit).
 CAVEAT_BACKFILL_INSUFFICIENT_FUNDAMENTALS = "backfill_insufficient_fundamentals"
 
+# --- Filing-lag gate (G1, fix round) — the look-ahead defence -----------------
+# A statement is dated by its fiscal-period END, but it is FILED / published weeks
+# later (10-K ~60-90d, 10-Q ~40-45d after period end). The free loader has NO
+# filing-date metadata (only period-end), so recomputing a past-date anchor with a
+# statement that was not yet public on that date is LOOK-AHEAD BIAS — it
+# contaminates the whole backfilled history and destroys U3's signal. We cannot
+# know the real filing date, so we apply a fixed CONSERVATIVE publication lag: a
+# statement counts as available on an as-of date D only when
+# ``period_end + filing_lag <= D``. Real filing dates vary; a fixed conservative
+# lag systematically removes look-ahead in the ONLY safe direction (it may use a
+# statement slightly LATER than the market did, never EARLIER). The default
+# yfinance loader fetches ANNUAL statements, so the annual lag governs in practice;
+# the quarterly entry is here for any future quarterly feed.
+FILING_LAG_DAYS = {"annual": 75, "quarterly": 45}
+
 
 # ---------------------------------------------------------------------------
 # Date helpers (pure)
@@ -129,17 +144,27 @@ def _to_ts(value):
     return ts
 
 
-def _slice_frame_asof(frame, as_of_ts):
-    """Keep only the statement columns (fiscal periods) on/before ``as_of_ts``.
+def _slice_frame_asof(frame, as_of_ts, *, lag_days: int = 0):
+    """Keep only the statement columns PUBLIC on/before ``as_of_ts`` (G1 lag gate).
 
     yfinance statements are indexed by row label with one column per fiscal-period
-    Timestamp. Returns a column-filtered copy, or ``None`` when nothing qualifies
-    (pre-data / pre-IPO as-of date). Fail-closed → ``None``.
+    Timestamp. A column (fiscal period) qualifies only when its
+    publication-lagged availability is on/before the as-of date —
+    ``period_end + lag_days <= as_of_ts`` — so a statement filed AFTER the as-of
+    date is invisible exactly as it was to the market then (no look-ahead). With
+    ``lag_days=0`` this reduces to the plain period-end gate. Returns a
+    column-filtered copy, or ``None`` when nothing qualifies (pre-data / pre-IPO /
+    not-yet-filed). Fail-closed → ``None``.
     """
     try:
         if frame is None or getattr(frame, "empty", True):
             return None
-        keep = [c for c in frame.columns if (_to_ts(c) is not None and _to_ts(c) <= as_of_ts)]
+        lag = timedelta(days=int(lag_days or 0))
+        keep = []
+        for c in frame.columns:
+            cts = _to_ts(c)
+            if cts is not None and (cts + lag) <= as_of_ts:
+                keep.append(c)
         if not keep:
             return None
         return frame[keep]
@@ -345,9 +370,16 @@ def _backfill_one(ticker: str, as_of: date, *, balance_sheet, income_stmt,
     as_of_ts = _to_ts(as_of)
     if as_of_ts is None:
         return None
-    bs_a = _slice_frame_asof(balance_sheet, as_of_ts)
-    is_a = _slice_frame_asof(income_stmt, as_of_ts)
-    cf_a = _slice_frame_asof(cashflow, as_of_ts)
+    # G1 — gate the financial statements by the conservative ANNUAL filing lag (the
+    # default loader fetches annual statements). This governs BOTH the DCF/relative
+    # inputs (via _raw_asof's _newest_cols) AND the cyclical PB/PS band (the gated
+    # frames are handed to build_pb_ps_history below), so no not-yet-public
+    # statement can leak into any anchor for this date. Prices carry NO lag (they
+    # were public same-day).
+    _annual_lag = FILING_LAG_DAYS["annual"]
+    bs_a = _slice_frame_asof(balance_sheet, as_of_ts, lag_days=_annual_lag)
+    is_a = _slice_frame_asof(income_stmt, as_of_ts, lag_days=_annual_lag)
+    cf_a = _slice_frame_asof(cashflow, as_of_ts, lag_days=_annual_lag)
     px_a = _slice_prices_asof(price_history, as_of_ts)
 
     price = _price_asof(px_a)
@@ -466,8 +498,10 @@ def backfill_ticker(ticker: str, *, window_months: int = BACKFILL_WINDOW_MONTHS,
     """Backfill one ticker's recomputable anchors into the archive (idempotent).
 
     Offline / on-demand only — NOT on the app-startup, ranking, or refresh path.
-    Persistent idempotency: as-of dates already covered by a ``backfill`` record for
-    this ticker are skipped (zero duplicate rows on a re-run). Append-only. Returns
+    Persistent idempotency (G2): as-of dates already covered by ANY-origin record
+    (``live`` OR ``backfill``) for this ticker are skipped — so a re-run adds zero
+    duplicate rows AND the ``end_date`` seam never double-counts a real live row
+    against a historical backfill of the same date (live wins). Append-only. Returns
     a summary dict.
     """
     tk = (ticker or "").upper().strip()
@@ -486,8 +520,9 @@ def backfill_ticker(ticker: str, *, window_months: int = BACKFILL_WINDOW_MONTHS,
                              cadence_days=cadence_days)
     summary["dates_total"] = len(all_dates)
 
-    # Persistent idempotency guard (read-only): skip already-covered as-of dates.
-    covered = aa.backfilled_vintages(tk, path=archive_path)
+    # Persistent idempotency guard (read-only, G2): skip as-of dates already covered
+    # by a record of EITHER origin (live OR backfill) — live wins at the seam.
+    covered = aa.covered_vintages(tk, path=archive_path)
     todo = [d for d in all_dates if d.isoformat() not in covered]
     summary["skipped_already_covered"] = len(all_dates) - len(todo)
     if not todo:
