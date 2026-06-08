@@ -560,6 +560,13 @@ check("9.15 XOM blended band (mid > 0, not analyst-parroting)",
 # 9.16 Degradation: cyclical with NO fetcher (cached/ranking path) -> analyst-only
 # + the real caveat tokens. Network-free path takes this degrade.
 with mock.patch.object(eqv, "_fetch_raw", return_value=dict(_MU_RAW)):
+    # Anchor Intel v2 r2 (F1): compute_app_fair_value is now ONE st.cache_data
+    # producer keyed on (ticker, price, override) with the fetcher EXCLUDED from
+    # the key. This subtest deliberately re-computes (MU, 100.0) with a different
+    # fetcher (none) than 9.7, so clear the shared cache to exercise the degrade
+    # scenario in isolation (in production a given ticker/price is computed once
+    # per epoch — only the tests probe multiple fetchers on one key).
+    getattr(eqv._compute_cached, "clear", lambda: None)()
     _mu_deg = eqv.compute_app_fair_value("MU", 100.0)  # no fetcher (cyclical via override)
 check("9.17 degraded cyclical -> analyst-only blend",
       _names(_mu_deg.anchors) == {"analyst"}, detail=str(_names(_mu_deg.anchors)))
@@ -577,6 +584,7 @@ def _short_fetcher(_tk):
 
 
 with mock.patch.object(eqv, "_fetch_raw", return_value=dict(_MU_RAW)):
+    getattr(eqv._compute_cached, "clear", lambda: None)()  # F1: fresh key (see 9.16)
     _mu_short = eqv.compute_app_fair_value("MU", 100.0,
                                            cyclical_history_fetcher=_short_fetcher)
 check("9.22 < 3 annual obs -> band degraded + caveat",

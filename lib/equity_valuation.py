@@ -1534,16 +1534,34 @@ def _assemble_fair_value(ticker: str, current_price: float,
 
 
 def _compute_cached(ticker: str, current_price: float,
-                    dcf_override: Optional[float] = None) -> AppFairValue:
-    """Cached worker (fail-closed). Separated so ``st.cache_data`` can wrap it.
+                    dcf_override: Optional[float] = None, *,
+                    _peers: Optional[list] = None,
+                    _cyclical_history_fetcher=None) -> AppFairValue:
+    """THE single cached fair-value producer (fail-closed). Wrapped by ``st.cache_data``.
+
+    **Anchor Intel v2 r2 (F1 — true single cached producer):** both page call
+    sites — ``pages/4_Equity.py`` AND ``order_advisor._gather_technicals`` (the
+    Trading-Desk page path) — reach the band through THIS one function, so the
+    Equity page and the Trading Desk share ONE cache entry, ONE
+    :class:`AppFairValue` instance and ONE ``computed_at`` epoch per
+    ``(ticker, current_price, dcf_override)``.
 
     ``dcf_override`` (per-share, > 0) replaces the internal Gordon-growth DCF —
     used by the Equity page "Update Valuation" action to feed a user-adjusted DCF
-    intrinsic value from the Financials tab. Uses the sector-median fallback for
-    routed peer multiples (``peers=None``) so the cache key stays hashable.
+    intrinsic value from the Financials tab.
+
+    ``_peers`` and ``_cyclical_history_fetcher`` are **underscore-prefixed on
+    purpose**: ``st.cache_data`` excludes leading-underscore parameters from the
+    hash key, so the cache key stays ``(ticker, current_price, dcf_override)``
+    even though both page call sites now pass the cyclical band fetcher.
+    **First-writer-wins:** whichever page computes a given key first populates the
+    shared entry, and because BOTH page call sites pass the fetcher that entry is
+    always band-capable; the other surface then reads the identical instance.
     """
     raw = _fetch_raw(ticker)
-    return _assemble_fair_value(ticker, current_price, dcf_override, raw, peers=None)
+    return _assemble_fair_value(
+        ticker, current_price, dcf_override, raw, peers=_peers,
+        cyclical_history_fetcher=_cyclical_history_fetcher)
 
 
 def compute_app_fair_value(ticker: str, current_price: float, *,
@@ -1556,14 +1574,17 @@ def compute_app_fair_value(ticker: str, current_price: float, *,
     ``dcf_override`` (a per-share intrinsic value, > 0) is supplied it replaces the
     internal DCF (e.g. a user-adjusted DCF from the Financials tab).
 
-    When ``peers`` (already-fetched peer ``info`` dicts from the Equity page peer
-    table) OR ``cyclical_history_fetcher`` (the page-path PB/PS-band fetcher) is
-    supplied, the routed path runs UNCACHED (the inputs are unhashable) and re-uses
-    page-side data — no new per-ticker network beyond the page's existing fetches.
-    The cached path (neither supplied) is taken by the ranking / Cockpit refresh,
-    which therefore stays network-free. On ANY failure a well-formed
-    ``data_source="fixture"`` result anchored on ``current_price`` is returned —
-    this function never raises.
+    **Anchor Intel v2 r2 (F1):** ALL calls now flow through the single cached
+    worker :func:`_compute_cached`. ``peers`` (already-fetched peer ``info`` dicts
+    from the Equity page peer table) and ``cyclical_history_fetcher`` (the page-path
+    PB/PS-band fetcher) are forwarded as the worker's underscore-prefixed
+    parameters, so they are EXCLUDED from the cache key — the Equity page and the
+    Trading-Desk page path therefore share one cache entry / one instance / one
+    epoch per ticker (first-writer-wins; both page sites pass the fetcher, so the
+    shared entry is always band-capable). The ranking / Cockpit refresh paths do
+    NOT call this function — they consume ``lib.anchor_cache`` and so stay
+    network-free. On ANY failure a well-formed ``data_source="fixture"`` result
+    anchored on ``current_price`` is returned — this function never raises.
     """
     t = (ticker or "").upper().strip()
     cp = _finite_pos(current_price) or 0.0
@@ -1575,11 +1596,9 @@ def compute_app_fair_value(ticker: str, current_price: float, *,
         except (TypeError, ValueError):
             ov = None
     try:
-        if peers or cyclical_history_fetcher is not None:
-            return _assemble_fair_value(
-                t, round(cp, 4), ov, _fetch_raw(t), peers=peers,
-                cyclical_history_fetcher=cyclical_history_fetcher)
-        return _compute_cached(t, round(cp, 4), ov)
+        return _compute_cached(
+            t, round(cp, 4), ov, _peers=peers,
+            _cyclical_history_fetcher=cyclical_history_fetcher)
     except Exception:  # noqa: BLE001 — fully fail-closed
         return build_app_fair_value(
             ticker=t,
