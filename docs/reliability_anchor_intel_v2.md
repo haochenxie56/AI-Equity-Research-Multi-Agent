@@ -168,7 +168,7 @@ lesson.
 - **Docs:** this file (new); `docs/ai_dev_state/PROJECT_STATE.md`,
   `docs/ai_dev_state/CURRENT_TASK.md` (round-1 closure entries).
 
-## Round v2.3 — anchor historization (IN PROGRESS)
+## Round v2.3 — anchor historization (IMPLEMENTED — awaiting review)
 
 > **Round-1 lesson applied first.** Historization is again an *access-path*
 > problem: the same anchor value must be (a) read read-only on the network-free
@@ -271,6 +271,33 @@ With the archive in place the read paths are coherent: ranking/refresh reads
 `anchor_cache` (hot) read-only with `allow_fetch=False`; migration consumers read
 the archive read-only. No path is both forbidden-to-fetch and writing-archive (the
 archive write lives only on the `allow_fetch=True` page chokepoint).
+
+### Results
+
+- **New suite** `scripts/test_reliability_anchor_archive.py` — **47/47** (U1
+  record/append-only/schema-guard + page-path write-through; U3 migration
+  determinism + read-only thesis consumption; U2 snapshot-block parity on the REAL
+  ranker→`write_daily_snapshot`→read-back).
+- **`scripts/test_reliability_phase_6c_v3_entry_v4.py`** grew **90 → 92** (§13.10 /
+  §13.11): a cold `rank_opportunities` run appends **ZERO** archive records AND
+  makes **ZERO** network calls — the real-path DoD guarding the page-path-only
+  archive write.
+- Suites exercising the change are green: `valuation_stopbleed`,
+  `phase_7a_opportunity_ranking` (115/115), `phase_7b_rotation_internals`
+  (193/193 — its §18 `_meta` parity is unaffected; the new `anchor` field is on the
+  per-card record, and its parity lives in the new suite §7), `phase_6c_*`,
+  `valuation_router`, `phase_6c_b_cockpit_rebuild` (47/47).
+- The 13 red suites in the full `test_reliability_*` sweep are **pre-existing and
+  orthogonal** — proven by stashing the v2.3 tracked edits and re-running: the
+  identical 13 (CURRENT_TASK doc-state, page-file existence, sidebar nav,
+  `signal_engine`/`llm_orchestrator`, Streamlit AppTest `url_pathname`) fail on the
+  base commit `f6a930b` with identical counts. The v2.3 diff touches none of those
+  files.
+- `.gitattributes` keeps LF (`git diff --check` clean); `lib/macro_regime.py`
+  untouched; i18n additive (the migration watch note is a bilingual inline string
+  mirroring the D2 fragility annotation — no `TRANSLATIONS` change).
+- New degradation state: none — `anchor_not_cached` is the existing R3 honest-degrade
+  token, reused for the snapshot block.
 
 ## Pending — rounds v2.4–v2.5
 
