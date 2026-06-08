@@ -226,7 +226,10 @@ check("4.3 app-computed result still approved_for_execution False",
 
 with mock.patch.object(oa, "_gather_technicals", side_effect=_live_tech), \
         mock.patch.object(oa, "_read_equity_research_result", return_value={}):
-    _pl_proxy = oa.compute_price_levels("AAA", None, horizon="long")
+    # Anchor Intel v2 r2 (X1): page-path call (allow_fetch=True). _gather_technicals
+    # is mocked to live data here, so the local app_fair_value token must surface —
+    # without the flag the network-free degrade would instead mark anchor_not_cached.
+    _pl_proxy = oa.compute_price_levels("AAA", None, horizon="long", allow_fetch=True)
 # Anchor Intel v2 r2 (C5 rename): the local live producer token is now the
 # truthful "app_fair_value" (was the misleading "analyst_proxy").
 check("4.4 fair_value_source == app_fair_value when result absent (live data)",

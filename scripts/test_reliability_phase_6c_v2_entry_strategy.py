@@ -44,6 +44,18 @@ import lib.thesis_monitor as tm  # noqa: E402
 import lib.holdings as holds  # noqa: E402
 
 
+# Anchor Intel v2 r2 (X1): compute_price_levels defaults allow_fetch=False
+# (fail-closed). Every call here exercises the PAGE path, so wrap to pass
+# allow_fetch=True (mirrors the real Trading-Desk / Equity call sites). See the
+# 6c_v3 suite §13 for the network-free ranking-path proof.
+_real_cpl = oa.compute_price_levels
+
+
+def _cpl(*a, **k):
+    k.setdefault("allow_fetch", True)
+    return _real_cpl(*a, **k)
+
+
 PASS = 0
 FAIL = 0
 _failures: list = []
@@ -148,7 +160,7 @@ for fld in _FVA_FIELDS:
 
 # 2.1 blocked when EMA10 < EMA20
 with _patched(_snap(100.0, ema10=98.0, ema20=100.0, rsi=55.0, vol_ratio=1.5)):
-    r = oa.compute_price_levels("MU", None, horizon="short")
+    r = _cpl("MU", None, horizon="short")
 check("2.1 SHORT initiate blocked when EMA10<EMA20 (action=wait)", r.action == "wait",
       detail=r.action)
 check("2.2 SHORT initiate blocked => entry_zone None", r.entry_zone_low is None,
@@ -159,7 +171,7 @@ check("2.3 SHORT initiate blocked => missing_conditions populated",
 # 2.4 allowed (enter_or_add_small) when fully confirmed and near support
 with _patched(_snap(100.0, ema10=100.0, ema20=99.0, rsi=55.0, vol_ratio=1.5,
                     nearest_support=99.0)):
-    r = oa.compute_price_levels("MU", None, horizon="short")
+    r = _cpl("MU", None, horizon="short")
 check("2.4 SHORT initiate confirmed => enter_or_add_small",
       r.action == "enter_or_add_small", detail=r.action)
 check("2.5 SHORT initiate confirmed => entry_zone present", r.entry_zone_low is not None,
@@ -172,14 +184,14 @@ check("2.5 SHORT initiate confirmed => entry_zone present", r.entry_zone_low is 
 
 with _patched(_snap(100.0, ema10=100.0, ema20=99.0, rsi=55.0, vol_ratio=1.5,
                     nearest_support=99.0)):
-    r = oa.compute_price_levels("MU", _H(110.0, "short"), horizon="short")
+    r = _cpl("MU", _H(110.0, "short"), horizon="short")
 check("3.1 SHORT add blocked when price<cost (wait_or_cut)", r.action == "wait_or_cut",
       detail=r.action)
 check("3.1b SHORT add scenario detected", r.scenario == "add", detail=r.scenario)
 
 with _patched(_snap(100.0, ema10=100.0, ema20=99.0, rsi=55.0, vol_ratio=1.5,
                     nearest_support=99.0)):
-    r = oa.compute_price_levels("MU", _H(80.0, "short"), horizon="short")
+    r = _cpl("MU", _H(80.0, "short"), horizon="short")
 check("3.2 SHORT add blocked when price>cost*1.15 (wait)", r.action == "wait",
       detail=r.action)
 
@@ -189,7 +201,7 @@ check("3.2 SHORT add blocked when price>cost*1.15 (wait)", r.action == "wait",
 # ---------------------------------------------------------------------------
 
 with _patched(_snap(100.0, sma50=96.0, sma200=80.0, rsi=55.0, vol_ratio=1.5)):
-    r = oa.compute_price_levels("MU", None, horizon="mid")
+    r = _cpl("MU", None, horizon="mid")
 check("4.1 MID initiate healthy volume => enter_partial_now",
       r.action == "enter_partial_now", detail=r.action)
 check("4.2 MID stop_loss_level < entry_zone_low",
@@ -197,7 +209,7 @@ check("4.2 MID stop_loss_level < entry_zone_low",
       detail=f"stop={r.stop_loss_level} low={r.entry_zone_low}")
 
 with _patched(_snap(100.0, sma50=96.0, sma200=80.0, rsi=82.0, vol_ratio=0.5)):
-    r = oa.compute_price_levels("MU", None, horizon="mid")
+    r = _cpl("MU", None, horizon="mid")
 check("4.3 MID initiate unhealthy volume => wait_for_pullback",
       r.action == "wait_for_pullback", detail=r.action)
 
@@ -207,20 +219,20 @@ check("4.3 MID initiate unhealthy volume => wait_for_pullback",
 # ---------------------------------------------------------------------------
 
 with _patched(_snap(100.0, sma50=96.0, sma200=80.0, rsi=55.0, vol_ratio=0.8)):
-    r = oa.compute_price_levels("MU", _H(110.0, "mid"), horizon="mid",
+    r = _cpl("MU", _H(110.0, "mid"), horizon="mid",
                                 thesis_status="intact",
                                 eps_revision_direction="improving")
 check("5.1 MID add average_down_small (price<cost, intact, eps not deteriorating)",
       r.action == "average_down_small", detail=r.action)
 
 with _patched(_snap(100.0, sma200=80.0, rsi=50.0, vol_ratio=0.8)):
-    r = oa.compute_price_levels("MU", _H(120.0, "long"), horizon="long",
+    r = _cpl("MU", _H(120.0, "long"), horizon="long",
                                 thesis_status="intact")
 check("5.2 LONG add average_down (price<cost, thesis intact)",
       r.action == "average_down", detail=r.action)
 
 with _patched(_snap(100.0, sma200=80.0, rsi=50.0, vol_ratio=0.8)):
-    r = oa.compute_price_levels("MU", _H(120.0, "long"), horizon="long",
+    r = _cpl("MU", _H(120.0, "long"), horizon="long",
                                 thesis_status="weakening")
 check("5.3 LONG add wait when thesis_status != intact", r.action == "wait",
       detail=r.action)
@@ -231,7 +243,7 @@ check("5.3 LONG add wait when thesis_status != intact", r.action == "wait",
 # ---------------------------------------------------------------------------
 
 with _patched(_snap(100.0, sma50=96.0, sma200=80.0, rsi=55.0, vol_ratio=1.5)):
-    r_gate = oa.compute_price_levels("MU", None, horizon="mid",
+    r_gate = _cpl("MU", None, horizon="mid",
                                      eps_revision_direction="deteriorating")
 check("6.1 fundamental gate (deteriorating EPS) => action wait", r_gate.action == "wait",
       detail=r_gate.action)
@@ -240,7 +252,7 @@ check("6.3 risk_reward_ratio == 0.0 when entry_zone None",
       r_gate.risk_reward_ratio == 0.0, detail=str(r_gate.risk_reward_ratio))
 
 with _patched(_snap(100.0, sma50=96.0, sma200=80.0, rsi=55.0, vol_ratio=1.5)):
-    r_val = oa.compute_price_levels("MU", None, horizon="mid", valuation_percentile=0.85)
+    r_val = _cpl("MU", None, horizon="mid", valuation_percentile=0.85)
 check("6.4 fundamental gate (valuation >= 0.70) => wait + entry None",
       r_val.action == "wait" and r_val.entry_zone_low is None, detail=r_val.action)
 
@@ -255,7 +267,7 @@ _cases = [
 for i, s in enumerate(_cases):
     for hz in ("short", "mid", "long"):
         with _patched(s):
-            rr = oa.compute_price_levels("MU", None, horizon=hz)
+            rr = _cpl("MU", None, horizon=hz)
         if rr.entry_zone_low is not None and rr.stop_loss_level is not None:
             if not (rr.stop_loss_level < rr.entry_zone_low):
                 _sweep_ok = False
@@ -266,8 +278,8 @@ _approved_ok = True
 for s in _cases:
     for hz in ("short", "mid", "long"):
         with _patched(s):
-            rr = oa.compute_price_levels("MU", _H(100.0, hz), horizon=hz)
-            rr2 = oa.compute_price_levels("MU", None, horizon=hz)
+            rr = _cpl("MU", _H(100.0, hz), horizon=hz)
+            rr2 = _cpl("MU", None, horizon=hz)
         if rr.approved_for_execution or rr2.approved_for_execution:
             _approved_ok = False
 check("6.6 approved_for_execution always False on PriceLevelResult", _approved_ok)
@@ -364,7 +376,7 @@ for name, src in _SRCS.items():
 # 10.1 MID add gap band [cost, cost*1.05): in-the-money below the add band now
 # yields an actionable enter_on_pullback zone (NVDA-style: $214 vs $212 cost).
 with _patched(_snap(214.0, sma50=210.0, sma200=190.0, rsi=55.0, vol_ratio=1.2)):
-    r_gap = oa.compute_price_levels("NVDA", _H(212.0, "mid"), horizon="mid",
+    r_gap = _cpl("NVDA", _H(212.0, "mid"), horizon="mid",
                                     thesis_status="intact",
                                     eps_revision_direction="improving")
 check("10.1 MID add [cost,cost*1.05) => enter_on_pullback (not bare hold)",

@@ -53,6 +53,21 @@ import lib.equity_valuation as eqv  # noqa: E402
 import lib.holdings as holds  # noqa: E402
 
 
+# Anchor Intel v2 r2 (X1): compute_price_levels now defaults allow_fetch=False
+# (fail-closed; the ranking / Cockpit-refresh path stays network-free). Every call
+# in THIS suite exercises a PAGE path (Trading-Desk / Equity), where the live
+# producer is permitted — so route them through this wrapper that sets
+# allow_fetch=True, mirroring the real page call sites. The ranker's own internal
+# call (driven via rank_opportunities in §13) is NOT wrapped and stays False, so the
+# network-free contract is proven on the real transitive path, not papered over.
+_real_cpl = oa.compute_price_levels
+
+
+def _cpl(*a, **k):
+    k.setdefault("allow_fetch", True)
+    return _real_cpl(*a, **k)
+
+
 PASS = 0
 FAIL = 0
 _failures: list = []
@@ -207,7 +222,7 @@ _fva_hi = eqv.AppFairValue(ticker="MU", confidence="high", blend_state="blended"
                            data_source="fixture")
 with _patched(_snap(100.0, sma200=80.0, rsi=50.0, vol_ratio=1.0), fva_obj=_fva_hi), \
         _patched_portfolio([]):
-    r = oa.compute_price_levels("MU", None, horizon="long", valuation_percentile=0.3)
+    r = _cpl("MU", None, horizon="long", valuation_percentile=0.3)
 check("2.1 LONG high-conf entry_zone_high == fair_value_mid × 0.90 (was conservative×0.90)",
       r.entry_zone_high is not None and abs(r.entry_zone_high - 108.0) < 0.5,
       detail=str(r.entry_zone_high))
@@ -220,7 +235,7 @@ _fva_med = eqv.AppFairValue(ticker="MU", confidence="medium", blend_state="blend
                             data_source="fixture")
 with _patched(_snap(100.0, sma200=80.0, rsi=50.0, vol_ratio=1.0), fva_obj=_fva_med), \
         _patched_portfolio([]):
-    r = oa.compute_price_levels("MU", None, horizon="long", valuation_percentile=0.3)
+    r = _cpl("MU", None, horizon="long", valuation_percentile=0.3)
 check("2.2 LONG medium-conf entry_zone_high == analyst_target × 0.85 (was analyst_anchor×0.85)",
       r.entry_zone_high is not None and abs(r.entry_zone_high - 102.0) < 0.5,
       detail=str(r.entry_zone_high))
@@ -229,7 +244,7 @@ _fva_low = eqv.AppFairValue(ticker="MU", confidence="low", blend_state="no_ancho
                             fair_value_mid=85.0, data_source="fixture")
 with _patched(_snap(100.0, sma200=80.0, rsi=50.0, vol_ratio=1.0), fva_obj=_fva_low), \
         _patched_portfolio([]):
-    r = oa.compute_price_levels("MU", None, horizon="long", valuation_percentile=0.3)
+    r = _cpl("MU", None, horizon="long", valuation_percentile=0.3)
 check("2.3 LONG low-conf entry_zone is None",
       r.entry_zone_low is None and r.entry_zone_high is None,
       detail=f"{r.entry_zone_low}-{r.entry_zone_high}")
@@ -257,7 +272,7 @@ check("3.2 soft warning does NOT block (zone still present)",
 
 with _patched(_snap(100.0, ema10=100.0, ema20=99.0, rsi=55.0, vol_ratio=1.5,
                     nearest_support=99.0)), _patched_portfolio([]):
-    r = oa.compute_price_levels("MU", _H(110.0, "short"), horizon="short")
+    r = _cpl("MU", _H(110.0, "short"), horizon="short")
 check("4.1 SHORT add action == wait_or_cut when price < cost_basis",
       r.action == "wait_or_cut", detail=r.action)
 check("4.1b SHORT add never produces an entry zone for a loser",
@@ -265,7 +280,7 @@ check("4.1b SHORT add never produces an entry zone for a loser",
 
 with _patched(_snap(100.0, ema10=100.0, ema20=99.0, rsi=55.0, vol_ratio=1.5,
                     nearest_support=99.0)), _patched_portfolio([]):
-    r = oa.compute_price_levels("MU", _H(95.0, "short"), horizon="short")
+    r = _cpl("MU", _H(95.0, "short"), horizon="short")
 check("4.2 SHORT add proceeds to zone engine when price >= cost_basis",
       r.action != "wait_or_cut" and r.entry_zone_low is not None,
       detail=f"{r.action} zone={r.entry_zone_low}")
@@ -277,14 +292,14 @@ check("4.2 SHORT add proceeds to zone engine when price >= cost_basis",
 
 with _patched(_snap(100.0, sma50=96.0, sma200=80.0, rsi=55.0, vol_ratio=1.5)), \
         _patched_portfolio([]):
-    r = oa.compute_price_levels("MU", _H(110.0, "mid"), horizon="mid",
+    r = _cpl("MU", _H(110.0, "mid"), horizon="mid",
                                 thesis_status="intact",
                                 eps_revision_direction="improving")
 check("5.1 MID add average_down_small (price<cost, intact, eps not deteriorating)",
       r.action == "average_down_small", detail=r.action)
 
 with _patched(_snap(100.0, sma200=80.0, rsi=50.0, vol_ratio=0.8)), _patched_portfolio([]):
-    r = oa.compute_price_levels("MU", _H(120.0, "long"), horizon="long",
+    r = _cpl("MU", _H(120.0, "long"), horizon="long",
                                 thesis_status="weakening")
 check("5.2 LONG add action == wait when thesis_status != intact", r.action == "wait",
       detail=r.action)
@@ -293,7 +308,7 @@ check("5.2 LONG add action == wait when thesis_status != intact", r.action == "w
 _h_lp = _H(95.0, "long", shares=1.0)
 with _patched(_snap(100.0, sma200=80.0, rsi=50.0, vol_ratio=0.8)), \
         _patched_portfolio([_h_lp], cash=100_000.0):
-    r = oa.compute_price_levels("MU", _h_lp, horizon="long", thesis_status="intact",
+    r = _cpl("MU", _h_lp, horizon="long", thesis_status="intact",
                                 valuation_percentile=0.30)
 check("5.3 LONG add action == add_partial when val_pct < 0.50", r.action == "add_partial",
       detail=r.action)
@@ -306,7 +321,7 @@ check("5.4b add risk_overlay_passed True when within limits",
 _h_lt = _H(95.0, "long", shares=1.0)
 with _patched(_snap(100.0, sma200=80.0, rsi=50.0, vol_ratio=0.8)), \
         _patched_portfolio([_h_lt], cash=100_000.0):
-    r = oa.compute_price_levels("MU", _h_lt, horizon="long", thesis_status="intact",
+    r = _cpl("MU", _h_lt, horizon="long", thesis_status="intact",
                                 valuation_percentile=0.60)
 check("5.5 LONG add action == add_tiny when 0.50 <= val_pct < 0.70", r.action == "add_tiny",
       detail=r.action)
@@ -319,7 +334,7 @@ check("5.5 LONG add action == add_tiny when 0.50 <= val_pct < 0.70", r.action ==
 _h_max = _H(95.0, "long", shares=200.0)  # 200 × $100 = $20k already; max 15% of $20k
 with _patched(_snap(100.0, sma200=80.0, rsi=50.0, vol_ratio=0.8)), \
         _patched_portfolio([_h_max], cash=0.0):
-    r = oa.compute_price_levels("MU", _h_max, horizon="long", thesis_status="intact",
+    r = _cpl("MU", _h_max, horizon="long", thesis_status="intact",
                                 valuation_percentile=0.30)
 check("6.1 risk_overlay_passed == False when portfolio at max limit",
       r.risk_overlay_passed is False, detail=f"{r.risk_overlay_passed} {r.risk_overlay_note}")
@@ -340,8 +355,8 @@ _cases = [
 ]
 for s, hz in _cases:
     with _patched(s, fva_obj=_fva_hi), _patched_portfolio([]):
-        r1 = oa.compute_price_levels("MU", None, horizon=hz)
-        r2 = oa.compute_price_levels("MU", _H(100.0, hz), horizon=hz)
+        r1 = _cpl("MU", None, horizon=hz)
+        r2 = _cpl("MU", _H(100.0, hz), horizon=hz)
     if r1.approved_for_execution or r2.approved_for_execution:
         _approved_ok = False
 check("7.1 approved_for_execution always False", _approved_ok)
@@ -449,7 +464,7 @@ with mock.patch.object(eqv, "_fetch_raw", return_value=dict(_RP_RAW)), \
             mock.patch("lib.technical.snapshot",
                        return_value=_snap(100.0, sma200=80.0, rsi=50.0, vol_ratio=1.0)), \
             _patched_portfolio([]):
-        _pl_rp = oa.compute_price_levels("MU", None, horizon="long",
+        _pl_rp = _cpl("MU", None, horizon="long",
                                          valuation_percentile=0.3)
 check("10.1 real path: order_advisor anchor == Equity-page AppFairValue.fair_value_mid",
       _pl_rp.fair_value_anchor is not None
@@ -476,7 +491,7 @@ with mock.patch.object(eqv, "_fetch_raw", return_value=dict(_RP_RAW)), \
             mock.patch("lib.technical.snapshot",
                        return_value=_snap(100.0, sma200=80.0, rsi=50.0, vol_ratio=1.0)), \
             _patched_portfolio([]):
-        _pl_b = oa.compute_price_levels("PARITYX", None, horizon="long",
+        _pl_b = _cpl("PARITYX", None, horizon="long",
                                         valuation_percentile=0.3)
 check("10.4 parity: Trading-Desk anchor == Equity-page anchor (one cached instance)",
       _pl_b.fair_value_anchor is not None
@@ -498,7 +513,7 @@ with mock.patch.object(eqv, "_fetch_raw", return_value=dict(_RP_RAW)), \
             mock.patch("lib.technical.snapshot",
                        return_value=_snap(100.0, sma200=80.0, rsi=50.0, vol_ratio=1.0)), \
             _patched_portfolio([]):
-        _pl_td_first = oa.compute_price_levels("FWTKR1", None, horizon="long",
+        _pl_td_first = _cpl("FWTKR1", None, horizon="long",
                                                valuation_percentile=0.3)
     _eq_after_td = eqv.compute_app_fair_value(
         "FWTKR1", 100.0, cyclical_history_fetcher=eqv.fetch_cyclical_band_history)
@@ -517,7 +532,7 @@ with mock.patch.object(eqv, "_fetch_raw", return_value=dict(_RP_RAW)), \
             mock.patch("lib.technical.snapshot",
                        return_value=_snap(100.0, sma200=80.0, rsi=50.0, vol_ratio=1.0)), \
             _patched_portfolio([]):
-        _pl_td_after = oa.compute_price_levels("FWTKR2", None, horizon="long",
+        _pl_td_after = _cpl("FWTKR2", None, horizon="long",
                                                valuation_percentile=0.3)
 check("10.7 first-writer Equity: Trading-Desk read matches anchor + epoch",
       _pl_td_after.fair_value_anchor is not None
@@ -576,7 +591,7 @@ _ext_irrec = {
 }
 with _patched(_snap(100.0, sma200=80.0, rsi=50.0, vol_ratio=1.0),
               fva_obj=_healthy_local), _patched_portfolio([]):
-    _pl_f2 = oa.compute_price_levels("MU", None, horizon="long",
+    _pl_f2 = _cpl("MU", None, horizon="long",
                                      valuation_percentile=0.3,
                                      app_fair_value=_ext_irrec)
 check("11.1 F2: external irreconcilable -> NO local fair-value scalar leak (anchor None)",
@@ -601,7 +616,7 @@ _ext_high = {
 }
 with _patched(_snap(100.0, sma200=80.0, rsi=50.0, vol_ratio=1.0),
               fva_obj=_healthy_local), _patched_portfolio([]):
-    _pl_f2h = oa.compute_price_levels("MU", None, horizon="long",
+    _pl_f2h = _cpl("MU", None, horizon="long",
                                       valuation_percentile=0.3,
                                       app_fair_value=_ext_high)
 check("11.6 F2 control: high external band drives anchor/confidence/conservative/epoch",
@@ -650,7 +665,7 @@ check("12.4 (b) precond: pool-capped band is blended but confidence low",
       detail=f"{_fa_pool_low.blend_state}/{_fa_pool_low.confidence}")
 with _patched(_snap(100.0, sma200=80.0, rsi=50.0, vol_ratio=1.0),
               fva_obj=_fa_pool_low), _patched_portfolio([]):
-    _pl_pool = oa.compute_price_levels("MU", None, horizon="long",
+    _pl_pool = _cpl("MU", None, horizon="long",
                                        valuation_percentile=0.3)
 check("12.5 (b) LONG suppressed under pool-capped low confidence (no entry zone)",
       _pl_pool.entry_zone_low is None and _pl_pool.entry_zone_high is None,
@@ -686,6 +701,186 @@ check("12.8 (c) MU cyclical dispersed pool -> confidence low",
 check("12.9 (c) MU caveats: cyclical_band_unavailable + single_anchor_blend + analyst_pool_dispersed",
       {"cyclical_band_unavailable", "single_anchor_blend", "analyst_pool_dispersed"}
       <= set(_mu_cyc.caveats or []), detail=str(_mu_cyc.caveats))
+
+
+# ---------------------------------------------------------------------------
+# Section 13 — Anchor Intelligence v2 r2 (X1 / R8): the ranking path is
+# STRUCTURALLY network-free. This is the test 10.8/10.9 SHOULD have been — instead
+# of grepping for direct references it drives the REAL transitive path
+#   opportunity_ranker.rank_opportunities -> compute_price_levels -> _gather_technicals
+# (allow_fetch defaults False) on a COLD anchor cache, with the fair-value producer
+# AND the cyclical fetcher monkeypatched to RAISE on any call. A live
+# compute_app_fair_value here would be the R8 violation; the run must complete with a
+# DEGRADED long valuation and ZERO producer/network calls.
+# ---------------------------------------------------------------------------
+import lib.opportunity_ranker as orr  # noqa: E402
+import lib.relative_strength as rsm  # noqa: E402
+from datetime import date as _date  # noqa: E402
+
+_net_calls = {"n": 0}
+
+
+def _boom(*_a, **_k):  # any reach into the live producer / fetcher trips this
+    _net_calls["n"] += 1
+    raise AssertionError("network/producer reached on the ranking path (R8)")
+
+
+_x1_cand = dict(ticker="COLDX", short_score=0.2, mid_score=0.3, long_score=0.9,
+                candidate_type="FUNNEL", eps_revision_direction="improving",
+                valuation_percentile=0.3)
+_x1_rs = {"COLDX": rsm.RelativeStrength("COLDX", rs_composite=0.6, data_source="live")}
+_x1_today = _date(2026, 6, 5)
+# Technicals load from the local OHLCV cache (network-free), so mock load_ohlcv /
+# snapshot; then make EVERY fair-value network / producer surface raise if touched.
+with mock.patch("ui_utils.load_ohlcv", return_value=_dummy_df()), \
+        mock.patch("lib.technical.snapshot",
+                   return_value=_snap(100.0, sma200=80.0, rsi=50.0, vol_ratio=1.0)), \
+        mock.patch.object(eqv, "compute_app_fair_value", side_effect=_boom), \
+        mock.patch.object(eqv, "fetch_cyclical_band_history", side_effect=_boom), \
+        mock.patch.object(eqv, "_fetch_raw", side_effect=_boom):
+    _x1_cards = orr.rank_opportunities(
+        [dict(_x1_cand)], rs_map=_x1_rs, earnings_map={}, top_n=1,
+        anchor_cache={}, today=_x1_today)
+check("13.1 X1 cold ranking run completes network-free -> one card",
+      len(_x1_cards) == 1, detail=str(len(_x1_cards)))
+check("13.2 X1 producer/network surface NEVER hit on the transitive ranking path (R8)",
+      _net_calls["n"] == 0, detail=str(_net_calls["n"]))
+check("13.3 X1 cold cache -> LONG degrades to Research Required (no live compute)",
+      _x1_cards[0].status_by_horizon.get("long") == orr.STATUS_RESEARCH,
+      detail=str(_x1_cards[0].status_by_horizon.get("long")))
+
+# 13.4-13.6 direct: the REAL compute_price_levels (default allow_fetch=False) on a
+# cold cache (no app_fair_value band handed in) degrades honestly and never invokes
+# the producer. Uses oa.compute_price_levels directly (NOT the page-path _cpl
+# wrapper) so allow_fetch stays at its fail-closed default.
+with mock.patch("ui_utils.load_ohlcv", return_value=_dummy_df()), \
+        mock.patch("lib.technical.snapshot",
+                   return_value=_snap(100.0, sma200=80.0, rsi=50.0, vol_ratio=1.0)), \
+        mock.patch.object(eqv, "compute_app_fair_value", side_effect=_boom), \
+        mock.patch.object(eqv, "fetch_cyclical_band_history", side_effect=_boom), \
+        _patched_portfolio([]):
+    _x1_pl = oa.compute_price_levels("COLDX", None, horizon="long",
+                                     valuation_percentile=0.3)
+check("13.4 X1 direct cold LONG: honest degrade (no entry zone, action wait)",
+      _x1_pl.entry_zone_low is None and _x1_pl.action == "wait",
+      detail=f"{_x1_pl.action}/{_x1_pl.entry_zone_low}")
+check("13.5 X1 direct cold LONG: fair_value_source 'anchor_not_cached' + anchor None (no proxy)",
+      _x1_pl.fair_value_source == "anchor_not_cached" and _x1_pl.fair_value_anchor is None,
+      detail=f"{_x1_pl.fair_value_source}/{_x1_pl.fair_value_anchor}")
+check("13.6 X1 direct cold path also touched no producer/network surface",
+      _net_calls["n"] == 0, detail=str(_net_calls["n"]))
+
+
+# ---------------------------------------------------------------------------
+# Section 14 — Anchor Intelligence v2 r2 (X2 / R1+R3): no caller can poison the
+# shared cache entry. Model B: EVERY live-compute call site — pages/4_Equity.py,
+# order_advisor._gather_technicals AND the Cockpit on-demand _run_equity_research —
+# passes the cyclical fetcher, so a first writer can never populate a
+# non-band-capable entry that a band-requiring caller then silently reuses as if the
+# band were genuinely unavailable. Here the Cockpit-style call writes FIRST (cold);
+# the band must be present for the later Equity-style read regardless of ordering.
+# ---------------------------------------------------------------------------
+def _x2_fetcher(_tk):
+    return {"pb_history": [1.0, 1.4, 1.8, 2.2],
+            "ps_history": [1.5, 2.0, 2.5, 3.0], "years": 4}
+
+
+_X2_RAW = {
+    "fcf_ttm": 2.0e9, "fcf_source": "", "ebitda": 8.0e9, "shares": 1.1e9,
+    "growth_rate": 0.15, "trailing_eps": 5.0, "forward_eps": None,
+    "sector": "Technology", "industry": "Semiconductors",
+    "analyst_median": 110.0, "analyst_mean": 108.0,
+    "analyst_high": 130.0, "analyst_low": 95.0, "analyst_count": 20,
+    "revenue_growth": 0.20, "earnings_growth": 0.10, "profit_margin": 0.10,
+    "operating_margin": 0.12, "market_cap": 1.1e11, "enterprise_value": 1.2e11,
+    "total_revenue": 2.5e10, "total_debt": 1.0e10, "total_cash": 0.9e10,
+    "book_value": 30.0, "price_to_book": 3.0, "price_to_sales": 4.0, "live": True,
+}
+# Fresh cache key (MU, 77.0) so the Cockpit-style call is the genuine first writer.
+getattr(eqv._compute_cached, "clear", lambda: None)()
+with mock.patch.object(eqv, "_fetch_raw", return_value=dict(_X2_RAW)):
+    # Cockpit on-demand first write — post-fix mirrors pages/7:383 (WITH the fetcher).
+    _x2_cockpit_first = eqv.compute_app_fair_value(
+        "MU", 77.0, cyclical_history_fetcher=_x2_fetcher)
+    # Equity-page read of the SAME (ticker, price): reuses the cached entry.
+    _x2_equity_after = eqv.compute_app_fair_value(
+        "MU", 77.0, cyclical_history_fetcher=_x2_fetcher)
+_x2_first_names = {a["name"] for a in (_x2_cockpit_first.anchors or [])}
+_x2_after_names = {a["name"] for a in (_x2_equity_after.anchors or [])}
+check("14.1 X2 Cockpit-first cold write IS band-capable (pb_ps anchor, no unavailable caveat)",
+      "pb_ps" in _x2_first_names
+      and "cyclical_band_unavailable" not in (_x2_cockpit_first.caveats or []),
+      detail=f"{_x2_first_names}/{_x2_cockpit_first.caveats}")
+check("14.2 X2 Equity read after Cockpit-first STILL has the real band (no poisoning)",
+      "pb_ps" in _x2_after_names
+      and "cyclical_band_unavailable" not in (_x2_equity_after.caveats or []),
+      detail=f"{_x2_after_names}/{_x2_equity_after.caveats}")
+# Structural (Option B): the Cockpit on-demand equity research passes the fetcher,
+# while the network-free refresh path (asserted in 10.9) still does not call the
+# producer at all.
+_COCKPIT_SRC2 = _read(os.path.join(_REPO_ROOT, "pages", "7_Investment_Cockpit.py"))
+_idx_er = _COCKPIT_SRC2.find("def _run_equity_research")
+_ER_SRC = _COCKPIT_SRC2[_idx_er:] if _idx_er >= 0 else ""
+check("14.3 X2 Cockpit on-demand equity-research passes the cyclical fetcher (Option B)",
+      "cyclical_history_fetcher=fetch_cyclical_band_history" in _ER_SRC,
+      detail=f"idx_er={_idx_er}")
+
+
+# ---------------------------------------------------------------------------
+# Section 15 — Anchor Intelligence v2 r2 (X3 / R4+R5): the external band is truly
+# single-source — the INVERSE of §11.6 (which is why the leak slipped). §11 only
+# covered irreconcilable-external + healthy-local; the missed leak is the OTHER way:
+# a HEALTHY external band with an IRRECONCILABLE local instance. order_advisor read
+# the local blend_state AFTER the external band was chosen, wrongly degrading the
+# healthy external card. Post-fix: ZERO local-instance reads when an external band
+# drives the card.
+# ---------------------------------------------------------------------------
+_irrec_local = eqv.AppFairValue(
+    ticker="MU", confidence="high", blend_state="anchors_irreconcilable",
+    fair_value_low=0.0, fair_value_mid=0.0, fair_value_high=0.0,
+    analyst_target=0.0, computed_at="2026-06-01T00:00:00+00:00", data_source="live")
+_ext_healthy = {
+    "blend_state": "blended", "confidence": "high",
+    "fair_value_low": 110.0, "fair_value_mid": 120.0, "fair_value_high": 140.0,
+    "computed_at": "2026-06-07T17:00:00+00:00",
+}
+with _patched(_snap(100.0, sma200=80.0, rsi=50.0, vol_ratio=1.0),
+              fva_obj=_irrec_local), _patched_portfolio([]):
+    _pl_x3 = _cpl("MU", None, horizon="long", valuation_percentile=0.3,
+                  app_fair_value=_ext_healthy)
+check("15.1 X3 healthy external + irreconcilable local -> confidence from band (high)",
+      _pl_x3.valuation_confidence == "high", detail=_pl_x3.valuation_confidence)
+check("15.2 X3 anchor from band (120) + conservative from band (110), no local leak",
+      _pl_x3.fair_value_anchor is not None
+      and abs(_pl_x3.fair_value_anchor - 120.0) < 1e-6
+      and _pl_x3.conservative_anchor == 110.0,
+      detail=f"{_pl_x3.fair_value_anchor}/{_pl_x3.conservative_anchor}")
+check("15.3 X3 LONG NOT degraded by the local irreconcilable instance (zone present)",
+      _pl_x3.entry_zone_low is not None
+      and "valuation unreliable" not in (_pl_x3.reason or "").lower(),
+      detail=f"{_pl_x3.action}/{_pl_x3.entry_zone_low}/{_pl_x3.reason}")
+check("15.4 X3 epoch from the external band (not the local instance)",
+      _pl_x3.fair_value_computed_at == "2026-06-07T17:00:00+00:00",
+      detail=_pl_x3.fair_value_computed_at)
+
+# 15.5 re-assert the ORIGINAL direction (irreconcilable external + healthy local)
+# adjacent to its inverse, for a complete single-source pair.
+_healthy_local2 = eqv.AppFairValue(
+    ticker="MU", confidence="high", blend_state="blended",
+    fair_value_low=110.0, fair_value_mid=120.0, fair_value_high=140.0,
+    analyst_target=120.0, computed_at="2026-06-01T00:00:00+00:00", data_source="live")
+_ext_irrec2 = {"blend_state": "anchors_irreconcilable", "confidence": "low",
+               "fair_value_low": 0.0, "fair_value_mid": 0.0, "fair_value_high": 0.0,
+               "computed_at": "2026-06-07T18:00:00+00:00"}
+with _patched(_snap(100.0, sma200=80.0, rsi=50.0, vol_ratio=1.0),
+              fva_obj=_healthy_local2), _patched_portfolio([]):
+    _pl_x3b = _cpl("MU", None, horizon="long", valuation_percentile=0.3,
+                   app_fair_value=_ext_irrec2)
+check("15.5 X3 inverse pair: irreconcilable external + healthy local -> degraded, no leak",
+      _pl_x3b.valuation_confidence == "low" and _pl_x3b.conservative_anchor is None
+      and _pl_x3b.fair_value_anchor is None and _pl_x3b.entry_zone_low is None,
+      detail=f"{_pl_x3b.valuation_confidence}/{_pl_x3b.conservative_anchor}/"
+             f"{_pl_x3b.fair_value_anchor}/{_pl_x3b.entry_zone_low}")
 
 
 # ---------------------------------------------------------------------------
