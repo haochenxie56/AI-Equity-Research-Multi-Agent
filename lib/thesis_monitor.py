@@ -450,6 +450,12 @@ def _summary(result: "ThesisCheckResult") -> str:
         parts.append("technical: " + ", ".join(result.technical_breakdown_reasons))
     if result.macro_regime_flag:
         parts.append("macro headwind")
+    # D3 (Anchor Intel v2.3 F2) — surface the anchor-migration watch in the summary
+    # (watch-level annotation; mirrors the D2 fragility note). It does NOT change
+    # thesis_status; it only adds a visible note when the analyst-pool downshift is
+    # conviction-grade (deteriorating).
+    if result.anchor_migration_watch and result.anchor_migration_note:
+        parts.append(result.anchor_migration_note)
     return "; ".join(parts) + "."
 
 

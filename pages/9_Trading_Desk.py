@@ -930,6 +930,20 @@ def _render_order_card(h, rec) -> None:
                 + _badge(_confidence_label(_conf), _confidence_color(_conf)),
                 unsafe_allow_html=True,
             )
+        # Anchor-migration watch (Anchor Intel v2.3 F2) — a conviction-grade analyst-
+        # pool downshift from the append-only archive, surfaced as a watch-level note.
+        # Review-only: it NEVER changes the thesis status and emits no sell/exit. The
+        # note is bilingual (additive i18n). Read from the thesis-check result the
+        # monitor already stored in session_state.
+        _chk = st.session_state.get("thesis_check_results", {}).get(h.id)
+        if _chk is not None and getattr(_chk, "anchor_migration_watch", False):
+            _amn = getattr(_chk, "anchor_migration_note", "")
+            if _amn:
+                st.markdown(
+                    f'<div style="border-left:3px solid #d29922;padding:2px 10px;'
+                    f'margin:4px 0;color:var(--t0);">📉 {_amn}</div>',
+                    unsafe_allow_html=True,
+                )
         # Row 2 — entry / stop / target. The entry zone may be None (blocked).
         r2 = st.columns(3)
         if blocked:
