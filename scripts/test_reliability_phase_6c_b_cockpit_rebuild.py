@@ -17,7 +17,7 @@ is patched). Verifies:
   * store_equity_research_result writes st.session_state["equity_research_results"][ticker].
   * order_advisor reads equity_research_results when available
     (fair_value_source == "app_computed" when mocked).
-  * order_advisor falls back to analyst_proxy when equity_research_results absent.
+  * order_advisor falls back to app_fair_value when equity_research_results absent.
   * pages/1_Overview.py is NOT registered in the ui_utils sidebar.
   * pages/7_Investment_Cockpit.py is the first non-home page in the sidebar.
   * cockpit_selected_tickers is written to session_state on selection.
@@ -187,7 +187,7 @@ finally:
 
 
 # ---------------------------------------------------------------------------
-# Section 4 — order_advisor reads app fair value / falls back to analyst_proxy
+# Section 4 — order_advisor reads app fair value / falls back to app_fair_value
 # ---------------------------------------------------------------------------
 
 import lib.order_advisor as oa  # noqa: E402
@@ -227,8 +227,10 @@ check("4.3 app-computed result still approved_for_execution False",
 with mock.patch.object(oa, "_gather_technicals", side_effect=_live_tech), \
         mock.patch.object(oa, "_read_equity_research_result", return_value={}):
     _pl_proxy = oa.compute_price_levels("AAA", None, horizon="long")
-check("4.4 fair_value_source == analyst_proxy when result absent (live data)",
-      _pl_proxy.fair_value_source == "analyst_proxy", _pl_proxy.fair_value_source)
+# Anchor Intel v2 r2 (C5 rename): the local live producer token is now the
+# truthful "app_fair_value" (was the misleading "analyst_proxy").
+check("4.4 fair_value_source == app_fair_value when result absent (live data)",
+      _pl_proxy.fair_value_source == "app_fair_value", _pl_proxy.fair_value_source)
 
 
 # ---------------------------------------------------------------------------

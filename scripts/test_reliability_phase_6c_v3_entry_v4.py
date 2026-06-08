@@ -419,13 +419,16 @@ for name, src in _SRCS.items():
 
 
 # ---------------------------------------------------------------------------
-# Section 10 — Anchor Intelligence v2 (U1/U3): REAL unified-path + parity (DoD)
+# Section 10 — Anchor Intelligence v2 r2 (F1): TRUE single cached producer
 # ---------------------------------------------------------------------------
 
 # 10.A REAL PATH (DoD): order_advisor drives the ACTUAL unified producer
 # lib.equity_valuation.compute_app_fair_value (NOT a stubbed FairValueAnchor). We
-# mock only the network transport (_fetch_raw) + the OHLCV/snapshot, then assert
-# the Trading-Desk anchor equals the Equity-page anchor for the SAME ticker/price.
+# mock only the network transport (_fetch_raw + the cyclical fetcher) + the
+# OHLCV/snapshot, then reproduce the REAL Equity-page invocation — WITH the
+# cyclical_history_fetcher, exactly as pages/4_Equity.py calls it (the previous
+# parity test omitted the fetcher, which is the gap that let D2 through). The
+# Trading-Desk anchor must equal the Equity-page anchor for the SAME ticker/price.
 _RP_RAW = {
     "fcf_ttm": None, "fcf_source": "", "ebitda": None, "shares": 1.0e9,
     "growth_rate": 0.05, "trailing_eps": 5.0, "forward_eps": 5.5,
@@ -437,8 +440,11 @@ _RP_RAW = {
     "total_revenue": 2.5e10, "total_debt": 1.0e10, "total_cash": 9.0e9,
     "book_value": 30.0, "price_to_book": 3.0, "price_to_sales": 4.0, "live": True,
 }
-with mock.patch.object(eqv, "_fetch_raw", return_value=dict(_RP_RAW)):
-    _equity_fv = eqv.compute_app_fair_value("MU", 100.0)  # Equity-page producer (real)
+with mock.patch.object(eqv, "_fetch_raw", return_value=dict(_RP_RAW)), \
+        mock.patch.object(eqv, "fetch_cyclical_band_history", return_value={}):
+    # REAL Equity-page invocation: WITH the cyclical fetcher (pages/4 signature).
+    _equity_fv = eqv.compute_app_fair_value(
+        "MU", 100.0, cyclical_history_fetcher=eqv.fetch_cyclical_band_history)
     with mock.patch("ui_utils.load_ohlcv", return_value=_dummy_df()), \
             mock.patch("lib.technical.snapshot",
                        return_value=_snap(100.0, sma200=80.0, rsi=50.0, vol_ratio=1.0)), \
@@ -449,33 +455,237 @@ check("10.1 real path: order_advisor anchor == Equity-page AppFairValue.fair_val
       _pl_rp.fair_value_anchor is not None
       and abs(_pl_rp.fair_value_anchor - _equity_fv.fair_value_mid) < 0.01,
       detail=f"desk={_pl_rp.fair_value_anchor} equity={_equity_fv.fair_value_mid}")
-check("10.2 real path: anchor is live analyst_proxy (unified producer, no stub)",
-      _pl_rp.data_source == "live" and _pl_rp.fair_value_source == "analyst_proxy",
+check("10.2 real path: anchor source is live app_fair_value (unified producer, C5 rename)",
+      _pl_rp.data_source == "live" and _pl_rp.fair_value_source == "app_fair_value",
       detail=f"{_pl_rp.data_source}/{_pl_rp.fair_value_source}")
 check("10.3 real path: epoch stamp populated (ISO, T-separated)",
       bool(_pl_rp.fair_value_computed_at) and "T" in _pl_rp.fair_value_computed_at,
       detail=_pl_rp.fair_value_computed_at)
 
-# 10.B EPOCH PARITY: one AppFairValue instance feeds BOTH surfaces -> the Trading
-# Desk anchor AND its epoch equal the Equity-page anchor's (same producer + epoch).
-_one = eqv.AppFairValue(ticker="MU", confidence="high", blend_state="blended",
-                        fair_value_low=110.0, fair_value_mid=120.0,
-                        fair_value_high=140.0, analyst_target=120.0,
-                        computed_at="2026-06-07T12:00:00+00:00", data_source="live")
-with mock.patch("lib.equity_valuation.compute_app_fair_value", return_value=_one):
-    _equity_anchor = eqv.compute_app_fair_value("MU", 100.0)  # Equity page reads this
+# 10.B REAL both-path parity (F1 DoD): the REAL Equity-page invocation (WITH the
+# cyclical fetcher) and the REAL Trading-Desk invocation share ONE cached entry
+# (st.cache_data keyed on ticker/price/override; the fetcher is underscore-excluded)
+# -> identical anchor AND identical computed_at epoch. Fresh ticker so the Equity
+# call is the genuine first writer; non-cyclical raw (industry None, no MU override)
+# so the fetcher is never invoked (network-free even on the cold first write).
+with mock.patch.object(eqv, "_fetch_raw", return_value=dict(_RP_RAW)), \
+        mock.patch.object(eqv, "fetch_cyclical_band_history", return_value={}):
+    _eq_b = eqv.compute_app_fair_value(
+        "PARITYX", 100.0, cyclical_history_fetcher=eqv.fetch_cyclical_band_history)
     with mock.patch("ui_utils.load_ohlcv", return_value=_dummy_df()), \
             mock.patch("lib.technical.snapshot",
                        return_value=_snap(100.0, sma200=80.0, rsi=50.0, vol_ratio=1.0)), \
             _patched_portfolio([]):
-        _pl_par = oa.compute_price_levels("MU", None, horizon="long",
-                                          valuation_percentile=0.3)
-check("10.4 parity: Trading-Desk anchor == Equity-page anchor (one instance)",
-      _pl_par.fair_value_anchor == _equity_anchor.fair_value_mid,
-      detail=f"{_pl_par.fair_value_anchor} vs {_equity_anchor.fair_value_mid}")
-check("10.5 parity: Trading-Desk epoch == Equity-page epoch (same producer epoch)",
-      _pl_par.fair_value_computed_at == _equity_anchor.computed_at,
-      detail=f"{_pl_par.fair_value_computed_at} vs {_equity_anchor.computed_at}")
+        _pl_b = oa.compute_price_levels("PARITYX", None, horizon="long",
+                                        valuation_percentile=0.3)
+check("10.4 parity: Trading-Desk anchor == Equity-page anchor (one cached instance)",
+      _pl_b.fair_value_anchor is not None
+      and abs(_pl_b.fair_value_anchor - _eq_b.fair_value_mid) < 0.01,
+      detail=f"desk={_pl_b.fair_value_anchor} equity={_eq_b.fair_value_mid}")
+check("10.5 parity: Trading-Desk epoch == Equity-page epoch (same cached producer epoch)",
+      bool(_pl_b.fair_value_computed_at)
+      and _pl_b.fair_value_computed_at == _eq_b.computed_at,
+      detail=f"{_pl_b.fair_value_computed_at} vs {_eq_b.computed_at}")
+
+# 10.C FIRST-WRITER CONSISTENCY (F1): whichever page computes a ticker FIRST
+# populates the one shared cache entry; the other surface then reads the identical
+# value + epoch (st.cache_data returns a copy, so we assert value+epoch identity —
+# the cache-unification contract — not object identity).
+# 10.C(i) Trading-Desk-first -> Equity reads the same instance.
+with mock.patch.object(eqv, "_fetch_raw", return_value=dict(_RP_RAW)), \
+        mock.patch.object(eqv, "fetch_cyclical_band_history", return_value={}):
+    with mock.patch("ui_utils.load_ohlcv", return_value=_dummy_df()), \
+            mock.patch("lib.technical.snapshot",
+                       return_value=_snap(100.0, sma200=80.0, rsi=50.0, vol_ratio=1.0)), \
+            _patched_portfolio([]):
+        _pl_td_first = oa.compute_price_levels("FWTKR1", None, horizon="long",
+                                               valuation_percentile=0.3)
+    _eq_after_td = eqv.compute_app_fair_value(
+        "FWTKR1", 100.0, cyclical_history_fetcher=eqv.fetch_cyclical_band_history)
+check("10.6 first-writer Trading-Desk: Equity read matches anchor + epoch",
+      _pl_td_first.fair_value_anchor is not None
+      and abs(_pl_td_first.fair_value_anchor - _eq_after_td.fair_value_mid) < 0.01
+      and _pl_td_first.fair_value_computed_at == _eq_after_td.computed_at,
+      detail=f"{_pl_td_first.fair_value_anchor}/{_pl_td_first.fair_value_computed_at} "
+             f"vs {_eq_after_td.fair_value_mid}/{_eq_after_td.computed_at}")
+# 10.C(ii) Equity-first -> Trading Desk reads the same instance.
+with mock.patch.object(eqv, "_fetch_raw", return_value=dict(_RP_RAW)), \
+        mock.patch.object(eqv, "fetch_cyclical_band_history", return_value={}):
+    _eq_first = eqv.compute_app_fair_value(
+        "FWTKR2", 100.0, cyclical_history_fetcher=eqv.fetch_cyclical_band_history)
+    with mock.patch("ui_utils.load_ohlcv", return_value=_dummy_df()), \
+            mock.patch("lib.technical.snapshot",
+                       return_value=_snap(100.0, sma200=80.0, rsi=50.0, vol_ratio=1.0)), \
+            _patched_portfolio([]):
+        _pl_td_after = oa.compute_price_levels("FWTKR2", None, horizon="long",
+                                               valuation_percentile=0.3)
+check("10.7 first-writer Equity: Trading-Desk read matches anchor + epoch",
+      _pl_td_after.fair_value_anchor is not None
+      and abs(_pl_td_after.fair_value_anchor - _eq_first.fair_value_mid) < 0.01
+      and _pl_td_after.fair_value_computed_at == _eq_first.computed_at,
+      detail=f"{_pl_td_after.fair_value_anchor}/{_pl_td_after.fair_value_computed_at} "
+             f"vs {_eq_first.fair_value_mid}/{_eq_first.computed_at}")
+
+# 10.D STRUCTURAL no-network assertion (F1): the network-free ranking / Cockpit
+# refresh paths consume lib.anchor_cache and must NOT call the producer (or pass a
+# fetcher); only the two page paths (pages/4 + order_advisor._gather_technicals)
+# invoke the single cached producer with the cyclical fetcher.
+_RANKER_SRC = _read(os.path.join(_REPO_ROOT, "lib", "opportunity_ranker.py"))
+_EQV_SRC = _read(os.path.join(_REPO_ROOT, "lib", "equity_valuation.py"))
+_COCKPIT_SRC = _read(os.path.join(_REPO_ROOT, "pages", "7_Investment_Cockpit.py"))
+_idx0 = _COCKPIT_SRC.find("def _run_refresh")
+_idx1 = _COCKPIT_SRC.find("def _run_equity_research")
+_REFRESH_SRC = (_COCKPIT_SRC[_idx0:_idx1] if (_idx0 >= 0 and _idx1 > _idx0)
+                else _COCKPIT_SRC)
+check("10.8 ranker does NOT call the producer / fetcher directly (consumes anchor_cache)",
+      "compute_app_fair_value" not in _RANKER_SRC
+      and "cyclical_history_fetcher" not in _RANKER_SRC
+      and "anchor_cache" in _RANKER_SRC)
+check("10.9 Cockpit network-free refresh consumes anchor_cache, not the producer",
+      "compute_app_fair_value" not in _REFRESH_SRC
+      and ("load_all" in _REFRESH_SRC or "anchor_cache" in _REFRESH_SRC),
+      detail=f"idx0={_idx0} idx1={_idx1}")
+check("10.10 Trading-Desk page path passes the cyclical fetcher to the producer",
+      "cyclical_history_fetcher=fetch_cyclical_band_history" in _OA_SRC)
+check("10.11 single cached worker: compute_app_fair_value routes ALL calls via _compute_cached",
+      "def _compute_cached" in _EQV_SRC
+      and "_cyclical_history_fetcher=cyclical_history_fetcher" in _EQV_SRC)
+
+
+# ---------------------------------------------------------------------------
+# Section 11 — Anchor Intelligence v2 r2 (F2): external band takes the WHOLE card
+# ---------------------------------------------------------------------------
+
+# Regression for the review probe: an external/session anchors_irreconcilable band
+# with a HEALTHY local instance (local anchor 120, confidence high, conservative
+# 120) must NOT leak the local valuation wearing the external timestamp. EVERY
+# anchor-derived field must read from the band: no local scalar, confidence low,
+# conservative None, epoch from the band, LONG degraded.
+#   BEFORE the fix (the leak): fair_value_anchor 120, valuation_confidence "high",
+#                              conservative_anchor 120, epoch = external.
+#   AFTER  the fix:            fair_value_anchor None, valuation_confidence "low",
+#                              conservative_anchor None, epoch = external, no zone.
+_healthy_local = eqv.AppFairValue(
+    ticker="MU", confidence="high", blend_state="blended",
+    fair_value_low=110.0, fair_value_mid=120.0, fair_value_high=140.0,
+    analyst_target=120.0, computed_at="2026-06-01T00:00:00+00:00", data_source="live")
+_ext_irrec = {
+    "blend_state": "anchors_irreconcilable", "confidence": "low",
+    "fair_value_low": 0.0, "fair_value_mid": 0.0, "fair_value_high": 0.0,
+    "computed_at": "2026-06-07T15:30:00+00:00",
+}
+with _patched(_snap(100.0, sma200=80.0, rsi=50.0, vol_ratio=1.0),
+              fva_obj=_healthy_local), _patched_portfolio([]):
+    _pl_f2 = oa.compute_price_levels("MU", None, horizon="long",
+                                     valuation_percentile=0.3,
+                                     app_fair_value=_ext_irrec)
+check("11.1 F2: external irreconcilable -> NO local fair-value scalar leak (anchor None)",
+      _pl_f2.fair_value_anchor is None, detail=str(_pl_f2.fair_value_anchor))
+check("11.2 F2: confidence from band (low), not the local high",
+      _pl_f2.valuation_confidence == "low", detail=_pl_f2.valuation_confidence)
+check("11.3 F2: conservative_anchor None (not the local 120)",
+      _pl_f2.conservative_anchor is None, detail=str(_pl_f2.conservative_anchor))
+check("11.4 F2: epoch from the external band (not the local instance)",
+      _pl_f2.fair_value_computed_at == "2026-06-07T15:30:00+00:00",
+      detail=_pl_f2.fair_value_computed_at)
+check("11.5 F2: LONG degrades to technical-only (no entry zone)",
+      _pl_f2.entry_zone_low is None and _pl_f2.entry_zone_high is None,
+      detail=f"{_pl_f2.entry_zone_low}-{_pl_f2.entry_zone_high}")
+
+# 11.6 control — a HIGH-confidence external band still drives every field FROM the
+# band (confidence high, conservative == band low, epoch from band, anchor == mid).
+_ext_high = {
+    "blend_state": "blended", "confidence": "high",
+    "fair_value_low": 90.0, "fair_value_mid": 105.0, "fair_value_high": 120.0,
+    "computed_at": "2026-06-07T16:00:00+00:00",
+}
+with _patched(_snap(100.0, sma200=80.0, rsi=50.0, vol_ratio=1.0),
+              fva_obj=_healthy_local), _patched_portfolio([]):
+    _pl_f2h = oa.compute_price_levels("MU", None, horizon="long",
+                                      valuation_percentile=0.3,
+                                      app_fair_value=_ext_high)
+check("11.6 F2 control: high external band drives anchor/confidence/conservative/epoch",
+      _pl_f2h.valuation_confidence == "high"
+      and _pl_f2h.fair_value_anchor is not None
+      and abs(_pl_f2h.fair_value_anchor - 105.0) < 1e-6
+      and _pl_f2h.conservative_anchor == 90.0
+      and _pl_f2h.fair_value_computed_at == "2026-06-07T16:00:00+00:00",
+      detail=f"{_pl_f2h.valuation_confidence}/{_pl_f2h.fair_value_anchor}/"
+             f"{_pl_f2h.conservative_anchor}/{_pl_f2h.fair_value_computed_at}")
+
+
+# ---------------------------------------------------------------------------
+# Section 12 — Anchor Intelligence v2 r2 (F3): gate-interaction coverage
+# ---------------------------------------------------------------------------
+
+# 12(a) pool-dispersion gate + inter-method irreconcilable BOTH firing. Gate
+# ordering: the pool gate caps confidence, the inter-method dispersion gate still
+# runs LAST and sets blend_state. Expect: analyst_pool_dispersed caveat present,
+# final confidence low, blend_state anchors_irreconcilable.
+_fa_both = eqv.build_app_fair_value(
+    ticker="GATEA", current_price=100.0,
+    dcf_value=350.0, relative_value=None, analyst_target=100.0, analyst_count=8,
+    data_source="live", company_type="mature_profitable",
+    analyst_pool={"median": 100.0, "mean": 100.0, "high": 300.0, "low": 20.0, "n": 8})
+check("12.1 (a) both gates: blend_state anchors_irreconcilable (dcf 350 vs analyst 100 = 3.5x)",
+      _fa_both.blend_state == "anchors_irreconcilable",
+      detail=f"{_fa_both.blend_state}/disp={_fa_both.anchor_dispersion}")
+check("12.2 (a) both gates: final confidence low",
+      _fa_both.confidence == "low", detail=_fa_both.confidence)
+check("12.3 (a) both gates: analyst_pool_dispersed caveat survives into irreconcilable",
+      "analyst_pool_dispersed" in (_fa_both.caveats or []), detail=str(_fa_both.caveats))
+
+# 12(b) pool-capped LOW confidence propagating into order_advisor LONG tiers. A
+# pool-dispersed analyst-only band is blended but confidence is forced low by the
+# pool gate; the LONG three-tier then has no high/medium tier to apply -> it
+# degrades to the unified low-confidence path: NO entry zone, conservative None
+# (the same suppressed behavior as B's low-confidence tier, §2.3).
+_fa_pool_low = eqv.build_app_fair_value(
+    ticker="MU", current_price=100.0,
+    dcf_value=None, relative_value=None, analyst_target=105.0, analyst_count=20,
+    data_source="live", company_type="mature_profitable",
+    analyst_pool={"median": 105.0, "mean": 105.0, "high": 200.0, "low": 30.0, "n": 20})
+check("12.4 (b) precond: pool-capped band is blended but confidence low",
+      _fa_pool_low.blend_state == "blended" and _fa_pool_low.confidence == "low",
+      detail=f"{_fa_pool_low.blend_state}/{_fa_pool_low.confidence}")
+with _patched(_snap(100.0, sma200=80.0, rsi=50.0, vol_ratio=1.0),
+              fva_obj=_fa_pool_low), _patched_portfolio([]):
+    _pl_pool = oa.compute_price_levels("MU", None, horizon="long",
+                                       valuation_percentile=0.3)
+check("12.5 (b) LONG suppressed under pool-capped low confidence (no entry zone)",
+      _pl_pool.entry_zone_low is None and _pl_pool.entry_zone_high is None,
+      detail=f"{_pl_pool.entry_zone_low}-{_pl_pool.entry_zone_high}")
+check("12.6 (b) LONG surfaces low confidence + conservative None",
+      _pl_pool.valuation_confidence == "low" and _pl_pool.conservative_anchor is None,
+      detail=f"{_pl_pool.valuation_confidence}/{_pl_pool.conservative_anchor}")
+
+# 12(c) cyclical single-anchor path + dispersed pool — MU's live combination:
+# cyclical ticker, band unavailable (no fetcher) -> analyst-only degrade; pool
+# dispersion fires -> confidence low; caveats include cyclical_band_unavailable +
+# single_anchor_blend + analyst_pool_dispersed. Fresh price (95.0) so the cache key
+# does not collide with §10.A's (MU, 100.0).
+_MU_CYC_RAW = {
+    "fcf_ttm": 2.0e9, "fcf_source": "", "ebitda": 8.0e9, "shares": 1.1e9,
+    "growth_rate": 0.15, "trailing_eps": 5.0, "forward_eps": None,
+    "sector": "Technology", "industry": "Semiconductors",
+    "analyst_median": 110.0, "analyst_mean": 108.0,
+    "analyst_high": 200.0, "analyst_low": 30.0, "analyst_count": 20,
+    "revenue_growth": 0.20, "earnings_growth": 0.10, "profit_margin": 0.10,
+    "operating_margin": 0.12, "market_cap": 1.1e11, "enterprise_value": 1.2e11,
+    "total_revenue": 2.5e10, "total_debt": 1.0e10, "total_cash": 0.9e10,
+    "book_value": 30.0, "price_to_book": 3.0, "price_to_sales": 4.0, "live": True,
+}
+with mock.patch.object(eqv, "_fetch_raw", return_value=dict(_MU_CYC_RAW)):
+    _mu_cyc = eqv.compute_app_fair_value("MU", 95.0)  # no fetcher -> band unavailable
+check("12.7 (c) MU cyclical + no band -> analyst-only single-anchor blend",
+      _mu_cyc.company_type == "cyclical"
+      and {a["name"] for a in (_mu_cyc.anchors or [])} == {"analyst"},
+      detail=f"{_mu_cyc.company_type}/{[a['name'] for a in (_mu_cyc.anchors or [])]}")
+check("12.8 (c) MU cyclical dispersed pool -> confidence low",
+      _mu_cyc.confidence == "low", detail=_mu_cyc.confidence)
+check("12.9 (c) MU caveats: cyclical_band_unavailable + single_anchor_blend + analyst_pool_dispersed",
+      {"cyclical_band_unavailable", "single_anchor_blend", "analyst_pool_dispersed"}
+      <= set(_mu_cyc.caveats or []), detail=str(_mu_cyc.caveats))
 
 
 # ---------------------------------------------------------------------------
