@@ -427,7 +427,9 @@ by the app rather than yfinance analyst targets alone."*
   bilingual bull/bear/risk/synthesis + endorsed range + action; fail-closed to the
   app low/high band). The LLM only debates the code-computed numbers.
 - **`lib/order_advisor.py`** — `PriceLevelResult.fair_value_source`
-  (`app_computed` / `analyst_proxy` / `fixture`); `compute_price_levels()` Step 0
+  (`app_computed` / `app_fair_value` / `fixture`; Anchor Intel v2 r2 / C5 renamed
+  the local-producer token from the misleading `analyst_proxy`);
+  `compute_price_levels()` Step 0
   reads `equity_research_results` and, when present with high/medium confidence,
   uses `fair_value_mid` as the primary anchor, `fair_value_low` as the LONG entry
   floor, and `fair_value_high` as the upside target; otherwise falls back to
