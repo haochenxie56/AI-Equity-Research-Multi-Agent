@@ -394,6 +394,121 @@ check("8.2 backfill_ticker is offline-explicit (no app-startup / refresh trigger
 
 
 # ===========================================================================
+# 9. G1 (fix round) — FILING-LAG GATE on historical statements (look-ahead defence)
+# ===========================================================================
+# A statement is dated by period-END but filed weeks later. Recomputing a past-date
+# anchor with a not-yet-public statement is look-ahead bias. The conservative annual
+# lag (75d) gates every as-of statement read (DCF/relative AND the cyclical band).
+_GCOLS = [pd.Timestamp("2026-03-31"), pd.Timestamp("2025-03-31"),
+          pd.Timestamp("2024-03-31"), pd.Timestamp("2023-03-31"),
+          pd.Timestamp("2022-03-31")]
+_GEQ = [6.0e10, 5.0e10, 4.0e10, 3.5e10, 3.0e10]
+_GBS = pd.DataFrame({c: {"Stockholders Equity": e, "Ordinary Shares Number": 1.0e9,
+                         "Total Debt": 1.0e10, "Cash And Cash Equivalents": 9.0e9}
+                     for c, e in zip(_GCOLS, _GEQ)})
+_GREV = [3.2e10, 3.0e10, 2.6e10, 2.2e10, 2.0e10]
+_GNI = [4.2e9, 4.0e9, 3.2e9, 2.4e9, 2.0e9]
+_GIS = pd.DataFrame({c: {"Total Revenue": r, "Net Income": n,
+                         "Operating Income": n * 1.25, "Diluted EPS": n / 1e9}
+                     for c, r, n in zip(_GCOLS, _GREV, _GNI)})
+_GCF = pd.DataFrame({c: {"Operating Cash Flow": 5e9, "Capital Expenditure": -1.5e9}
+                     for c in _GCOLS})
+_GPX = pd.DataFrame(
+    {"Close": [50.0 + 0.05 * i for i in range(
+        len(pd.date_range("2020-01-05", "2026-07-01", freq="W", tz="America/New_York")))]},
+    index=pd.date_range("2020-01-05", "2026-07-01", freq="W", tz="America/New_York"))
+
+_D1 = date(2026, 4, 15)   # after 2026-03-31 period-end, BEFORE +75 (2026-06-14)
+_D2 = date(2026, 6, 20)   # after 2026-03-31 + 75 -> the statement IS public
+
+check("9.1 filing-lag config is the visible conservative block (annual 75 / quarterly 45)",
+      ab.FILING_LAG_DAYS == {"annual": 75, "quarterly": 45})
+# Gate at the slice level (the audited read used by BOTH DCF/relative and the band).
+_n_d1_lag = ab._newest_cols(
+    ab._slice_frame_asof(_GBS, ab._to_ts(_D1), lag_days=ab.FILING_LAG_DAYS["annual"]), 1)
+_n_d1_nolag = ab._newest_cols(
+    ab._slice_frame_asof(_GBS, ab._to_ts(_D1), lag_days=0), 1)
+_n_d2_lag = ab._newest_cols(
+    ab._slice_frame_asof(_GBS, ab._to_ts(_D2), lag_days=ab.FILING_LAG_DAYS["annual"]), 1)
+check("9.2 GATE: at D1 (period-end public, NOT yet filed) the newest usable period is "
+      "the PRIOR 2025-03-31 — the fresh statement is invisible",
+      str(_n_d1_lag[0].date()) == "2025-03-31", detail=str(_n_d1_lag[0].date()))
+check("9.3 DISCRIMINATION: reverting the gate (lag=0) leaks the not-yet-filed "
+      "2026-03-31 at D1",
+      str(_n_d1_nolag[0].date()) == "2026-03-31", detail=str(_n_d1_nolag[0].date()))
+check("9.4 after the filing lag (D2) the 2026-03-31 statement IS usable",
+      str(_n_d2_lag[0].date()) == "2026-03-31", detail=str(_n_d2_lag[0].date()))
+
+# End-to-end through the production _backfill_one (annual lag hard-wired).
+_rg1 = ab._backfill_one("CYC", _D1, balance_sheet=_GBS, income_stmt=_GIS,
+                        cashflow=_GCF, price_history=_GPX, sector="Technology")
+_rg2 = ab._backfill_one("CYC", _D2, balance_sheet=_GBS, income_stmt=_GIS,
+                        cashflow=_GCF, price_history=_GPX, sector="Technology")
+check("9.5 GOLDEN (lag-corrected): D1 uses prior-year fundamentals -> mid 112.0",
+      _rg1["fair_value_mid"] == 112.0, detail=str(_rg1["fair_value_mid"]))
+check("9.6 GOLDEN (lag-corrected): D2 uses the now-public fresh statement -> mid 103.47",
+      _rg2["fair_value_mid"] == 103.47, detail=str(_rg2["fair_value_mid"]))
+check("9.7 DISCRIMINATION: D1 != D2 — the gate makes D1 see OLDER data than D2 "
+      "(removing the lag from _backfill_one would collapse D1 onto D2's value)",
+      _rg1["fair_value_mid"] != _rg2["fair_value_mid"])
+
+# Lag-gate degrade honesty: a date BEFORE any statement is filed has NO usable
+# fundamentals -> degrades (zeroed band + caveat), NEVER falls back to a fresh stmt.
+_Dpre = date(2022, 5, 1)   # 2022-03-31 + 75 = 2022-06-14 > 2022-05-01 -> nothing filed
+_rgpre = ab._backfill_one("CYC", _Dpre, balance_sheet=_GBS, income_stmt=_GIS,
+                          cashflow=_GCF, price_history=_GPX, sector="Technology")
+check("9.8 lag gate leaves a pre-filing date with NO fundamentals -> degraded record",
+      _rgpre is not None
+      and ab.CAVEAT_BACKFILL_INSUFFICIENT_FUNDAMENTALS in _rgpre["caveats"]
+      and _rgpre["fair_value_mid"] == 0.0,
+      detail=str(None if _rgpre is None else _rgpre["caveats"]))
+
+
+# ===========================================================================
+# 10. G2 (fix round) — seam guard skips dates covered by EITHER origin (live wins)
+# ===========================================================================
+# The weekly grid includes end_date; a LIVE row may already exist for it. The guard
+# must skip a date with a record of EITHER origin so the seam never double-counts.
+_dd = tempfile.mkdtemp()
+_pp = Path(_dd) / "anchor_archive.jsonl"
+aa.reset_dedup_cache()
+_seam_vintage = _END.isoformat()  # the grid's newest point == end_date
+_live_seam = {"schema_version": aa.ANCHOR_ARCHIVE_SCHEMA_VERSION,
+              "record_origin": aa.RECORD_ORIGIN_LIVE, "ticker": "SEAM",
+              "computed_at": f"{_seam_vintage}T13:00:00+00:00",
+              "data_vintage": _seam_vintage, "fair_value_mid": 99.0,
+              "analyst_pool": {"median": 100.0, "mean": 100.0, "high": 120.0,
+                               "low": 80.0, "n": 18}}
+aa.append_record(_live_seam, path=_pp)
+check("10.1 covered_vintages spans BOTH origins (the live seam date is covered)",
+      _seam_vintage in aa.covered_vintages("SEAM", path=_pp))
+check("10.2 backfilled_vintages still reports ONLY backfill rows (none yet)",
+      aa.backfilled_vintages("SEAM", path=_pp) == set())
+
+aa.reset_dedup_cache()
+_ss = ab.backfill_ticker("SEAM", end_date=_END, archive_path=_pp, data_loader=_loader)
+_seam_recs = aa.read_archive("SEAM", path=_pp)
+_seam_at_vintage = [r for r in _seam_recs if r["data_vintage"] == _seam_vintage]
+check("10.3 SEAM: backfill adds NO row for the live-covered end_date "
+      "(live wins over the historical approximation)",
+      len(_seam_at_vintage) == 1
+      and _seam_at_vintage[0]["record_origin"] == aa.RECORD_ORIGIN_LIVE,
+      detail=str([(r["record_origin"]) for r in _seam_at_vintage]))
+check("10.4 SEAM: compute_migration counts the seam date EXACTLY once",
+      sum(1 for r in _seam_recs if r["data_vintage"] == _seam_vintage) == 1)
+check("10.5 SEAM: other (uncovered) as-of dates DID backfill (guard is date-specific)",
+      _ss["written"] >= 1 and _ss["skipped_already_covered"] >= 1,
+      detail=f"written={_ss['written']} skipped={_ss['skipped_already_covered']}")
+# Migration over the mixed seam archive: the live row contributes the analyst pool;
+# the backfilled rows do not — and the seam date is single-counted in n_records.
+_seam_mig = am.compute_migration(_seam_recs)
+check("10.6 SEAM: origins reflect 1 live + N backfill, no double-count at the seam",
+      _seam_mig["origins"]["live"] == 1
+      and _seam_mig["origins"]["backfill"] == _ss["written"]
+      and _seam_mig["n_records"] == len(_seam_recs))
+
+
+# ===========================================================================
 print("\n".join(_failures))
 total = PASS + FAIL
 print(f"\nAnchor Intelligence v2.3 — backfill round — {PASS}/{total} checks passed.")
