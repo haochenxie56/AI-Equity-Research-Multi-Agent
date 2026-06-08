@@ -42,12 +42,44 @@ if _REPO_ROOT not in sys.path:
 
 from datetime import date as _date  # noqa: E402
 
+import pandas as pd  # noqa: E402
+
 import lib.anchor_archive as aa  # noqa: E402
 import lib.anchor_cache as ac  # noqa: E402
 import lib.anchor_migration as am  # noqa: E402
 import lib.equity_valuation as eqv  # noqa: E402
+import lib.holdings as holds  # noqa: E402
+import lib.order_advisor as oa  # noqa: E402
 import lib.opportunity_ranker as orr  # noqa: E402
 import lib.thesis_monitor as tm  # noqa: E402
+
+
+# Live yfinance-style raw (raw["live"]=True → AppFairValue.data_source=="live"),
+# reused to drive a real page-path live computation through the producer.
+_LIVE_RAW = {
+    "fcf_ttm": 2.0e9, "fcf_source": "", "ebitda": 8.0e9, "shares": 1.1e9,
+    "growth_rate": 0.15, "trailing_eps": 5.0, "forward_eps": None,
+    "sector": "Technology", "industry": "Semiconductors",
+    "analyst_median": 110.0, "analyst_mean": 108.0, "analyst_high": 130.0,
+    "analyst_low": 95.0, "analyst_count": 20, "revenue_growth": 0.20,
+    "earnings_growth": 0.10, "profit_margin": 0.10, "operating_margin": 0.12,
+    "market_cap": 1.1e11, "enterprise_value": 1.2e11, "total_revenue": 2.5e10,
+    "total_debt": 1.0e10, "total_cash": 0.9e10, "book_value": 30.0,
+    "price_to_book": 3.0, "price_to_sales": 4.0, "live": True,
+}
+
+
+def _df40():
+    rows = [[99.0, 102.0, 97.0, 100.0, 1_000_000.0] for _ in range(40)]
+    return pd.DataFrame(rows, columns=["Open", "High", "Low", "Close", "Volume"])
+
+
+def _snap100():
+    return {"price": 100.0, "EMA_10": None, "EMA_20": None, "SMA_50": None,
+            "SMA_200": 80.0, "RSI_14": 50.0, "ADX": None, "ATR_14": 3.0,
+            "Vol_ratio_20d": 1.0, "above_SMA200": True, "pct_from_52w_high": -5.0,
+            "nearest_support": None, "nearest_resistance": None,
+            "candlestick_pattern": "none"}
 
 PASS = 0
 FAIL = 0
@@ -158,23 +190,75 @@ check("2.10 read_archive window keeps only the most recent N",
 
 
 # ===========================================================================
-# 3. U1 — page-path write-through via store_equity_research_result
+# 3. U1/F1 — archive at the PRODUCER chokepoint (covers pages/4, pages/7, pages/9)
 # ===========================================================================
-# store_equity_research_result is the SINGLE page-path archive chokepoint. Patch the
-# module default archive path; storing a fair value appends exactly one row; a second
-# store appends a second (append-only).
+# F1: the append lives at compute_app_fair_value (its live return), NOT at
+# store_equity_research_result — so EVERY page-path live compute is historized,
+# including the Trading Desk (pages/9), which never calls the hand-off.
 _d2 = tempfile.mkdtemp()
 _p2 = Path(_d2) / "anchor_archive.jsonl"
-with mock.patch.object(aa, "ANCHOR_ARCHIVE_PATH", _p2):
+aa.reset_dedup_cache()
+getattr(eqv._compute_cached, "clear", lambda: None)()
+with mock.patch.object(aa, "ANCHOR_ARCHIVE_PATH", _p2), \
+        mock.patch.object(eqv, "_fetch_raw", return_value=dict(_LIVE_RAW)):
+    _fv_live1 = eqv.compute_app_fair_value("MU", 100.0)
+    _fv_live2 = eqv.compute_app_fair_value("MU", 100.0)  # cache hit -> same vintage
+_lines2 = _p2.read_text(encoding="utf-8").splitlines() if _p2.exists() else []
+check("3.1 producer chokepoint: a live compute appends exactly one archive row",
+      len(_lines2) == 1 and _fv_live1.data_source == "live",
+      detail=f"{len(_lines2)}/{_fv_live1.data_source}")
+check("3.2 dedup: same-vintage recompute (cache hit, identical computed_at) appends nothing",
+      len(_lines2) == 1 and _fv_live1.computed_at == _fv_live2.computed_at,
+      detail=f"{len(_lines2)}/{_fv_live1.computed_at}=={_fv_live2.computed_at}")
+check("3.3 archived row is the live MU vintage",
+      _lines2 and json.loads(_lines2[0])["ticker"] == "MU"
+      and json.loads(_lines2[0])["computed_at"] == _fv_live1.computed_at)
+
+# 3.4 F1 CORE: the Trading Desk (pages/9) live compute — driven through the REAL
+# order_advisor.compute_price_levels(allow_fetch=True) -> _gather_technicals ->
+# compute_app_fair_value path, which never calls store_equity_research_result —
+# DOES enter the archive. This is the exact gap F1 closes; it would FAIL before the
+# producer-chokepoint move.
+_d3 = tempfile.mkdtemp()
+_p3 = Path(_d3) / "anchor_archive.jsonl"
+aa.reset_dedup_cache()
+getattr(eqv._compute_cached, "clear", lambda: None)()
+with mock.patch.object(aa, "ANCHOR_ARCHIVE_PATH", _p3), \
+        mock.patch.object(eqv, "_fetch_raw", return_value=dict(_LIVE_RAW)), \
+        mock.patch("ui_utils.load_ohlcv", return_value=_df40()), \
+        mock.patch("lib.technical.snapshot", return_value=_snap100()), \
+        mock.patch("lib.holdings.load_holdings", return_value=[]), \
+        mock.patch("lib.holdings.load_cash_position", return_value=0.0), \
+        mock.patch("lib.holdings.load_portfolio_settings",
+                   return_value=holds.PortfolioSettings()):
+    _pl = oa.compute_price_levels("TDX", None, horizon="long",
+                                  valuation_percentile=0.3, allow_fetch=True)
+_lines3 = _p3.read_text(encoding="utf-8").splitlines() if _p3.exists() else []
+check("3.4 F1: Trading Desk (pages/9, allow_fetch=True) live anchor enters the archive",
+      len(_lines3) == 1 and json.loads(_lines3[0])["ticker"] == "TDX",
+      detail=f"{len(_lines3)}/{[json.loads(x)['ticker'] for x in _lines3]}")
+
+# 3.5 a fixture fallback (data_source != live) is NEVER historized — no fabricated
+# anchor in the migration series.
+_d4 = tempfile.mkdtemp()
+_p4 = Path(_d4) / "anchor_archive.jsonl"
+aa.reset_dedup_cache()
+getattr(eqv._compute_cached, "clear", lambda: None)()
+with mock.patch.object(aa, "ANCHOR_ARCHIVE_PATH", _p4), \
+        mock.patch.object(eqv, "_fetch_raw", return_value={}):
+    _fv_fix = eqv.compute_app_fair_value("FIXY", 100.0)
+check("3.5 fixture fallback is NOT archived (data_source != live)",
+      _fv_fix.data_source != "live" and not _p4.exists(),
+      detail=f"{_fv_fix.data_source}/exists={_p4.exists()}")
+
+# 3.6 store_equity_research_result no longer appends on its own (chokepoint moved).
+_d5 = tempfile.mkdtemp()
+_p5 = Path(_d5) / "anchor_archive.jsonl"
+aa.reset_dedup_cache()
+with mock.patch.object(aa, "ANCHOR_ARCHIVE_PATH", _p5):
     eqv.store_equity_research_result("MU", _fv(mid=110.0))
-    eqv.store_equity_research_result(
-        "MU", _fv(mid=104.0, computed_at="2026-06-09T13:00:00+00:00"))
-_store_lines = _p2.read_text(encoding="utf-8").splitlines() if _p2.exists() else []
-check("3.1 store_equity_research_result appends an archive row (page path)",
-      len(_store_lines) == 2, detail=str(len(_store_lines)))
-check("3.2 stored archive rows carry the two distinct vintages (append-only)",
-      [json.loads(x)["fair_value_mid"] for x in _store_lines] == [110.0, 104.0],
-      detail=str([json.loads(x)["fair_value_mid"] for x in _store_lines]))
+check("3.6 store_equity_research_result is no longer an archive site (no double-write)",
+      not _p5.exists(), detail=f"exists={_p5.exists()}")
 
 
 # ===========================================================================
@@ -369,6 +453,57 @@ check("7.6 no cached anchor -> honest anchor_not_cached state (no fabricated val
       _cold_anchor == {"state": orr.ANCHOR_NOT_CACHED}, detail=str(_cold_anchor))
 check("7.7 anchor_cache entry now persists analyst_pool (U2 dependency)",
       _cache_entry.get("analyst_pool") == _pool, detail=str(_cache_entry.get("analyst_pool")))
+# F3 — full source-equality for the REMAINING block fields.
+check("7.8 PARITY: block.company_type == anchor_cache source",
+      _fresh_anchor["company_type"] == _cache_entry["company_type"],
+      detail=f"{_fresh_anchor['company_type']} vs {_cache_entry['company_type']}")
+check("7.9 PARITY: block.blend_state == anchor_cache source",
+      _fresh_anchor["blend_state"] == _cache_entry["blend_state"],
+      detail=f"{_fresh_anchor['blend_state']} vs {_cache_entry['blend_state']}")
+check("7.10 PARITY: block.caveats == anchor_cache source",
+      _fresh_anchor["caveats"] == list(_cache_entry.get("caveats", []) or []),
+      detail=f"{_fresh_anchor['caveats']} vs {_cache_entry.get('caveats')}")
+
+# F3 — binding/exclusion completeness (mirrors the §18 canonical-key-set pattern):
+# EVERY field in the snapshot anchor block is EITHER bound to a UI surface OR listed
+# in the explicit-exclusion set with a documented reason, so a future field added to
+# ANCHOR_SNAPSHOT_KEYS forces a surface decision (fails loudly otherwise).
+_ANCHOR_BOUND = {
+    "fair_value_mid": "drives the LONG-status value band the Cockpit card renders",
+}
+_ANCHOR_EXCLUDED = {
+    "computed_at": "vintage stamp; the card staleness surface is anchor_age_days",
+    "company_type": "archive/migration audit field; no per-card Cockpit surface this round",
+    "analyst_pool": "migration-source (consumed from the ARCHIVE, not the snapshot block); no per-card surface",
+    "blend_state": "archive/migration audit field; degrade display is driven by status, not this block",
+    "caveats": "archive/migration audit field; no per-card surface this round",
+}
+check("7.11 every snapshot anchor-block field is bound OR explicitly excluded",
+      set(_ANCHOR_BOUND) | set(_ANCHOR_EXCLUDED) == set(orr.ANCHOR_SNAPSHOT_KEYS)
+      and not (set(_ANCHOR_BOUND) & set(_ANCHOR_EXCLUDED)),
+      detail=str(set(orr.ANCHOR_SNAPSHOT_KEYS)
+                 ^ (set(_ANCHOR_BOUND) | set(_ANCHOR_EXCLUDED))))
+
+
+# ===========================================================================
+# 8. F2 — migration note surfaced in _summary() + bound on the Trading Desk card
+# ===========================================================================
+# _res / _res2 come from §6 (deteriorating vs rising check_holding runs).
+check("8.1 _summary() includes the bilingual migration note when deteriorating",
+      _res.anchor_migration_note in _res.summary and bool(_res.anchor_migration_note),
+      detail=_res.summary)
+check("8.2 _summary() does NOT show the downshift note when not deteriorating",
+      "downshifting" not in _res2.summary.lower()
+      and not _res2.anchor_migration_watch)
+check("8.3 surfacing is watch-level only — thesis_status unchanged (intact)",
+      _res.thesis_status == "intact" and _res2.thesis_status == "intact")
+# Render-surface binding (source inspection — mirrors the cockpit_rebuild §273
+# pattern; full AppTest of pages/9 is out of scope and the 5x AppTest harness is
+# pre-existing-red): the Trading Desk order card reads the watch and renders the note.
+_src9 = open(os.path.join(_REPO_ROOT, "pages", "9_Trading_Desk.py"),
+             encoding="utf-8").read()
+check("8.4 Trading Desk order card binds anchor_migration_watch + _note",
+      "anchor_migration_watch" in _src9 and "anchor_migration_note" in _src9)
 
 
 # ===========================================================================
