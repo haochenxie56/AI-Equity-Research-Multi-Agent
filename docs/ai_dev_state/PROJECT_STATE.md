@@ -1,9 +1,79 @@
 # AI Investment Agent — Project State
 
-**Last updated**: 2026-06-06 (**Valuation Refactor v1 — method router +
-growth-profile peers — COMPLETE & CLOSED (re-review APPROVED at ca5ad14)** — see
-the section immediately below; Phase 7B, Valuation Stop-the-Bleed, and Phase 7A
-sections follow. Prior status blob preserved verbatim afterward.)
+**Last updated**: 2026-06-07 (**Anchor Intelligence v2 — Round 1 — CLOSED
+(review APPROVED at 9e53f04)**: producer unification + structured analyst anchor +
+epoch stamping — see the section immediately below. Valuation Refactor v1, Phase
+7B, Valuation Stop-the-Bleed, and Phase 7A sections follow. Prior status blob
+preserved verbatim afterward.)
+
+## Anchor Intelligence v2 — Round 1 — CLOSED (review APPROVED at 9e53f04)
+
+Round 1 unifies the fair-value anchor onto a **single producer**, makes the
+sell-side analyst input **structured**, and stamps every card with the producer
+**epoch** so the Trading Desk, Equity page, and Cockpit can never silently
+diverge. **All deterministic; no LLM invents anchors.** Phase doc
+`docs/reliability_anchor_intel_v2.md`; suite
+`scripts/test_reliability_phase_6c_v3_entry_v4.py` **90/90** (52 → 73 after fix
+round 1 → 87 after fix round 2 → 90 after the R3 real-path case); canonical sweep
+green. Review **APPROVED at 9e53f04**; round 1 is CLOSED. **Rounds v2.2–v2.5 remain
+pending** (future scope, not started).
+
+**Round-1 lesson:** *Unifying a producer with multiple callers is an access-path
+problem, not a physical merge — map the caller-contract matrix (page = needs band
++ allows network; ranker = network-free; refresh = no-poison) before
+implementing.*
+
+- **U1 — single fair-value producer.** `order_advisor._gather_technicals` now
+  computes the anchor via `lib.equity_valuation.compute_app_fair_value`
+  (`AppFairValue`) instead of the retired `lib.valuation_anchor`. Production has
+  ONE producer + ONE `st.cache_data` entry per ticker; Trading Desk, Equity page,
+  and Cockpit render from the same producer/epoch. Entry-strategy FORMULAS
+  unchanged (×0.90 high, ×0.85 medium); only the anchor inputs migrated.
+  `conservative_anchor` is tier-dependent (high = `fair_value_mid`, medium =
+  `analyst_target`, low/suppressed = None) — using `fair_value_low` here would
+  double-discount against the ×0.90 MoS. `lib/valuation_anchor.py` is deprecated
+  (retired from production, kept for compatibility).
+- **U2 — structured analyst anchor + pool-dispersion gate.** `AppFairValue` now
+  carries the sell-side target distribution as a structured `analyst_pool`
+  {median, mean, high, low, n, as_of}; the median remains the central estimate
+  entering the blend. A pool-dispersion confidence gate (`pool_dispersion =
+  (high − low)/median`, threshold 1.0×, min n = 3) caps confidence at low and
+  emits `CAVEAT_ANALYST_POOL_DISPERSED` when it fires (confidence-only; the blend
+  still proceeds; the inter-method dispersion gate still runs last).
+- **U3 — epoch stamping + single-source-per-card.** `PriceLevelResult` carries the
+  `AppFairValue` epoch (`fair_value_computed_at`); when an external/session band
+  drives the card, confidence AND `conservative_anchor` AND the epoch all come
+  from THAT band (no mixed-source read against the local instance).
+
+### Fix rounds (hardening, all APPROVED at 9e53f04)
+
+- **F-round** — true single cached producer (page-path fetcher threaded so one
+  cache entry/epoch is shared; first-writer-wins parity proven on the REAL Equity
+  vs Trading-Desk paths); external band made single-source; the misleading
+  `analyst_proxy` `fair_value_source` token renamed to `app_fair_value` (C5).
+- **X-round** — `compute_price_levels(allow_fetch=False)` makes the ranker /
+  Cockpit-refresh path **structurally network-free** (the live producer is reached
+  only on page paths; a cold cache degrades honestly to
+  `fair_value_source="anchor_not_cached"` + `fair_value_anchor=None`); Cockpit
+  on-demand equity-research passes the cyclical fetcher so no first writer can
+  poison the shared cache entry (Option B); the external-band single-source path is
+  gated so a healthy external band is never degraded by an irreconcilable local
+  instance (the inverse leak).
+- **R3** — on the cold / missing-OHLCV `anchor_not_cached` path the fixture's
+  back-computed `cp×0.85` scalar is explicitly cleared to None, so the
+  honest-degrade contract holds (no fabricated anchor rides through); proven on the
+  REAL transitive ranker path (`rank_opportunities → compute_price_levels →
+  _gather_technicals`), with discrimination verified (reverting the one-line clear
+  re-fails the case).
+
+**Modified (production):** `lib/order_advisor.py`, `lib/equity_valuation.py`,
+`lib/anchor_cache.py`, `lib/valuation_anchor.py` (deprecated), `pages/4_Equity.py`,
+`pages/7_Investment_Cockpit.py`, `pages/9_Trading_Desk.py`, `ui_utils.py`.
+**Added:** `.gitattributes` (enforce LF). **Tests:** `phase_6c_v3_entry_v4`,
+`phase_6c_v2_entry_strategy`, `phase_6c_trading_desk`, `phase_6c_b_cockpit_rebuild`,
+`valuation_router`. **Docs:** `docs/reliability_anchor_intel_v2.md` (new), state docs.
+
+---
 
 ## Valuation Refactor v1 — Method Router + Growth-Profile Peers — COMPLETE & CLOSED (re-review APPROVED at ca5ad14)
 
