@@ -151,18 +151,41 @@ def record_from_app_fair_value(fv, *, data_vintage: str = "") -> dict:
 # Append (atomic, append-only, fail-closed)
 # ---------------------------------------------------------------------------
 
+# In-process dedup memo (Anchor Intel v2.3 F1). The producer chokepoint
+# (``equity_valuation.compute_app_fair_value``) appends on EVERY page-path call,
+# but ``compute_app_fair_value``'s cached worker re-surfaces the SAME computed
+# vintage when the same ticker is valued twice in one session (e.g. pages/4 then
+# pages/9): an identical ``computed_at`` is a cache RE-READ of one vintage, not a
+# new valuation, so it is deduped. A genuinely new computation carries a fresh
+# ``computed_at`` (a distinct key) and is appended (append-only keeps real
+# vintages). Keyed by (resolved path, ticker, computed_at) so distinct archive
+# files — e.g. per-test temp files — never collide. O(1); avoids reading the
+# archive on the page path (see the F4 storage-growth note in the phase doc).
+_APPENDED_KEYS: set = set()
+
+
+def reset_dedup_cache() -> None:
+    """Clear the in-process append dedup memo (test hook)."""
+    _APPENDED_KEYS.clear()
+
 
 def append_record(record: dict, path: Optional[Path] = None) -> bool:
     """Append one well-formed ``record`` to the archive (atomic, fail-closed).
 
     HARD INVARIANT: append-only. This opens the file in append mode and writes a
     single JSON line; it never reads, rewrites, or mutates any prior record.
-    Returns ``True`` on success, ``False`` on any failure (never raises).
+    Identical (path, ticker, computed_at) re-appends within the process are deduped
+    (a cache re-read of one vintage, not a new valuation) and reported as success
+    without writing a second row. Returns ``True`` on success / dedup, ``False`` on
+    any failure (never raises).
     """
     tk = str((record or {}).get("ticker", "") or "").upper().strip()
     if not tk:
         return False
     p = Path(path) if path else ANCHOR_ARCHIVE_PATH
+    key = (str(p), tk, str((record or {}).get("computed_at", "") or ""))
+    if key in _APPENDED_KEYS:
+        return True  # same vintage re-surfaced this session — append-only no-op
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
         line = json.dumps(record, ensure_ascii=False)
@@ -170,6 +193,7 @@ def append_record(record: dict, path: Optional[Path] = None) -> bool:
             fh.write(line + "\n")
             fh.flush()
             os.fsync(fh.fileno())
+        _APPENDED_KEYS.add(key)
         return True
     except Exception:  # noqa: BLE001 — fail-closed append
         return False

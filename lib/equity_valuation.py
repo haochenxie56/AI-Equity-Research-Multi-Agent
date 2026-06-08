@@ -1596,7 +1596,7 @@ def compute_app_fair_value(ticker: str, current_price: float, *,
         except (TypeError, ValueError):
             ov = None
     try:
-        return _compute_cached(
+        fv = _compute_cached(
             t, round(cp, 4), ov, _peers=peers,
             _cyclical_history_fetcher=cyclical_history_fetcher)
     except Exception:  # noqa: BLE001 — fully fail-closed
@@ -1609,6 +1609,24 @@ def compute_app_fair_value(ticker: str, current_price: float, *,
             analyst_count=0,
             data_source=_FIXTURE,
         )
+    # Anchor Intel v2.3 U1/F1 — single page-path archive chokepoint. This producer
+    # is invoked ONLY on allow_fetch=True page paths: pages/4, pages/7
+    # _run_equity_research, AND pages/9 (via order_advisor._gather_technicals'
+    # allow_fetch branch). The ranking / Cockpit-refresh path consumes
+    # lib.anchor_cache and NEVER calls this function, so the append never fires on
+    # the network-free path (the §13 transitive harness proves zero appends there).
+    # Live results only — a data_source="fixture" fallback is never historized (no
+    # fabricated anchor in the series). append_record dedups identical
+    # (ticker, computed_at) cache re-reads; genuine recomputes carry a fresh
+    # computed_at and are appended (append-only). Fail-closed; never raises here.
+    try:
+        if getattr(fv, "data_source", "") == _LIVE:
+            from lib.anchor_archive import append_anchor_record
+
+            append_anchor_record(fv)
+    except Exception:  # noqa: BLE001 — archive write is best-effort
+        pass
+    return fv
 
 
 def store_equity_research_result(
@@ -1639,17 +1657,12 @@ def store_equity_research_result(
     except Exception:  # noqa: BLE001 — cache write is best-effort
         pass
 
-    # Append-only history write-through (Anchor Intel v2.3 U1). This is the SINGLE
-    # page-path archive chokepoint (this function is called only from pages/4 and
-    # the Cockpit on-demand _run_equity_research — both allow_fetch=True paths). The
-    # ranking / refresh path never calls it, so the archive stays page-path-only.
-    # Append-only + fail-closed; never mutates a prior record, never raises here.
-    try:
-        from lib.anchor_archive import append_anchor_record
-
-        append_anchor_record(fair_value)
-    except Exception:  # noqa: BLE001 — archive write is best-effort
-        pass
+    # NOTE (Anchor Intel v2.3 F1): the append-only archive write is NOT here. It was
+    # moved UP to the producer chokepoint (compute_app_fair_value) so that EVERY
+    # page-path live computation is historized — including the Trading Desk
+    # (pages/9), which live-computes via order_advisor._gather_technicals and never
+    # calls this hand-off. Archiving here would miss pages/9 and double-write pages/4
+    # & pages/7 (which always call compute_app_fair_value first).
 
     try:
         import streamlit as st
