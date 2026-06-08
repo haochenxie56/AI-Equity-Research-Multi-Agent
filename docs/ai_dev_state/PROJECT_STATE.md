@@ -1,10 +1,53 @@
 # AI Investment Agent — Project State
 
-**Last updated**: 2026-06-07 (**Anchor Intelligence v2 — Round 1 — CLOSED
-(review APPROVED at 9e53f04)**: producer unification + structured analyst anchor +
-epoch stamping — see the section immediately below. Valuation Refactor v1, Phase
-7B, Valuation Stop-the-Bleed, and Phase 7A sections follow. Prior status blob
+**Last updated**: 2026-06-08 (**Anchor Intelligence v2.3 — fully CLOSED**: anchor
+historization (main body, review APPROVED at 9f6c37e, merged at 97c8f1f) +
+historical backfill (review APPROVED at c57e56e, merged now) — see the v2.3 section
+immediately below. The Round 1 section (producer unification + structured analyst
+anchor + epoch stamping, APPROVED at 9e53f04) follows. Valuation Refactor v1, Phase
+7B, Valuation Stop-the-Bleed, and Phase 7A sections follow that. Prior status blob
 preserved verbatim afterward.)
+
+## Anchor Intelligence v2.3 — Anchor Historization + Historical Backfill — fully CLOSED
+
+v2.3 turns the unified fair-value anchor (Round 1) into an **append-only historical
+series** so a thesis can be reviewed against the anchor as it stood on a past date,
+and seeds that series with recomputable history. **All deterministic; no LLM ever
+invents an anchor, and the sell-side analyst input is never fabricated for a past
+date.** Phase doc `docs/reliability_anchor_intel_v2.md`. The phase shipped as two
+review-gated bodies, both now CLOSED:
+
+- **Main body — review APPROVED at `9f6c37e`, merged into `main` at `97c8f1f`.**
+  - **U1 — append-only anchor archive (producer chokepoint).** Every page-path live
+    anchor is archived at the single `store_equity_research_result` producer
+    chokepoint, so the series is captured exactly where the one producer already
+    writes (no new caller can silently skip it).
+  - **U2 — single-vintage snapshot anchor block.** The daily opportunity snapshot
+    carries a single-vintage anchor block, so a card's anchor and its vintage stamp
+    can never drift apart.
+  - **U3 — deterministic migration readout + read-only thesis watch.** A
+    deterministic migration readout surfaces the historized series, and
+    `thesis_monitor` gets a read-only anchor-migration watch note (thesis_status
+    untouched). Fix round F1–F4 (APPROVED at 9f6c37e) hardened the
+    producer-chokepoint capture, surfaced the migration watch note, and recorded the
+    archive-read cost.
+- **Historical backfill — review APPROVED at `c57e56e`, merging now (this commit).**
+  Offline engine (`lib/anchor_backfill.py`, `scripts/backfill_anchors.py`) seeds the
+  archive with **recomputable anchors only** (DCF/relative/cyclical recomputed from
+  cached fundamentals); the **analyst anchor is never fabricated** for a historical
+  date (additive `record_origin` + an analyst sentinel in the archive schema keep
+  live vs. backfilled rows distinct). Backfill round B1/B2/B3 + the **G1/G2 fix
+  round** (REQUEST CHANGES, both P1) added a **filing-lag look-ahead defence**
+  (`FILING_LAG_DAYS = {annual: 75, quarterly: 45}` — a statement counts at as-of
+  date `D` only when `period_end + filing_lag <= D`, erring toward later-never-earlier
+  data; threaded into both the DCF/relative raw and the cyclical PB/PS band) and a
+  **same-date seam guard** (`anchor_archive.covered_vintages` spans both origins so a
+  live row and a backfill row never double-count the seam date; live wins). Suite
+  `scripts/test_reliability_anchor_backfill.py` **60/60**; archive suite green;
+  canonical sweep unchanged-green.
+
+**Rounds v2.4 / v2.5 remain pending** (future scope, not started — to be specified
+when each round opens).
 
 ## Anchor Intelligence v2 — Round 1 — CLOSED (review APPROVED at 9e53f04)
 

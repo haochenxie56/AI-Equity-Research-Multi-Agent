@@ -92,6 +92,13 @@ class ThesisCheckResult:
     anchor_migration: Optional[dict] = None
     anchor_migration_watch: bool = False
     anchor_migration_note: str = ""
+    # Mixed-origin honesty (Anchor Intel v2.3 backfill round, B3): INFORMATIONAL
+    # only — when the migration history is partly backfilled the analyst series
+    # spans only the live-accumulated records, so the readout flags
+    # "analyst history insufficient". Surfaced as context (NOT a watch, NEVER
+    # changes thesis_status) so the analyst-anchor migration line is honest about
+    # how far back its series actually reaches.
+    anchor_migration_analyst_note: str = ""
     # --- derived ---
     thesis_status: str = "intact"  # intact|watch|weakening|broken
     price_vs_entry: float = 0.0  # (current / cost_basis - 1) * 100
@@ -456,6 +463,11 @@ def _summary(result: "ThesisCheckResult") -> str:
     # conviction-grade (deteriorating).
     if result.anchor_migration_watch and result.anchor_migration_note:
         parts.append(result.anchor_migration_note)
+    # B3 (backfill round) — informational analyst-history-insufficient context when
+    # the migration span is partly backfilled. Not a watch; mutually exclusive with
+    # the deteriorating note in practice (a short analyst span can't be conviction).
+    elif result.anchor_migration_analyst_note:
+        parts.append(result.anchor_migration_analyst_note)
     return "; ".join(parts) + "."
 
 
@@ -582,6 +594,11 @@ def check_holding(holding, macro_result=None, regime: Optional[str] = None,
     result.anchor_migration = migration
     result.anchor_migration_watch = amw
     result.anchor_migration_note = amnote
+    # B3 — informational analyst-history note (mixed-origin span). Read-only; no
+    # watch, no status change.
+    if isinstance(migration, dict):
+        result.anchor_migration_analyst_note = str(
+            migration.get("analyst_history_note") or "")
     result.summary = _summary(result)
     return result
 

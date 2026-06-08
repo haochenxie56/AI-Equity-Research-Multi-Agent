@@ -16,8 +16,17 @@ hardening fix rounds (F-round, X-round) and the R3 real-path fix were reviewed a
 `scripts/test_reliability_phase_6c_v3_entry_v4.py` **90/90** (52 → 73 after fix
 round 1 → 87 after fix round 2 → 90 after the R3 missing-OHLCV real-path case);
 canonical sweep green. **All deterministic; no LLM invents a fair-value anchor.**
-**Rounds v2.2–v2.5 remain pending** (future scope, not started — to be specified
-when each round opens).
+
+**Update — v2.3 fully CLOSED.** The v2.3 anchor-historization main body (U1
+append-only archive at the `store_equity_research_result` producer chokepoint / U2
+single-vintage snapshot anchor block / U3 deterministic migration readout +
+read-only `thesis_monitor` watch note; fix round F1–F4) was reviewed and **APPROVED
+at `9f6c37e`** and merged into `main` at `97c8f1f`. The **historical backfill** —
+recomputable anchors only, the analyst anchor never fabricated for a past date, with
+the G1 filing-lag look-ahead defence and the G2 same-date seam guard; suite
+`scripts/test_reliability_anchor_backfill.py` **60/60** — was reviewed and
+**APPROVED at `c57e56e`** and merged now. **Rounds v2.4–v2.5 remain pending**
+(future scope, not started — to be specified when each round opens).
 
 ## Goal
 
@@ -360,8 +369,128 @@ not a silent debt.
 - New degradation state: none — `anchor_not_cached` is the existing R3 honest-degrade
   token, reused for the snapshot block.
 
+## Round v2.3 — historical backfill (awaiting review)
+
+> The archive (U1) only accumulates from today forward, so U3's migration readout
+> would cold-start with 1–2 months of empty history. Anchors whose INPUTS are
+> public historical series CAN be recomputed for past dates — this round adds a
+> one-time, offline backfill for the **recomputable anchors ONLY**, giving the
+> migration readout real history on day one.
+
+### HARD INVARIANT — the never-fabricate line
+
+| anchor | backfilled? | why |
+|---|---|---|
+| DCF | **YES** | historical FCF (annual OCF − \|CapEx\|) + shares + YoY growth — all dated |
+| relative-PE (sector P/E × historical EPS) | **YES** | sector P/E is a static map; EPS is a dated income-statement row |
+| PB/PS cyclical band | **YES** | the v1 builder already does as-of PB/PS; reused unchanged |
+| **analyst pool** | **NEVER** | free sources expose ONLY the CURRENT pool — no historical analyst-target series exists anywhere. Backfilled `analyst_pool` = sentinel `analyst_history_unavailable` (never a number, never None, never today's pool back-dated) |
+| forward-EPS consensus | **NEVER** | CURRENT-only; left absent (relative anchor falls to trailing EPS) |
+
+A backfilled record is **PARTIAL by construction** (price/financial anchors
+present, analyst absent + flagged), tagged `record_origin="backfill"`,
+`data_vintage` = the historical as-of date.
+
+### B1 — backfill engine (`lib/anchor_backfill.py`)
+
+- Visible config block: `BACKFILL_WINDOW_MONTHS = 6`, `BACKFILL_CADENCE_DAYS = 7`
+  (weekly → ≈ 26 as-of points; the grid is anchored at `end_date` and steps
+  BACKWARD so the newest point lines up with the live series).
+- Pure core `compute_backfill_records(...)` (no I/O): for each as-of date it slices
+  the dated statements + price history to ≤ that date, builds an as-of `raw`
+  (historical-derivable fields only; analyst/forward always `None`), and **reuses
+  the live assembler** `equity_valuation._assemble_fair_value` with an as-of
+  cyclical-band fetcher that calls the SAME `build_pb_ps_history` — no anchor math is
+  reimplemented. The result is mapped to a partial archive record (analyst sentinel,
+  historical `computed_at`/`data_vintage`).
+- Degrade honesty: an as-of date with no real anchor (`blend_state == "no_anchor"`,
+  insufficient fundamentals) ZEROES the band and adds
+  `backfill_insufficient_fundamentals` — a current-price stub never enters history;
+  an as-of date with no price at all yields NO record (price is never fabricated).
+
+### B2 — one-time, offline, idempotent (`scripts/backfill_anchors.py`)
+
+- Explicit on-demand script — NOT on app startup, NOT on the ranking/refresh path.
+- **Idempotency = persistent guard:** `backfill_ticker` reads the archive's existing
+  `record_origin=="backfill"` `data_vintage` set (`anchor_archive.backfilled_vintages`)
+  and skips already-covered as-of dates, so a double-run writes ZERO duplicate rows
+  (robust across process restarts — the in-process append memo is not). Append-only.
+- Network discipline: the fetch reads historical prices + dated statements + the
+  static `sector` label only; it NEVER calls any analyst-target endpoint.
+
+### B3 — U3 consumes mixed-origin history honestly (`lib/anchor_migration.py`)
+
+- Price-anchor migration (`fair_value_mid`) spans the FULL backfilled+live set; the
+  analyst series spans ONLY the live records (the sentinel yields no analyst value,
+  via `_value_for`). New additive readout keys: `origins{live,backfill}`,
+  `price_span_n`, `analyst_span_n`, `analyst_history_available`, and
+  `analyst_history_note` (+ `analyst_history_insufficient` caveat) — so the readout
+  never pretends the analyst series reaches back as far as the price series.
+- `thesis_monitor` surfaces the bilingual note (`分析师历史不足 | analyst history
+  insufficient`) as INFORMATIONAL context (new `anchor_migration_analyst_note`) — NOT
+  a watch, NEVER changes `thesis_status`.
+
+### Schema decision
+
+`record_origin` is purely **additive** with **no `schema_version` bump** (absent ⇒
+`"live"`) — the same additive-no-bump precedent as U2's `anchor_cache.analyst_pool`.
+Bumping would orphan older live rows behind the read-time version guard.
+
+### Results
+
+- **New suite** `scripts/test_reliability_anchor_backfill.py` — **46/46**:
+  determinism + live-assembler reuse (no `_fetch_raw`/producer reached) + golden
+  band; the never-fabricate sentinel + its discrimination; degrade/no-price honesty;
+  idempotent double-run (zero dup rows) + append-only; mixed-origin migration
+  (price full-span / analyst live-span) + honest labels; thesis info-note (no watch);
+  cold-ranking offline-only.
+- `scripts/test_reliability_anchor_archive.py` **59 → 60** (record_origin additive
+  key + default-live assertion).
+- Canonical sweep green: entry_v4 **92/92**, 7A **115/115**, 7B **193/193**,
+  valuation_router **104/104**, 6c_b **47/47**, stopbleed **65/65**. Full
+  `test_reliability_*` sweep **GREEN=64 / RED=13**; the 13 are the documented
+  pre-existing orthogonal failures (5e–5s UI/AppTest, agent_evaluation,
+  6b_signal_layer's `signal_engine`-imports-`llm_orchestrator` assertion) — none
+  touch this round's files.
+- `lib/macro_regime.py` untouched; i18n additive (inline bilingual note, no
+  `TRANSLATIONS` change); `.gitattributes` keeps LF (`git diff --check` clean).
+
+### Backfill fix round (REQUEST CHANGES — G1/G2, both P1)
+
+- **G1 (P1, look-ahead leak — core defect).** `_slice_frame_asof` filtered by
+  fiscal-period END, treating a statement as available on its period-end though it
+  is filed weeks later — recomputing a past-date anchor with a not-yet-public
+  statement is look-ahead bias that contaminates the whole backfilled history. The
+  free loader has no filing-date metadata, so a **conservative publication-lag** is
+  applied: visible config `FILING_LAG_DAYS = {annual: 75, quarterly: 45}`; a
+  statement counts at as-of date `D` only when `period_end + filing_lag <= D` (errs
+  toward using data LATER, never earlier — the only safe direction). The gate is
+  threaded from `_backfill_one` (annual lag) into the slices feeding BOTH the
+  DCF/relative `raw` (via `_newest_cols`) AND the cyclical PB/PS band (the gated
+  frames are handed to `build_pb_ps_history`), so no anchor can read a too-fresh
+  statement. A date the lag leaves with insufficient fundamentals degrades (zeroed
+  band + `backfill_insufficient_fundamentals`) — it NEVER falls back to a
+  not-yet-public statement. Corrected goldens: a date just after a period-end but
+  before `period_end+75` uses the PRIOR year (mid **112.0**); after the lag the
+  fresh statement is used (mid **103.47**). Discrimination: reverting the gate
+  (`lag=0`) leaks the fresh statement and the assertions fail.
+- **G2 (P1, seam double-count).** The weekly grid includes `end_date`, but the
+  idempotency guard skipped only existing **backfill** vintages — an existing
+  **live** row for that date did not prevent a backfill row, so migration counted
+  the seam date twice. New read-only `anchor_archive.covered_vintages` spans BOTH
+  origins; `backfill_ticker` now skips any date already covered by a live OR
+  backfill record (live wins — a real contemporaneous compute beats a historical
+  approximation). `backfilled_vintages` is retained for diagnostics.
+- **Results.** `scripts/test_reliability_anchor_backfill.py` **46 → 60** (+8 G1
+  filing-lag gate / corrected goldens / discrimination / pre-filing degrade; +6 G2
+  same-date seam guard + single-count migration). Canonical sweep unchanged-green
+  (entry_v4 92, 7A 115, 7B 193, router 104, 6c_b 47, stopbleed 65, archive 60);
+  full `test_reliability_*` **GREEN=64 / RED=13** (identical pre-existing reds).
+  `macro_regime.py` untouched; no i18n change this round; `git diff --check` clean.
+
 ## Pending — rounds v2.4–v2.5
 
 Not started. Scope to be specified when each round opens. Round 1 establishes the
 single-producer / structured-pool / epoch foundation those rounds build on; v2.3
-adds the append-only historical series + migration readout.
+adds the append-only historical series + migration readout, and the backfill round
+seeds that series with recomputable history.

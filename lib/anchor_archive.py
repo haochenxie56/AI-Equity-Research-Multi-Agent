@@ -28,6 +28,7 @@ Schema (one record per JSONL line)::
 
     {
       "schema_version": 1,
+      "record_origin": "live",          # "live" | "backfill" (absent ⇒ "live")
       "ticker": "MU",
       "computed_at": "2026-06-08T13:00:00+00:00",
       "data_vintage": "2026-06-08",
@@ -71,6 +72,43 @@ ANCHOR_ARCHIVE_PATH = _DATA_DIR / "anchor_archive.jsonl"
 # an append-only file with mixed versions stays readable (older rows are ignored,
 # not migrated in place — append-only is preserved).
 ANCHOR_ARCHIVE_SCHEMA_VERSION = 1
+
+# --- Record origin + analyst sentinel (Anchor Intel v2.3 backfill round) -----
+# ``record_origin`` distinguishes a live-complete record (the producer chokepoint,
+# all anchors including the live analyst pool) from a backfilled-PARTIAL record
+# (recomputed price/financial anchors only; the analyst anchor is ABSENT by
+# construction — see ``ANALYST_HISTORY_UNAVAILABLE``). The field is purely
+# ADDITIVE and ``schema_version`` is NOT bumped: a record written before this round
+# simply lacks ``record_origin`` and reads as ``"live"`` (the default), exactly the
+# U2 ``anchor_cache.analyst_pool`` additive-no-bump precedent. Bumping the version
+# would orphan those older live rows behind the read-time version guard.
+RECORD_ORIGIN_LIVE = "live"
+RECORD_ORIGIN_BACKFILL = "backfill"
+
+# Sentinel for ``analyst_pool`` on a BACKFILLED record. yfinance and all free
+# sources expose ONLY the CURRENT analyst pool — there is no historical
+# analyst-target series anywhere retrievable, so a backfilled record MUST NOT
+# carry a number for it. This sentinel STRING (never ``None``-that-reads-as-zero,
+# never today's pool back-dated, never any invented value) is the never-fabricate
+# marker. Migration consumers treat a non-dict ``analyst_pool`` as "no analyst
+# value" (see ``lib.anchor_migration._value_for``), so the analyst series is
+# computed ONLY over the live-accumulated span.
+ANALYST_HISTORY_UNAVAILABLE = "analyst_history_unavailable"
+
+# Sentinel object for "argument not supplied" so an explicit ``None`` / sentinel
+# string override is distinguishable from "use the projected pool".
+_UNSET = object()
+
+
+def record_origin_of(record: dict) -> str:
+    """Origin of a record (``"live"`` / ``"backfill"``); absent ⇒ ``"live"``.
+
+    Backward-compatible read default: a pre-backfill-round record has no
+    ``record_origin`` key and is a live-complete record.
+    """
+    if not isinstance(record, dict):
+        return RECORD_ORIGIN_LIVE
+    return str(record.get("record_origin") or RECORD_ORIGIN_LIVE)
 
 
 # ---------------------------------------------------------------------------
@@ -121,17 +159,31 @@ def _project_analyst_pool(pool) -> Optional[dict]:
     return out
 
 
-def record_from_app_fair_value(fv, *, data_vintage: str = "") -> dict:
+def record_from_app_fair_value(fv, *, data_vintage: str = "",
+                               record_origin: str = RECORD_ORIGIN_LIVE,
+                               analyst_pool_override=_UNSET) -> dict:
     """Build an archive record from an :class:`lib.equity_valuation.AppFairValue`.
 
     Pure (no I/O). Tolerant of duck-typed stand-ins in tests via ``getattr``.
     ``data_vintage`` defaults to the date of ``fv.computed_at`` when not supplied.
+
+    ``record_origin`` tags the record ``"live"`` (the producer chokepoint default)
+    or ``"backfill"`` (the offline recompute engine). ``analyst_pool_override``,
+    when supplied, REPLACES the projected analyst pool — the backfill engine passes
+    :data:`ANALYST_HISTORY_UNAVAILABLE` because no historical analyst series exists
+    (the never-fabricate invariant); a live record leaves it ``_UNSET`` so the real
+    pool is projected from ``fv``.
     """
     g = lambda n, d=None: getattr(fv, n, d)  # noqa: E731
     computed_at = str(g("computed_at", "") or "") or _now().isoformat()
     vintage = str(data_vintage or "").strip() or _vintage_from_computed_at(computed_at)
+    if analyst_pool_override is _UNSET:
+        analyst_pool = _project_analyst_pool(g("analyst_pool", None))
+    else:
+        analyst_pool = analyst_pool_override
     return {
         "schema_version": ANCHOR_ARCHIVE_SCHEMA_VERSION,
+        "record_origin": str(record_origin or RECORD_ORIGIN_LIVE),
         "ticker": str(g("ticker", "") or "").upper().strip(),
         "computed_at": computed_at,
         "data_vintage": vintage,
@@ -140,7 +192,7 @@ def record_from_app_fair_value(fv, *, data_vintage: str = "") -> dict:
         "fair_value_mid": float(g("fair_value_mid", 0.0) or 0.0),
         "fair_value_high": float(g("fair_value_high", 0.0) or 0.0),
         "blend_state": str(g("blend_state", "blended") or "blended"),
-        "analyst_pool": _project_analyst_pool(g("analyst_pool", None)),
+        "analyst_pool": analyst_pool,
         "methods_used": list(g("methods_used", []) or []),
         "excluded_anchors": list(g("excluded_anchors", []) or []),
         "caveats": list(g("caveats", []) or []),
@@ -268,3 +320,38 @@ def read_archive(ticker: str, *, window: Optional[int] = None,
     if window is not None and window > 0:
         out = out[-int(window):]
     return out
+
+
+def backfilled_vintages(ticker: str, *, path: Optional[Path] = None) -> set:
+    """Return the set of ``data_vintage`` dates already covered by BACKFILL records.
+
+    Reports only ``record_origin == "backfill"`` rows. Read-only; fail-closed →
+    ``set()``. (The backfill engine's skip-guard uses :func:`covered_vintages`,
+    which spans BOTH origins; this narrower view remains for diagnostics / tests.)
+    """
+    tk = (ticker or "").upper().strip()
+    if not tk:
+        return set()
+    return {str(r.get("data_vintage", "")) for r in _iter_records(path)
+            if str(r.get("ticker", "")).upper().strip() == tk
+            and record_origin_of(r) == RECORD_ORIGIN_BACKFILL
+            and r.get("data_vintage")}
+
+
+def covered_vintages(ticker: str, *, path: Optional[Path] = None) -> set:
+    """Return ``data_vintage`` dates already covered by ANY-origin records (G2 fix).
+
+    The persistent idempotency guard for the offline backfill engine: re-running
+    backfill skips any as-of date that already has a record of EITHER origin —
+    ``live`` OR ``backfill`` — for the ticker. A real contemporaneous (live) compute
+    for a date must NOT be double-counted by a historical backfill approximation of
+    the SAME date (the end_date seam, where the weekly grid includes today and a
+    live row may already exist): live wins. Robust across process restarts (the
+    in-process append memo is not). Read-only; fail-closed → ``set()``.
+    """
+    tk = (ticker or "").upper().strip()
+    if not tk:
+        return set()
+    return {str(r.get("data_vintage", "")) for r in _iter_records(path)
+            if str(r.get("ticker", "")).upper().strip() == tk
+            and r.get("data_vintage")}
