@@ -119,13 +119,15 @@ def _fv(ticker="MU", computed_at="2026-06-08T13:00:00+00:00", mid=110.0,
 _rec = aa.record_from_app_fair_value(_fv())
 check("1.1 record schema_version is the current constant",
       _rec["schema_version"] == aa.ANCHOR_ARCHIVE_SCHEMA_VERSION)
-check("1.2 record carries the full v2.3 schema key set",
+check("1.2 record carries the full v2.3 schema key set (incl. backfill-round record_origin)",
       set(_rec.keys()) == {
-          "schema_version", "ticker", "computed_at", "data_vintage",
-          "company_type", "fair_value_low", "fair_value_mid", "fair_value_high",
-          "blend_state", "analyst_pool", "methods_used", "excluded_anchors",
-          "caveats"},
+          "schema_version", "record_origin", "ticker", "computed_at",
+          "data_vintage", "company_type", "fair_value_low", "fair_value_mid",
+          "fair_value_high", "blend_state", "analyst_pool", "methods_used",
+          "excluded_anchors", "caveats"},
       detail=str(sorted(_rec.keys())))
+check("1.2b live record defaults record_origin to 'live' (additive, no schema bump)",
+      _rec["record_origin"] == aa.RECORD_ORIGIN_LIVE)
 check("1.3 analyst_pool projected to {median,mean,high,low,n} (as_of dropped)",
       set(_rec["analyst_pool"].keys()) == {"median", "mean", "high", "low", "n"},
       detail=str(_rec["analyst_pool"]))
