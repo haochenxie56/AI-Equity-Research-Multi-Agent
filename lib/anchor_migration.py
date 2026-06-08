@@ -48,8 +48,39 @@ CONS_LOW = "low_consistency"          # lone-anchor drift or disagreement (noise
 CONS_STABLE = "stable"                # all available anchors flat
 CONS_INSUFFICIENT = "insufficient"    # not enough history to read migration
 
+# Mixed-origin caveat (Anchor Intel v2.3 backfill round, B3): the analyst series is
+# computed ONLY over the live-accumulated span — backfilled records carry no analyst
+# pool (the never-fabricate sentinel). When backfill records shorten the analyst
+# span below a readable direction, this is flagged so the readout never pretends the
+# analyst series reaches as far back as the price series.
+CAVEAT_ANALYST_HISTORY_INSUFFICIENT = "analyst_history_insufficient"
+ANALYST_HISTORY_INSUFFICIENT_NOTE = (
+    "分析师历史不足（回填区间无分析师序列） | analyst history insufficient "
+    "(backfilled span carries no analyst series)")
+
+# Record-origin tokens (mirror lib.anchor_archive; inlined to keep compute_migration
+# free of any I/O-module import). A record with no origin key reads as "live".
+_ORIGIN_LIVE = "live"
+_ORIGIN_BACKFILL = "backfill"
+_ANALYST_SENTINEL = "analyst_history_unavailable"
+
 # The anchor series read from each archive record.
 _SERIES_KEYS = ("fair_value_mid", "analyst_median", "analyst_mean")
+
+
+def _origin_of(record: dict) -> str:
+    """Origin of a record (``"live"`` / ``"backfill"``); absent ⇒ ``"live"``."""
+    if not isinstance(record, dict):
+        return _ORIGIN_LIVE
+    return str(record.get("record_origin") or _ORIGIN_LIVE)
+
+
+def _is_backfill(record: dict) -> bool:
+    """A record is backfilled if tagged so OR its analyst_pool is the sentinel."""
+    if not isinstance(record, dict):
+        return False
+    return (_origin_of(record) == _ORIGIN_BACKFILL
+            or record.get("analyst_pool") == _ANALYST_SENTINEL)
 
 
 # ---------------------------------------------------------------------------
@@ -158,6 +189,23 @@ def compute_migration(records: list,
     elif consistency == CONS_LOW:
         caveats.append("lone_anchor_drift")
 
+    # --- Mixed-origin honesty (B3): price anchors span the full backfilled+live
+    # window; the analyst anchor spans ONLY the live-accumulated records (backfill
+    # carries no analyst series). Surface each span honestly and flag when backfill
+    # has shortened the analyst span below a readable direction. ---
+    n_backfill = sum(1 for r in recs if _is_backfill(r))
+    n_live = n_records - n_backfill
+    price_span_n = series["fair_value_mid"]["n"]
+    analyst_span_n = max(series["analyst_median"]["n"], series["analyst_mean"]["n"])
+    analyst_history_available = analyst_span_n >= MIN_RECORDS_FOR_DIRECTION
+    analyst_history_note = ""
+    if n_backfill > 0 and not analyst_history_available and price_span_n >= 1:
+        # Backfill present but the live analyst span is too short to read a
+        # direction — say so rather than imply the analyst series goes back further.
+        if CAVEAT_ANALYST_HISTORY_INSUFFICIENT not in caveats:
+            caveats.append(CAVEAT_ANALYST_HISTORY_INSUFFICIENT)
+        analyst_history_note = ANALYST_HISTORY_INSUFFICIENT_NOTE
+
     return {
         "n_records": n_records,
         "window": int(window) if window else None,
@@ -166,6 +214,12 @@ def compute_migration(records: list,
         "direction": direction,
         "deteriorating": deteriorating,
         "caveats": caveats,
+        # Additive mixed-origin fields (backfill round):
+        "origins": {"live": n_live, "backfill": n_backfill},
+        "price_span_n": price_span_n,
+        "analyst_span_n": analyst_span_n,
+        "analyst_history_available": analyst_history_available,
+        "analyst_history_note": analyst_history_note,
     }
 
 
