@@ -168,7 +168,200 @@ lesson.
 - **Docs:** this file (new); `docs/ai_dev_state/PROJECT_STATE.md`,
   `docs/ai_dev_state/CURRENT_TASK.md` (round-1 closure entries).
 
-## Pending — rounds v2.2–v2.5
+## Round v2.3 — anchor historization (fix round applied — awaiting re-review)
+
+> **Round-1 lesson applied first.** Historization is again an *access-path*
+> problem: the same anchor value must be (a) read read-only on the network-free
+> ranking/refresh path, (b) written to an append-only archive ONLY on page paths,
+> and (c) read read-only from the archive by migration consumers. Skipping the
+> matrix is the documented cause of the prior fix rounds, so the matrix below is
+> committed BEFORE any code (STEP 0).
+
+### STEP 0 — caller-contract matrix (audited against the real call sites)
+
+Every call site that touches `anchor_cache` or `compute_app_fair_value` was
+audited and placed in exactly one row. No caller was left unclassified.
+
+| caller (verified file:line) | reads anchor from | writes archive | live network |
+|---|---|---|---|
+| `pages/4_Equity.py:668,877` (compute) → `:748,855,891,900` (`store_equity_research_result`) | live compute (`compute_app_fair_value`, fetcher passed) | **YES** (append at the producer chokepoint, on the `compute_app_fair_value` call) | allowed |
+| `pages/7_Investment_Cockpit.py::_run_equity_research` `:394` (compute) → `:404` (store) | live compute (fetcher passed) | **YES** (append at the producer chokepoint) | allowed |
+| `pages/9_Trading_Desk.py:295,336` → `order_advisor.compute_price_levels(allow_fetch=True)` → `_gather_technicals:1422` → `compute_app_fair_value` | live compute (fetcher passed) | **YES** (append at the producer chokepoint) — **F1 correction:** pages/9 live-computes its OWN `AppFairValue` and never calls `store_equity_research_result`, so the earlier "originates from pages/4/7" claim was FALSE; it IS a write path | allowed (`allow_fetch=True`) |
+| `pages/7_Investment_Cockpit.py::_run_refresh` `:267` → `rank_opportunities(anchor_cache=…)` `:328` → `compute_price_levels` (default `allow_fetch=False`) | `anchor_cache` hot cache ONLY (`load_all`, read-only) | **NO** (read-only) | **FORBIDDEN** (`allow_fetch=False`, already enforced X1) |
+| `lib/opportunity_ranker.rank_opportunities` (default `price_levels_fn`) | `anchor_cache` map passed in (read-only) | **NO** | **FORBIDDEN** (never passes `allow_fetch`) |
+| `lib/thesis_monitor.check_holding` / `run_thesis_monitor` (v2.3 NEW consumer) | archive (`anchor_archive.read_archive`, historical series) — read-only | **NO** | **FORBIDDEN** (no compute, no fetch) |
+
+Derived invariants (all enforced by tests):
+
+1. **Archive write only where `allow_fetch=True` — at the producer chokepoint.** The
+   single archive-append site is `equity_valuation.compute_app_fair_value` itself
+   (appended on its live return). Per X1 this producer is invoked ONLY on
+   `allow_fetch=True` page paths — pages/4, pages/7 `_run_equity_research`, AND
+   pages/9 via `order_advisor._gather_technicals` — so ALL three page paths are
+   historized by one hook, while the ranking / `_run_refresh` path (which consumes
+   `anchor_cache` and never calls the producer) appends NOTHING. **F1 fix:** the
+   append was moved here from `store_equity_research_result`, which the Trading Desk
+   (pages/9) never calls — the prior chokepoint silently dropped every pages/9 live
+   anchor from history. Only `data_source == "live"` results are historized (a
+   fixture fallback is never written), and identical `(ticker, computed_at)`
+   re-reads from the cached worker are deduped (a cache re-surfacing of one vintage,
+   not a new valuation); a genuine recompute carries a fresh `computed_at` and IS
+   appended (append-only keeps real vintages). **Dedup decision:** append-only
+   favors keeping distinct vintages, but the cached worker re-surfaces the SAME
+   `computed_at` when one ticker is valued twice in a session (pages/4 then pages/9),
+   which would double-count one vintage in the migration series — so identical
+   `(ticker, computed_at)` is intentionally deduped, not accidentally duplicated.
+2. **Append-only.** Archive records are never rewritten or mutated in place
+   (mirrors git's no-rewrite-published-history rule). Only appends.
+3. **Cold ranking = zero archive writes + zero network.** Extends the v2 §13
+   transitive harness.
+4. **Snapshot anchor block is single-vintage and read-only.** Sourced from the
+   SAME `anchor_cache` read that drove the LONG status (no live compute); a ticker
+   with no cached anchor records `anchor_not_cached` (the R3 token), never a
+   fabricated value.
+5. **Migration consumers read the archive only.** `thesis_monitor` reads the
+   migration readout; it never triggers a compute or fetch, and a deteriorating
+   migration may ELEVATE a watch annotation but never auto-generates a sell/exit
+   (review-only invariant; mirrors the D2 fragility annotation).
+
+### U1 — append-only anchor archive (`lib/anchor_archive.py`)
+
+- New module mirroring `lib/anchor_cache.py` + the daily-snapshot atomic pattern:
+  append-only JSONL at `data/anchor_archive.jsonl`. `anchor_cache.json` stays the
+  hot "latest" cache (unchanged role).
+- `ANCHOR_ARCHIVE_SCHEMA_VERSION = 1` (one visible constant; read-time version
+  guard skips records of any other version → forward-migration safe).
+- Record schema: `{schema_version, ticker, computed_at, data_vintage,
+  company_type, fair_value_low, fair_value_mid, fair_value_high, blend_state,
+  analyst_pool{median,mean,high,low,n}, methods_used, excluded_anchors, caveats}`.
+  `data_vintage` is the date (`YYYY-MM-DD`) of the page-path compute, defaulted
+  from `AppFairValue.computed_at` (the free-source snapshot is same-day); an
+  explicit override is accepted for future precision. This is a documented real
+  timestamp, not a fabricated bar-date.
+- API: `record_from_app_fair_value(fv, *, data_vintage="")` (pure),
+  `append_anchor_record(fv, *, data_vintage="", path=None) -> bool` (atomic
+  append, fail-closed, never mutates a prior row), `read_archive(ticker, *,
+  window=None, path=None)` and `load_all_records(path=None)` (read-only).
+- Wired at the **producer chokepoint** `equity_valuation.compute_app_fair_value`
+  (appended on its live return), so all three page paths — pages/4, pages/7
+  `_run_equity_research`, AND pages/9 (Trading Desk, via
+  `order_advisor._gather_technicals`) — are historized by ONE hook (F1). No page
+  signature change. `data_source == "live"` only; identical `(ticker, computed_at)`
+  re-reads deduped.
+
+### U2 — snapshot carries the anchor block
+
+- `anchor_cache` entry now also persists `analyst_pool` (additive in
+  `entry_from_app_fair_value`; **no schema bump** — old v2 entries simply lack it
+  and the snapshot records the pool as absent until rewarmed, which is graceful and
+  avoids wiping the whole cache).
+- `OpportunityCard.anchor_snapshot` (new field) is populated in
+  `rank_opportunities` from the SAME `anchor_cache` lookup that drove LONG status
+  (single vintage): `{company_type, fair_value_mid, analyst_pool{…}, computed_at,
+  blend_state, caveats}` for a fresh entry, else `{"state": "anchor_not_cached"}`.
+- `_card_snapshot_record` serializes it under the `"anchor"` key. PARITY: a
+  §18-style test drives the real ranker → `write_daily_snapshot` → read-back and
+  asserts `anchor.fair_value_mid` / `anchor.computed_at` equal the cache entry that
+  drove the row (fails if they disagree), and `anchor_not_cached` when no entry.
+
+### U3 — deterministic anchor-migration readout (`lib/anchor_migration.py`)
+
+- `MIGRATION_WINDOW_SESSIONS = 30` (single visible config block). Pure,
+  deterministic, no LLM, no I/O in the compute (`compute_migration(records,
+  window=…)`); a thin `read_migration(ticker, …)` reads the archive read-only then
+  computes.
+- Per anchor series (`fair_value_mid`, `analyst_pool.median`,
+  `analyst_pool.mean`): `direction` (rising/falling/flat), `speed` (Δ/session),
+  and cross-series `consistency` — multi-anchor co-movement = `conviction`;
+  lone-anchor drift = `low_consistency` (flagged). This is the data source for
+  thesis_monitor's "logic break vs price noise" distinction.
+- `thesis_monitor.check_holding` consumes the readout READ-ONLY of the archive:
+  new fields `anchor_migration` / `anchor_migration_watch` / `anchor_migration_note`
+  (mirrors the D2 fragility annotation). A systematic falling analyst-pool downshift
+  (`falling` + `conviction`) ELEVATES a watch note (surfaced in `summary`); it
+  NEVER changes `thesis_status` and NEVER emits a sell/exit. No new LONG/exit logic.
+
+### R8 residue cleanup
+
+With the archive in place the read paths are coherent: ranking/refresh reads
+`anchor_cache` (hot) read-only with `allow_fetch=False`; migration consumers read
+the archive read-only. No path is both forbidden-to-fetch and writing-archive (the
+archive write lives only on the `allow_fetch=True` page chokepoint).
+
+### Known operational characteristic — archive read cost (F4, document-only)
+
+`anchor_archive._iter_records` reads the **entire** archive (`read_text`) and
+filters by ticker/window only afterward, so every `read_migration` /
+`read_archive` call is **O(total archive bytes)** in time and memory. This is
+accepted for now: the archive starts empty and grows by one short JSONL line per
+page-path live valuation (a few hundred bytes), so reads are negligible at current
+scale. The F1 append-dedup does **not** amplify this — it is an O(1) in-process
+memo and never reads the archive on the page path.
+
+**Must-fix trigger (either):**
+- the archive file exceeds **~5 MB** (≈ tens of thousands of valuation rows), OR
+- the thesis-monitor refresh shows **perceptible latency attributable to archive
+  reads** (a rule of thumb: > ~200 ms of a `check_holding` batch spent in
+  `_iter_records`).
+
+**Planned remedy (target round v2.4):** per-ticker sharding
+(`data/anchor_archive/<TICKER>.jsonl`, so a read touches only one ticker's bytes),
+OR a window-bounded reverse/tail read that stops after the most-recent N records,
+OR a small ticker→byte-offset index. Sharding is the leading candidate (it also
+bounds the dedup-memo growth and keeps the append atomic). Not implemented this
+round — recorded here so the cost is intentional with a concrete repayment plan,
+not a silent debt.
+
+### Fix round (REQUEST CHANGES — F1–F4)
+
+- **F1 (P1)** — archive every page-path live anchor. Moved the append from
+  `store_equity_research_result` to the producer chokepoint
+  `compute_app_fair_value`, so pages/4, pages/7 AND **pages/9** (Trading Desk, which
+  never calls the hand-off) are all historized by one hook; `data_source=="live"`
+  only; identical `(ticker, computed_at)` deduped (in-process O(1)). Matrix
+  corrected (pages/9 IS a write path). Dedup decision documented (keep distinct
+  vintages, collapse same-vintage cache re-reads).
+- **F2 (P1)** — surfaced the migration note: `thesis_monitor._summary()` appends the
+  bilingual note when deteriorating, and the Trading Desk order card renders it.
+  Watch-level only — `thesis_status` unchanged, no sell/exit.
+- **F3 (P2)** — §7 parity now asserts source-equality for ALL block fields
+  (`fair_value_mid`, `computed_at`, `analyst_pool`, **`company_type`,
+  `blend_state`, `caveats`**) vs the `anchor_cache` source, plus a binding/exclusion
+  completeness partition over `ANCHOR_SNAPSHOT_KEYS` (mirrors §18).
+- **F4 (P2)** — documented above (archive read is O(total bytes); trigger + remedy +
+  target round v2.4); not implemented this round.
+
+### Results
+
+- **New suite** `scripts/test_reliability_anchor_archive.py` — **47 → 59** (fix
+  round): U1 record/append-only/schema-guard; **F1** producer-chokepoint archive
+  incl. the REAL pages/9 `compute_price_levels(allow_fetch=True)` path + dedup +
+  fixture-not-archived + store-no-longer-writes; U3 migration determinism + read-only
+  thesis consumption; **F2** summary surfacing + Trading-Desk binding; U2 + **F3**
+  full snapshot-block parity + binding/exclusion completeness.
+- **`scripts/test_reliability_phase_6c_v3_entry_v4.py`** grew **90 → 92** (§13.10 /
+  §13.11): a cold `rank_opportunities` run appends **ZERO** archive records AND
+  makes **ZERO** network calls — the real-path DoD guarding the page-path-only
+  archive write.
+- Suites exercising the change are green: `valuation_stopbleed`,
+  `phase_7a_opportunity_ranking` (115/115), `phase_7b_rotation_internals`
+  (193/193 — its §18 `_meta` parity is unaffected; the new `anchor` field is on the
+  per-card record, and its parity lives in the new suite §7), `phase_6c_*`,
+  `valuation_router`, `phase_6c_b_cockpit_rebuild` (47/47).
+- The 13 red suites in the full `test_reliability_*` sweep are **pre-existing and
+  orthogonal** — proven by stashing the v2.3 tracked edits and re-running: the
+  identical 13 (CURRENT_TASK doc-state, page-file existence, sidebar nav,
+  `signal_engine`/`llm_orchestrator`, Streamlit AppTest `url_pathname`) fail on the
+  base commit `f6a930b` with identical counts. The v2.3 diff touches none of those
+  files.
+- `.gitattributes` keeps LF (`git diff --check` clean); `lib/macro_regime.py`
+  untouched; i18n additive (the migration watch note is a bilingual inline string
+  mirroring the D2 fragility annotation — no `TRANSLATIONS` change).
+- New degradation state: none — `anchor_not_cached` is the existing R3 honest-degrade
+  token, reused for the snapshot block.
+
+## Pending — rounds v2.4–v2.5
 
 Not started. Scope to be specified when each round opens. Round 1 establishes the
-single-producer / structured-pool / epoch foundation those rounds build on.
+single-producer / structured-pool / epoch foundation those rounds build on; v2.3
+adds the append-only historical series + migration readout.

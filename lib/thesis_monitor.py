@@ -83,6 +83,15 @@ class ThesisCheckResult:
     fragility_level: str = "normal"
     fragility_watch: bool = False
     fragility_note: str = ""
+    # --- D3. anchor-migration watch (Anchor Intel v2.3 U3) — a WATCH-level
+    #         annotation read READ-ONLY from the append-only anchor archive
+    #         (``lib.anchor_migration``). Like D2 it NEVER changes ``thesis_status``
+    #         and NEVER emits a sell/exit; a conviction-grade analyst-pool DOWNSHIFT
+    #         (the deterministic "logic break vs price noise" signal) only ELEVATES a
+    #         watch note. ``anchor_migration`` carries the full deterministic readout.
+    anchor_migration: Optional[dict] = None
+    anchor_migration_watch: bool = False
+    anchor_migration_note: str = ""
     # --- derived ---
     thesis_status: str = "intact"  # intact|watch|weakening|broken
     price_vs_entry: float = 0.0  # (current / cost_basis - 1) * 100
@@ -441,6 +450,12 @@ def _summary(result: "ThesisCheckResult") -> str:
         parts.append("technical: " + ", ".join(result.technical_breakdown_reasons))
     if result.macro_regime_flag:
         parts.append("macro headwind")
+    # D3 (Anchor Intel v2.3 F2) — surface the anchor-migration watch in the summary
+    # (watch-level annotation; mirrors the D2 fragility note). It does NOT change
+    # thesis_status; it only adds a visible note when the analyst-pool downshift is
+    # conviction-grade (deteriorating).
+    if result.anchor_migration_watch and result.anchor_migration_note:
+        parts.append(result.anchor_migration_note)
     return "; ".join(parts) + "."
 
 
@@ -454,6 +469,26 @@ def _fragility_annotation(level: str) -> tuple:
     if lvl == "elevated":
         return False, ("市场内部结构转弱（关注） | Market internals fragility "
                        "elevated (watch)")
+    return False, ""
+
+
+def _anchor_migration_annotation(migration) -> tuple:
+    """(anchor_migration_watch, bilingual note) from a migration readout.
+
+    Annotation only — NEVER touches ``thesis_status`` and NEVER emits a sell/exit
+    (review-only invariant, mirrors :func:`_fragility_annotation`). The watch fires
+    ONLY on a conviction-grade analyst-pool DOWNSHIFT (``deteriorating`` — falling
+    direction with multi-anchor co-movement), the deterministic "logic break, not
+    price noise" signal. A lone-anchor drift (``low_consistency``) is noise and is
+    deliberately NOT elevated. Fail-closed: a non-readout / unreadable migration
+    yields no watch.
+    """
+    if not isinstance(migration, dict):
+        return False, ""
+    if migration.get("deteriorating") is True:
+        return True, ("估值锚系统性下移（分析师目标价一致走低）——关注论点恶化 | "
+                      "Valuation anchor downshifting systematically "
+                      "(analyst targets falling in unison) — watch thesis erosion")
     return False, ""
 
 
@@ -534,6 +569,19 @@ def check_holding(holding, macro_result=None, regime: Optional[str] = None,
     result.fragility_level = str(fragility_level or "normal")
     result.fragility_watch = fw
     result.fragility_note = fnote
+    # D3 — anchor-migration annotation (Anchor Intel v2.3 U3). READ-ONLY of the
+    # append-only archive: no compute, no fetch (matrix row 3). Watch-level only —
+    # ``thesis_status`` is NOT touched and no sell/exit is emitted. Fail-closed.
+    try:
+        from lib.anchor_migration import read_migration
+
+        migration = read_migration(ticker)
+    except Exception:  # noqa: BLE001 — fail-closed; no migration readout
+        migration = None
+    amw, amnote = _anchor_migration_annotation(migration)
+    result.anchor_migration = migration
+    result.anchor_migration_watch = amw
+    result.anchor_migration_note = amnote
     result.summary = _summary(result)
     return result
 

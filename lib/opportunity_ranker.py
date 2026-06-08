@@ -36,6 +36,40 @@ except Exception:  # noqa: BLE001 — degrade to "no cache enrichment"
     def _anchor_age_days(entry, now=None):  # type: ignore
         return None
 
+
+# Canonical key set of the FRESH snapshot anchor block (Anchor Intel v2.3 U2).
+# Exported so the §18-style parity test derives the expected fields from the CODE
+# (a field added here must be classified by the parity assertion, never silently).
+ANCHOR_SNAPSHOT_KEYS = (
+    "company_type", "fair_value_mid", "analyst_pool",
+    "computed_at", "blend_state", "caveats",
+)
+# Honest-degrade token (shared with the R3 LONG-path contract): a ranking-path row
+# with no fresh cached anchor records this state, never a fabricated value.
+ANCHOR_NOT_CACHED = "anchor_not_cached"
+
+
+def _anchor_snapshot_block(entry: Optional[dict], fresh: bool) -> dict:
+    """Build the per-card snapshot anchor block from a cached entry (read-only).
+
+    ``fresh`` is the SAME freshness decision that gated the LONG-status band, so
+    the block is single-vintage with the status it accompanies. A non-fresh /
+    missing entry yields ``{"state": ANCHOR_NOT_CACHED}`` — the honest-degrade
+    contract (no fabricated anchor on the network-free path). Pure; never raises.
+    """
+    if not fresh or not isinstance(entry, dict):
+        return {"state": ANCHOR_NOT_CACHED}
+    pool = entry.get("analyst_pool")
+    return {
+        "company_type": str(entry.get("company_type", "") or ""),
+        "fair_value_mid": entry.get("fair_value_mid"),
+        "analyst_pool": pool if isinstance(pool, dict) else None,
+        "computed_at": str(entry.get("computed_at", "") or ""),
+        "blend_state": str(entry.get("blend_state", "") or ""),
+        "caveats": list(entry.get("caveats", []) or []),
+    }
+
+
 # ===========================================================================
 # Visible config block (calibration baseline — keep all tunables here)
 # ===========================================================================
@@ -229,6 +263,13 @@ class OpportunityCard:
     # the prior "Research Required / valuation anchor not established" behavior).
     # Lets future review assess the staleness impact of cache-driven LONG status.
     anchor_age_days: Optional[float] = None
+    # Structured anchor block (Anchor Intel v2.3 U2) for the daily snapshot. Sourced
+    # read-only from the SAME anchor_cache lookup that drove the LONG status (single
+    # vintage; no live compute on this network-free path). A fresh cached entry →
+    # {company_type, fair_value_mid, analyst_pool{…}, computed_at, blend_state,
+    # caveats}; no fresh entry → {"state": "anchor_not_cached"} (the R3 honest-
+    # degrade token, never a fabricated value).
+    anchor_snapshot: Optional[dict] = None
     # optional LLM polish (language only; never alters judgments/numbers)
     why_now_polished_en: str = ""
     why_now_polished_zh: str = ""
@@ -1157,6 +1198,17 @@ def rank_opportunities(candidates, *, macro_regime: str = "unknown",
                 card.why_now = wn
         card.enriched = True
 
+    # ---- anchor snapshot block (Anchor Intel v2.3 U2): stamp EVERY card from the
+    # SAME read-only anchor_cache (network-free dict lookups) using the IDENTICAL
+    # freshness decision the top-N LONG status used, so the snapshot's anchor block
+    # is single-vintage with the status it accompanies. No fresh entry → an honest
+    # ``anchor_not_cached`` state, never a fabricated value.
+    for card in cards:
+        _e = _anchor_cache.get(card.ticker) if _anchor_cache else None
+        _fresh = bool(_e is not None and _anchor_is_fresh(
+            _e, anchor_staleness_days, now=_anchor_now))
+        card.anchor_snapshot = _anchor_snapshot_block(_e, _fresh)
+
     # ---- reason-code display hygiene: demote over-common codes (Task 2) ----
     filter_common_reasons(cards, "why_now")
     filter_common_reasons(cards, "why_it_matters")
@@ -1271,6 +1323,10 @@ def _card_snapshot_record(card: OpportunityCard, date_str: str,
         # Cache-anchor staleness (stop-bleed): age in days of the cached anchor
         # that drove the LONG status, or null when none was used.
         "anchor_age_days": card.anchor_age_days,
+        # Structured anchor block (Anchor Intel v2.3 U2): single-vintage with the
+        # LONG status above; {company_type, fair_value_mid, analyst_pool, …} for a
+        # fresh cached anchor, else {"state": "anchor_not_cached"}.
+        "anchor": card.anchor_snapshot or {"state": ANCHOR_NOT_CACHED},
         "blockers": [b.to_dict() if hasattr(b, "to_dict") else b for b in card.blockers],
         "why_now": [r.code if hasattr(r, "code") else r for r in card.why_now],
         "why_it_matters": [r.code if hasattr(r, "code") else r for r in card.why_it_matters],

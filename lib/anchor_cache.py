@@ -213,6 +213,26 @@ def write_anchor(ticker: str, entry: dict, path: Optional[Path] = None) -> bool:
         return False
 
 
+def _project_pool(pool) -> Optional[dict]:
+    """Project an analyst pool to the ``{median,mean,high,low,n}`` subset, else None.
+
+    Pure; mirrors ``lib.anchor_archive._project_analyst_pool`` so the hot-cache
+    entry and the archive record carry an identical pool shape. ``None`` for a
+    ticker without analyst coverage.
+    """
+    if not isinstance(pool, dict):
+        return None
+    out = {}
+    for k in ("median", "mean", "high", "low"):
+        v = pool.get(k)
+        out[k] = float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+    try:
+        out["n"] = int(pool.get("n") or 0)
+    except (TypeError, ValueError):
+        out["n"] = 0
+    return out
+
+
 def entry_from_app_fair_value(fv) -> dict:
     """Build a cache entry dict from an :class:`lib.equity_valuation.AppFairValue`.
 
@@ -227,6 +247,11 @@ def entry_from_app_fair_value(fv) -> dict:
         "confidence": str(g("confidence", "low") or "low"),
         "relative_basis": str(g("relative_basis", "") or ""),
         "peer_pe_basis": str(g("peer_pe_basis", "") or ""),
+        # Structured analyst pool (Anchor Intel v2.3 U2) — persisted so the
+        # network-free ranking path can stamp it into the daily snapshot's anchor
+        # block without a live compute. Additive (no schema bump): a pre-v2.3 entry
+        # simply lacks it and the snapshot records the pool as absent until rewarmed.
+        "analyst_pool": _project_pool(g("analyst_pool", None)),
         # Method-router fields (schema v2). Carried transparently for review /
         # the Cockpit LONG enrichment; the LONG band consumer still reads only
         # the fair_value_low/mid/high + blend_state below.
