@@ -770,6 +770,32 @@ check("13.5 X1 direct cold LONG: fair_value_source 'anchor_not_cached' + anchor 
 check("13.6 X1 direct cold path also touched no producer/network surface",
       _net_calls["n"] == 0, detail=str(_net_calls["n"]))
 
+# 13.7-13.9 (R3 review): the MISSING-OHLCV cold branch. 13.4-13.6 above exercised a
+# VALID cached OHLCV frame, where ``_gather_technicals`` natively leaves
+# ``fair_value_anchor`` None on the allow_fetch=False path. Here ``load_ohlcv``
+# returns None, so ``_gather_technicals`` falls back to its ``_fixture`` dict — which
+# seeds a BACK-COMPUTED ``fair_value_anchor=cp*0.85`` (=85.0) to keep the *technical*
+# logic well-formed. Under ``anchor_not_cached`` that fabricated scalar MUST be
+# cleared to None (never-fabricate-a-number); leaving it was the P1 R3 flagged. Same
+# fail-closed allow_fetch default; every producer/network surface still raises.
+with mock.patch("ui_utils.load_ohlcv", return_value=None), \
+        mock.patch.object(eqv, "compute_app_fair_value", side_effect=_boom), \
+        mock.patch.object(eqv, "fetch_cyclical_band_history", side_effect=_boom), \
+        mock.patch.object(eqv, "_fetch_raw", side_effect=_boom), \
+        _patched_portfolio([]):
+    _x1_pl_no = oa.compute_price_levels("COLDX", None, horizon="long",
+                                        valuation_percentile=0.3)
+check("13.7 X1 missing-OHLCV cold LONG: fair_value_source 'anchor_not_cached'",
+      _x1_pl_no.fair_value_source == "anchor_not_cached",
+      detail=str(_x1_pl_no.fair_value_source))
+check("13.8 X1 missing-OHLCV cold LONG: fair_value_anchor None (no cp*0.85 proxy leak)",
+      _x1_pl_no.fair_value_anchor is None,
+      detail=str(_x1_pl_no.fair_value_anchor))
+check("13.9 X1 missing-OHLCV cold LONG: honest degrade (no zone, wait) + zero network",
+      _x1_pl_no.entry_zone_low is None and _x1_pl_no.action == "wait"
+      and _net_calls["n"] == 0,
+      detail=f"{_x1_pl_no.action}/{_x1_pl_no.entry_zone_low}/net={_net_calls['n']}")
+
 
 # ---------------------------------------------------------------------------
 # Section 14 — Anchor Intelligence v2 r2 (X2 / R1+R3): no caller can poison the

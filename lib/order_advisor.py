@@ -1284,6 +1284,13 @@ def compute_price_levels(
     if not allow_fetch and band is None:
         tech["valuation_unreliable"] = True
         tech["anchor_not_cached"] = True
+        # R3 (review): a missing anchor must be None, never a back-computed proxy.
+        # When OHLCV is unavailable on the cold path ``_gather_technicals`` returns
+        # the ``_fixture`` dict, which seeds ``fair_value_anchor=cp*0.85`` so the
+        # *technical* logic stays well-formed. That fabricated scalar must NOT ride
+        # through under ``anchor_not_cached`` — clear it explicitly so the honest
+        # degrade contract holds (anchor None, no zone, valuation_unreliable, token).
+        tech["fair_value_anchor"] = None
 
     # The locally-computed AppFairValue can itself be irreconcilable (its
     # inter-method dispersion gate collapsed the band); that likewise degrades the
