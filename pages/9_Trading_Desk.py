@@ -299,6 +299,7 @@ def _refresh(active_holdings, force: bool = False) -> None:
                     eps_revision_direction=(
                         getattr(chk, "eps_revision_direction", "unknown") if chk else "unknown"
                     ),
+                    allow_fetch=True,  # X1: Trading Desk is a page path (network allowed)
                 )
                 narrative = generate_order_narrative(h, levels, chk, regime, lang)
                 order_recs[h.id] = {"levels": levels, "narrative": narrative}
@@ -338,6 +339,7 @@ def _refresh(active_holdings, force: bool = False) -> None:
                     horizon=_dominant_horizon(s),
                     eps_revision_direction=str(s.get("eps_revision_direction", "unknown") or "unknown"),
                     valuation_percentile=_as_float(s.get("valuation_percentile"), 0.5),
+                    allow_fetch=True,  # X1: Trading Desk is a page path (network allowed)
                 )
             except Exception:  # noqa: BLE001 — fail-closed; skip this candidate
                 continue

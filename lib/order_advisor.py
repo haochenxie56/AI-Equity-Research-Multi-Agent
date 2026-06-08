@@ -772,6 +772,22 @@ def _compute_initiate_logic(horizon: str, tech: dict) -> dict:
             risk_note=_RISK_NOTE_LONG,
         )
 
+    # X3 (fix round 2): when an external/session band drove the card it is the
+    # SINGLE source (F2). If we reach here with an external band set, the ``app_fv``
+    # branch above could not form a usable margin-of-safety band (e.g. no
+    # conservative floor / ``fair_value_low``). Rather than silently fall back to the
+    # LOCAL ``fva_obj`` (the documented leak — confidence / conservative / anchor all
+    # read from the local instance while the card claims the external band), degrade
+    # to the technical-only reference so ZERO anchor-derived fields are read from the
+    # local instance when an external band is present.
+    if tech.get("external_band") is not None:
+        stop = _long_stop(cp, sma200, atr)
+        return _logic(
+            "wait", stop=stop, sizing=_SIZE_REASSESS,
+            reason=_LONG_DEGRADE_REASON, next_trigger=_LONG_DEGRADE_TRIGGER,
+            risk_note=_RISK_NOTE_LONG,
+        )
+
     # long — three-tier valuation-confidence margin-of-safety band (Entry v4).
     fva_obj = tech.get("fva_obj")
     confidence = getattr(fva_obj, "confidence", "low") if fva_obj is not None else "low"
@@ -1144,6 +1160,7 @@ def compute_price_levels(
     valuation_percentile: float = 0.5,
     scenario: str = "initiate",
     app_fair_value: Optional[dict] = None,
+    allow_fetch: bool = False,
 ) -> PriceLevelResult:
     """Compute the horizon-native, scenario-aware entry strategy for ``ticker``.
 
@@ -1155,6 +1172,20 @@ def compute_price_levels(
     (stop-vs-zone sanity, entry_status, risk_reward_ratio). Fail-closed: on any
     data failure a well-formed ``data_source="fixture"`` result is returned.
     ``approved_for_execution`` is ALWAYS ``False``.
+
+    **Anchor Intel v2 r2 (X1 — fail-closed network discipline):** ``allow_fetch``
+    distinguishes the two caller classes and DEFAULTS to ``False`` (fail-closed):
+
+    * Page paths (the Trading Desk — ``pages/9`` — and ``build_order_recommendation``)
+      pass ``allow_fetch=True``; ``_gather_technicals`` may then live-compute the
+      unified fair value (``compute_app_fair_value`` WITH the cyclical band fetcher).
+    * The ranking / Cockpit-refresh path (``opportunity_ranker.rank_opportunities``)
+      does NOT pass it, so it stays ``False``: ``_gather_technicals`` NEVER reaches a
+      live ``compute_app_fair_value`` / ``fetch_cyclical_band_history``. On that path
+      the fair value comes ONLY from a cached anchor band handed in via
+      ``app_fair_value``; when none is cached the LONG entry degrades honestly
+      (``fair_value_source="anchor_not_cached"``, no zone) rather than fabricating a
+      ``current_price``-derived proxy.
     """
     ticker = (ticker or "").upper().strip()
     cost_basis = _finite(getattr(holding, "cost_basis", None))
@@ -1172,7 +1203,7 @@ def compute_price_levels(
     else:
         scenario = "initiate"
 
-    tech = _gather_technicals(ticker, hz, vp)
+    tech = _gather_technicals(ticker, hz, vp, allow_fetch=allow_fetch)
     cp = tech["current_price"]
 
     # --- Step 0 (cont.) — App-computed fair value (Phase 6C-B + stop-bleed) -
@@ -1241,12 +1272,31 @@ def compute_price_levels(
                 if _band_epoch:
                     tech["fair_value_computed_at"] = _band_epoch
 
+    # X1 (R8): on the network-free ranking / Cockpit-refresh path
+    # (``allow_fetch=False``) the fair value can come ONLY from a cached anchor band
+    # handed in via ``app_fair_value``. When none was cached (cold cache) there is no
+    # anchor to build a LONG margin-of-safety zone from — and we MUST NOT live-compute
+    # one here (that would be the R8 network violation). Degrade honestly: flag the
+    # LONG path AND record the provenance so the card reads ``anchor_not_cached``,
+    # never a fabricated ``current_price``-derived proxy. (The page paths set
+    # ``allow_fetch=True`` and have already live-computed ``fva_obj`` above, so this
+    # never fires for them.)
+    if not allow_fetch and band is None:
+        tech["valuation_unreliable"] = True
+        tech["anchor_not_cached"] = True
+
     # The locally-computed AppFairValue can itself be irreconcilable (its
     # inter-method dispersion gate collapsed the band); that likewise degrades the
-    # LONG entry to a technical-only reference.
-    _fva_obj = tech.get("fva_obj")
-    if str(getattr(_fva_obj, "blend_state", "") or "") == "anchors_irreconcilable":
-        tech["valuation_unreliable"] = True
+    # LONG entry to a technical-only reference. X3 (fix round 2): this LOCAL signal
+    # may degrade the card ONLY when NO external/session band drives it. When an
+    # external band is present it is the SINGLE source (F2) — a healthy external band
+    # must NOT be degraded by a stale / irreconcilable LOCAL instance (the inverse
+    # leak the prior round missed: §11 only covered irreconcilable-external + healthy
+    # -local, never healthy-external + irreconcilable-local).
+    if tech.get("external_band") is None:
+        _fva_obj = tech.get("fva_obj")
+        if str(getattr(_fva_obj, "blend_state", "") or "") == "anchors_irreconcilable":
+            tech["valuation_unreliable"] = True
 
     # --- Step 0 (cont.) — Portfolio context (fail-closed; cost-free proxy) -
     portfolio = _gather_portfolio(ticker, cp, holding, shares)
@@ -1292,12 +1342,23 @@ def compute_price_levels(
     return _assemble(ticker, scenario, hz, cost_basis, tech, logic, portfolio, overlay)
 
 
-def _gather_technicals(ticker: str, hz: str, valuation_percentile: float) -> dict:
+def _gather_technicals(ticker: str, hz: str, valuation_percentile: float,
+                       *, allow_fetch: bool = False) -> dict:
     """Fetch the technical snapshot + fair-value anchor (Step 0). Fail-closed.
 
     On any failure returns a deterministic fixture dict (``data_source="fixture"``)
     seeded with a ~$100 price proxy and a ~3% ATR so the downstream logic still
     produces a well-formed result.
+
+    **Anchor Intel v2 r2 (X1):** the OHLCV / technical snapshot is always loaded
+    from the local cache (network-free). The fair-value producer
+    (``compute_app_fair_value``), however, performs a live ``_fetch_raw`` (and, with
+    the cyclical fetcher, a multi-year price fetch). It is therefore invoked ONLY
+    when ``allow_fetch`` is ``True`` (the page paths). On the ranking / Cockpit
+    -refresh path (``allow_fetch=False``) it is NEVER imported or called: there is no
+    live ``fva_obj`` and no fabricated proxy (``fair_value_anchor=None``); the fair
+    value, if any, arrives via the cached ``app_fair_value`` band in
+    ``compute_price_levels``.
     """
     def _fixture(cp: float = 100.0) -> dict:
         atr = round(cp * 0.03, 2)
@@ -1315,9 +1376,6 @@ def _gather_technicals(ticker: str, hz: str, valuation_percentile: float) -> dic
     try:
         from ui_utils import load_ohlcv
         from lib.technical import snapshot
-        from lib.equity_valuation import (
-            compute_app_fair_value, fetch_cyclical_band_history,
-        )
 
         df = load_ohlcv(ticker, "6mo")
         if df is None or len(df) < 30:
@@ -1332,25 +1390,35 @@ def _gather_technicals(ticker: str, hz: str, valuation_percentile: float) -> dic
             atr = round(cp * 0.03, 2)
         vol_ratio = _finite(snap.get("Vol_ratio_20d"))
         supports, resistances = _significant_levels(df)
-        # Anchor Intelligence v2 (U1 + r2/F1): the SINGLE fair-value producer is
-        # lib.equity_valuation.compute_app_fair_value (AppFairValue). This is the
-        # Trading-Desk page-path call site — a page path, so the cyclical band
-        # fetch is permitted here; we pass ``cyclical_history_fetcher`` so that when
-        # THIS surface is the first writer of the shared cache entry the band is
-        # still cyclical-capable (the fetcher is an underscore-prefixed param on the
-        # cached worker, so it is excluded from the cache key — the Equity page and
-        # the Trading Desk therefore share one instance + one epoch per ticker). The
-        # ranking / Cockpit refresh paths never call this function (they consume
-        # lib.anchor_cache), so they stay network-free.
+        # Anchor Intelligence v2 (U1 + r2/F1 + X1): the SINGLE fair-value producer is
+        # lib.equity_valuation.compute_app_fair_value (AppFairValue). Calling it does
+        # a live ``_fetch_raw`` (network), so it is gated on ``allow_fetch``:
+        #   * Page paths (allow_fetch=True) — the Trading-Desk page-path call site, a
+        #     page path, so the cyclical band fetch is permitted. We pass
+        #     ``cyclical_history_fetcher`` so that when THIS surface is the first
+        #     writer of the shared cache entry the band is still cyclical-capable (the
+        #     fetcher is an underscore-prefixed param on the cached worker, excluded
+        #     from the cache key — the Equity page and the Trading Desk therefore
+        #     share one instance + one epoch per ticker).
+        #   * Ranking / Cockpit-refresh path (allow_fetch=False) — the producer and
+        #     the cyclical fetcher are NEVER imported or invoked here, so the path is
+        #     structurally network-free (R8). ``fva_obj`` stays None and there is NO
+        #     fabricated proxy (``fva`` None -> ``fair_value_anchor`` None); the fair
+        #     value, if any, comes from the cached ``app_fair_value`` band upstream.
         fva_obj = None
-        try:
-            fva_obj = compute_app_fair_value(
-                ticker, cp, cyclical_history_fetcher=fetch_cyclical_band_history)
-            _mid = _finite(getattr(fva_obj, "fair_value_mid", None))
-            fva = _mid if (_mid is not None and _mid > 0) else round(cp * 0.85, 2)
-        except Exception:  # noqa: BLE001 — fail-closed
-            fva_obj = None
-            fva = round(cp * 0.85, 2)
+        fva = None
+        if allow_fetch:
+            from lib.equity_valuation import (
+                compute_app_fair_value, fetch_cyclical_band_history,
+            )
+            try:
+                fva_obj = compute_app_fair_value(
+                    ticker, cp, cyclical_history_fetcher=fetch_cyclical_band_history)
+                _mid = _finite(getattr(fva_obj, "fair_value_mid", None))
+                fva = _mid if (_mid is not None and _mid > 0) else round(cp * 0.85, 2)
+            except Exception:  # noqa: BLE001 — fail-closed
+                fva_obj = None
+                fva = round(cp * 0.85, 2)
         candle = snap.get("candlestick_pattern") or _candlestick_pattern(df)
         return {
             "fva_obj": fva_obj,
@@ -1444,6 +1512,10 @@ def _assemble(ticker: str, scenario: str, hz: str, cost_basis: Optional[float],
     #                        live data (Anchor Intel v2 r2 / C5 rename: was the
     #                        misleading "analyst_proxy" — there is no analyst proxy
     #                        anymore, the value comes from the unified producer).
+    #   * "anchor_not_cached" — Anchor Intel v2 r2 (X1): the network-free ranking /
+    #                        Cockpit-refresh path (allow_fetch=False) found no cached
+    #                        anchor band; the LONG entry degraded honestly rather than
+    #                        live-computing or fabricating a proxy.
     #   * "fixture"        — fail-closed fixture data.
     app_fv = tech.get("app_fair_value")
     if app_fv:
@@ -1451,6 +1523,8 @@ def _assemble(ticker: str, scenario: str, hz: str, cost_basis: Optional[float],
         app_high = app_fv.get("high")
         if app_high is not None and app_high > cp:
             target_price = round(app_high, 2)  # fair_value_high is the upside target
+    elif tech.get("anchor_not_cached"):
+        fair_value_source = "anchor_not_cached"
     elif tech.get("data_source") == _LIVE:
         fair_value_source = "app_fair_value"
     else:
@@ -1918,6 +1992,7 @@ def build_order_recommendation(holding, thesis_check, macro_regime: str = "unkno
         thesis_status=getattr(thesis_check, "thesis_status", "intact"),
         horizon=getattr(holding, "horizon", "mid"),
         eps_revision_direction=getattr(thesis_check, "eps_revision_direction", "unknown"),
+        allow_fetch=True,  # X1: order-recommendation builder is a page/desk path
     )
     narrative = generate_order_narrative(holding, levels, thesis_check, macro_regime, lang)
     return OrderRecommendation(
