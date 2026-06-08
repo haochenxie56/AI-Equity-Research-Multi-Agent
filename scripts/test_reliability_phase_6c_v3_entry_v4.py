@@ -818,6 +818,45 @@ check("13.9 X1 missing-OHLCV ranked card: honest degrade (LONG Research Required
               f"/{_x1_no_cards[0].entry_zone_low if _x1_no_cards else '-'}"
               f"/net={_net_calls['n']}"))
 
+# 13.10-13.11 (Anchor Intel v2.3 U1 real-path DoD): the cold ranking path appends
+# ZERO archive records AND makes ZERO network calls. The archive write lives ONLY on
+# the page-path ``store_equity_research_result`` chokepoint; the transitive ranker
+# (rank_opportunities -> compute_price_levels -> _gather_technicals) must never reach
+# it. Point the archive at a temp path and wrap ``append_anchor_record`` with a
+# counter; BOTH the counter and the on-disk file must stay empty after a cold rank
+# (a non-empty cache would also archive nothing — read-only). Would FAIL if any
+# archive write leaked onto the ranking path.
+import lib.anchor_archive as _aarch  # noqa: E402
+
+_arch_path_v23 = Path(tempfile.mkdtemp()) / "anchor_archive.jsonl"
+_arch_calls_v23 = {"n": 0}
+_real_append_v23 = _aarch.append_anchor_record
+
+
+def _count_append_v23(*a, **k):
+    _arch_calls_v23["n"] += 1
+    return _real_append_v23(*a, **k)
+
+
+_net_calls["n"] = 0
+with mock.patch("ui_utils.load_ohlcv", return_value=_dummy_df()), \
+        mock.patch("lib.technical.snapshot",
+                   return_value=_snap(100.0, sma200=80.0, rsi=50.0, vol_ratio=1.0)), \
+        mock.patch.object(eqv, "compute_app_fair_value", side_effect=_boom), \
+        mock.patch.object(eqv, "fetch_cyclical_band_history", side_effect=_boom), \
+        mock.patch.object(eqv, "_fetch_raw", side_effect=_boom), \
+        mock.patch.object(_aarch, "ANCHOR_ARCHIVE_PATH", _arch_path_v23), \
+        mock.patch.object(_aarch, "append_anchor_record", _count_append_v23):
+    _x1_arch_cards = orr.rank_opportunities(
+        [dict(_x1_cand)], rs_map=_x1_rs, earnings_map={}, top_n=1,
+        anchor_cache={}, today=_x1_today)
+check("13.10 X1 cold ranking appends ZERO archive records (page-path-only write)",
+      _arch_calls_v23["n"] == 0 and not _arch_path_v23.exists(),
+      detail=f"calls={_arch_calls_v23['n']}/exists={_arch_path_v23.exists()}")
+check("13.11 X1 cold ranking with archive guard still network-free + one card",
+      _net_calls["n"] == 0 and len(_x1_arch_cards) == 1,
+      detail=f"net={_net_calls['n']}/cards={len(_x1_arch_cards)}")
+
 
 # ---------------------------------------------------------------------------
 # Section 14 — Anchor Intelligence v2 r2 (X2 / R1+R3): no caller can poison the
