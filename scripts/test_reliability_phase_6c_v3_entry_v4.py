@@ -770,31 +770,53 @@ check("13.5 X1 direct cold LONG: fair_value_source 'anchor_not_cached' + anchor 
 check("13.6 X1 direct cold path also touched no producer/network surface",
       _net_calls["n"] == 0, detail=str(_net_calls["n"]))
 
-# 13.7-13.9 (R3 review): the MISSING-OHLCV cold branch. 13.4-13.6 above exercised a
-# VALID cached OHLCV frame, where ``_gather_technicals`` natively leaves
-# ``fair_value_anchor`` None on the allow_fetch=False path. Here ``load_ohlcv``
-# returns None, so ``_gather_technicals`` falls back to its ``_fixture`` dict — which
-# seeds a BACK-COMPUTED ``fair_value_anchor=cp*0.85`` (=85.0) to keep the *technical*
+# 13.7-13.9 (R3 review, rewritten transitive): the MISSING-OHLCV cold branch driven
+# on the REAL ranker entry point — rank_opportunities -> compute_price_levels ->
+# _gather_technicals — NOT a direct compute_price_levels call. A direct call is the
+# exact structural gap that let the original cold-cache leak slip (the prior
+# §13.4-13.6 direct shape); proving the fabricated-anchor clear only on a direct call
+# would repeat that mistake. Here ``load_ohlcv`` returns None, so
+# ``_gather_technicals`` falls back to its ``_fixture`` dict — which seeds a
+# BACK-COMPUTED ``fair_value_anchor=cp*0.85`` (=85.0, cp=100) to keep the *technical*
 # logic well-formed. Under ``anchor_not_cached`` that fabricated scalar MUST be
-# cleared to None (never-fabricate-a-number); leaving it was the P1 R3 flagged. Same
-# fail-closed allow_fetch default; every producer/network surface still raises.
+# cleared to None (never-fabricate-a-number); leaving it was the P1 R3 flagged.
+# allow_fetch stays at its fail-closed default (the ranker NEVER passes it); every
+# producer/network surface still raises. A thin observer wraps the REAL
+# ``compute_price_levels`` to capture each per-horizon PriceLevelResult for assertion
+# WITHOUT replacing the transitive logic (it delegates to ``_real_cpl``).
+_x1_no_lv: dict = {}
+
+
+def _capture_cpl(*a, **k):  # observe-only: delegates to the REAL transitive path
+    res = _real_cpl(*a, **k)
+    _x1_no_lv[k.get("horizon")] = res
+    return res
+
+
 with mock.patch("ui_utils.load_ohlcv", return_value=None), \
         mock.patch.object(eqv, "compute_app_fair_value", side_effect=_boom), \
         mock.patch.object(eqv, "fetch_cyclical_band_history", side_effect=_boom), \
         mock.patch.object(eqv, "_fetch_raw", side_effect=_boom), \
+        mock.patch.object(oa, "compute_price_levels", _capture_cpl), \
         _patched_portfolio([]):
-    _x1_pl_no = oa.compute_price_levels("COLDX", None, horizon="long",
-                                        valuation_percentile=0.3)
-check("13.7 X1 missing-OHLCV cold LONG: fair_value_source 'anchor_not_cached'",
-      _x1_pl_no.fair_value_source == "anchor_not_cached",
-      detail=str(_x1_pl_no.fair_value_source))
-check("13.8 X1 missing-OHLCV cold LONG: fair_value_anchor None (no cp*0.85 proxy leak)",
-      _x1_pl_no.fair_value_anchor is None,
-      detail=str(_x1_pl_no.fair_value_anchor))
-check("13.9 X1 missing-OHLCV cold LONG: honest degrade (no zone, wait) + zero network",
-      _x1_pl_no.entry_zone_low is None and _x1_pl_no.action == "wait"
+    _x1_no_cards = orr.rank_opportunities(
+        [dict(_x1_cand)], rs_map=_x1_rs, earnings_map={}, top_n=1,
+        anchor_cache={}, today=_x1_today)
+_x1_no_long = _x1_no_lv.get("long")
+check("13.7 X1 missing-OHLCV via rank_opportunities (transitive): LONG fair_value_source 'anchor_not_cached'",
+      _x1_no_long is not None and _x1_no_long.fair_value_source == "anchor_not_cached",
+      detail=str(getattr(_x1_no_long, "fair_value_source", None)))
+check("13.8 X1 missing-OHLCV via rank_opportunities (transitive): LONG fair_value_anchor None (no cp*0.85=85.0 leak)",
+      _x1_no_long is not None and _x1_no_long.fair_value_anchor is None,
+      detail=str(getattr(_x1_no_long, "fair_value_anchor", None)))
+check("13.9 X1 missing-OHLCV ranked card: honest degrade (LONG Research Required, no zone) + zero network",
+      len(_x1_no_cards) == 1
+      and _x1_no_cards[0].status_by_horizon.get("long") == orr.STATUS_RESEARCH
+      and _x1_no_cards[0].entry_zone_low is None
       and _net_calls["n"] == 0,
-      detail=f"{_x1_pl_no.action}/{_x1_pl_no.entry_zone_low}/net={_net_calls['n']}")
+      detail=(f"{_x1_no_cards[0].status_by_horizon.get('long') if _x1_no_cards else 'no-card'}"
+              f"/{_x1_no_cards[0].entry_zone_low if _x1_no_cards else '-'}"
+              f"/net={_net_calls['n']}"))
 
 
 # ---------------------------------------------------------------------------
