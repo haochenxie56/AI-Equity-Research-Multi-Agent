@@ -325,10 +325,9 @@ def read_archive(ticker: str, *, window: Optional[int] = None,
 def backfilled_vintages(ticker: str, *, path: Optional[Path] = None) -> set:
     """Return the set of ``data_vintage`` dates already covered by BACKFILL records.
 
-    The persistent idempotency guard for the offline backfill engine: re-running
-    backfill for a ticker skips any as-of date already present as a
-    ``record_origin == "backfill"`` row. Robust across process restarts (the
-    in-process append memo is not). Read-only; fail-closed → ``set()``.
+    Reports only ``record_origin == "backfill"`` rows. Read-only; fail-closed →
+    ``set()``. (The backfill engine's skip-guard uses :func:`covered_vintages`,
+    which spans BOTH origins; this narrower view remains for diagnostics / tests.)
     """
     tk = (ticker or "").upper().strip()
     if not tk:
@@ -336,4 +335,23 @@ def backfilled_vintages(ticker: str, *, path: Optional[Path] = None) -> set:
     return {str(r.get("data_vintage", "")) for r in _iter_records(path)
             if str(r.get("ticker", "")).upper().strip() == tk
             and record_origin_of(r) == RECORD_ORIGIN_BACKFILL
+            and r.get("data_vintage")}
+
+
+def covered_vintages(ticker: str, *, path: Optional[Path] = None) -> set:
+    """Return ``data_vintage`` dates already covered by ANY-origin records (G2 fix).
+
+    The persistent idempotency guard for the offline backfill engine: re-running
+    backfill skips any as-of date that already has a record of EITHER origin —
+    ``live`` OR ``backfill`` — for the ticker. A real contemporaneous (live) compute
+    for a date must NOT be double-counted by a historical backfill approximation of
+    the SAME date (the end_date seam, where the weekly grid includes today and a
+    live row may already exist): live wins. Robust across process restarts (the
+    in-process append memo is not). Read-only; fail-closed → ``set()``.
+    """
+    tk = (ticker or "").upper().strip()
+    if not tk:
+        return set()
+    return {str(r.get("data_vintage", "")) for r in _iter_records(path)
+            if str(r.get("ticker", "")).upper().strip() == tk
             and r.get("data_vintage")}
