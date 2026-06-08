@@ -1639,6 +1639,18 @@ def store_equity_research_result(
     except Exception:  # noqa: BLE001 — cache write is best-effort
         pass
 
+    # Append-only history write-through (Anchor Intel v2.3 U1). This is the SINGLE
+    # page-path archive chokepoint (this function is called only from pages/4 and
+    # the Cockpit on-demand _run_equity_research — both allow_fetch=True paths). The
+    # ranking / refresh path never calls it, so the archive stays page-path-only.
+    # Append-only + fail-closed; never mutates a prior record, never raises here.
+    try:
+        from lib.anchor_archive import append_anchor_record
+
+        append_anchor_record(fair_value)
+    except Exception:  # noqa: BLE001 — archive write is best-effort
+        pass
+
     try:
         import streamlit as st
 
