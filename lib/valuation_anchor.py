@@ -1,4 +1,20 @@
-"""lib/valuation_anchor.py — Phase 6C-A v2 fair-value anchor (free sources only).
+"""lib/valuation_anchor.py — DEPRECATED independent fair-value anchor.
+
+.. deprecated:: Anchor Intelligence v2 (round 1, U1)
+   This module's independent fair-value computation is **RETIRED from production**.
+   The single fair-value producer is now
+   :func:`lib.equity_valuation.compute_app_fair_value` (returning
+   :class:`lib.equity_valuation.AppFairValue`); ``lib.order_advisor`` consumes that
+   producer directly, so the Trading Desk, Equity page and Investment Cockpit all
+   render from ONE producer + ONE ``st.cache_data`` epoch per ticker. Do NOT call
+   :func:`compute_fair_value_anchor` from any new production code path.
+
+   The module and the :class:`FairValueAnchor` dataclass are retained ONLY because
+   existing test suites still exercise the legacy three-tier contract directly
+   (``scripts/test_reliability_phase_6c_v2_entry_strategy.py``,
+   ``scripts/test_reliability_phase_6c_v3_entry_v4.py`` Section 1, and
+   ``scripts/test_reliability_valuation_stopbleed.py`` Section 3). When those
+   legacy contract tests are eventually removed, delete this module outright.
 
 This module computes a conservative **fair-value anchor** for a ticker, used by
 the LONG-horizon entry logic in ``lib/order_advisor.py`` to size a

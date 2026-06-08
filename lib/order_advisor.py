@@ -6,7 +6,9 @@ recommendation**:
 
 * :func:`compute_price_levels` — PURE CODE (no LLM). From the ``lib.technical``
   snapshot (EMA10 / EMA20 / SMA50 / SMA200 / RSI / ADX / volume / swing
-  support-resistance / candlestick) plus a free :class:`lib.valuation_anchor.FairValueAnchor`
+  support-resistance / candlestick) plus the unified
+  :class:`lib.equity_valuation.AppFairValue` fair-value producer (Anchor Intel v2,
+  U1 — the legacy ``lib.valuation_anchor`` analyst-proxy is retired)
   it derives, per **horizon** (short / mid / long) and **scenario** (initiate vs
   add vs manage), an entry zone, a horizon-differentiated stop-loss level, a
   position-sizing band, an action label, the unmet conditions, the next trigger,
@@ -28,7 +30,7 @@ recommendation**:
   R:R warning, next-trigger note). It invents no numbers.
 
 Guardrails (Phase 6C-A v2): free sources only (yfinance via ``ui_utils.load_ohlcv``
-and ``lib.valuation_anchor``); fail-closed with a fixture fallback
+and ``lib.equity_valuation``); fail-closed with a fixture fallback
 (``data_source="fixture"``); no paid API; no broker / order / execution; no order
 ticket / broker payload; ``approved_for_execution`` is ALWAYS ``False``; produces
 no executable instruction — only a suggestion the user must place manually.
@@ -205,11 +207,21 @@ class PriceLevelResult:
     entry_status: str = "wait"
     risk_reward_ratio: float = 0.0  # 0.0 if entry blocked / no zone
     data_source: str = _FIXTURE  # live | fixture
-    # Phase 6C-B — provenance of the fair-value anchor driving the entry zone:
-    #   "app_computed"  — st.session_state["equity_research_results"] (Equity page)
-    #   "analyst_proxy" — lib/valuation_anchor.py over live yfinance data
-    #   "fixture"       — fail-closed fixture fallback
-    fair_value_source: str = "analyst_proxy"
+    # Provenance of the fair-value anchor driving the entry zone:
+    #   "app_computed"   — an external/session AppFairValue band (Equity page hand-off
+    #                      or the Cockpit cache) drove the LONG zone.
+    #   "app_fair_value" — the locally-computed unified AppFairValue producer
+    #                      (lib.equity_valuation.compute_app_fair_value) over live
+    #                      data, no external band. Anchor Intel v2 r2 (C5 rename):
+    #                      was the misleading "analyst_proxy" — there is no analyst
+    #                      proxy anymore, the value is the unified producer's output.
+    #   "fixture"        — fail-closed fixture fallback
+    fair_value_source: str = "app_fair_value"
+    # Anchor Intel v2 (U3) — epoch of the AppFairValue that produced the anchor
+    # (ISO-8601). Sourced from the external/session band's computed_at when present,
+    # else the locally-computed AppFairValue.computed_at. Surfaced unobtrusively
+    # (caption/tooltip) on the Trading Desk so the anchor's freshness is visible.
+    fair_value_computed_at: str = ""
     approved_for_execution: bool = False  # ALWAYS False (immutable invariant)
     # --- v4 fields (valuation confidence + scenario risk overlay) ---------
     valuation_confidence: str = "low"  # high | medium | low (LONG anchor confidence)
@@ -297,6 +309,36 @@ def _finite(x) -> Optional[float]:
 def _round(x: Optional[float], n: int = 2) -> float:
     v = _finite(x)
     return round(v, n) if v is not None else 0.0
+
+
+def _app_conservative_anchor(fv) -> Optional[float]:
+    """Tier-dependent conservative anchor mapped from an AppFairValue (Anchor Intel v2 U1).
+
+    Mirrors the retired ``FairValueAnchor.conservative_anchor`` semantics on the
+    unified producer — the value BELOW which the LONG three-tier applies its
+    margin-of-safety discount (and the surfaced ``PriceLevelResult.conservative_anchor``):
+
+    * high confidence -> ``fair_value_mid`` (the blended central fair value — A's
+      analog of B's pre-MoS ``min(analyst, relative)``; using the already-discounted
+      ``fair_value_low`` here would DOUBLE-discount against the ×0.90 MoS below);
+    * medium confidence -> ``analyst_target`` (1:1 with B's ``analyst_anchor``);
+    * low / suppressed band (irreconcilable / no_anchor) -> ``None`` so no
+      margin-of-safety zone is built off a non-existent anchor.
+
+    NB: distinct from the ``lib.anchor_cache`` entry's ``conservative_anchor``
+    (== ``fair_value_low``), which serves the Cockpit cache's own band-floor role;
+    this one preserves B's order-advisor tier semantics.
+    """
+    if fv is None or str(getattr(fv, "blend_state", "") or "") != "blended":
+        return None
+    conf = str(getattr(fv, "confidence", "") or "")
+    if conf == "high":
+        mid = _finite(getattr(fv, "fair_value_mid", None))
+        return mid if (mid is not None and mid > 0) else None
+    if conf == "medium":
+        ana = _finite(getattr(fv, "analyst_target", None))
+        return ana if (ana is not None and ana > 0) else None
+    return None
 
 
 def _clamp(v: float, lo: float, hi: float) -> float:
@@ -730,11 +772,31 @@ def _compute_initiate_logic(horizon: str, tech: dict) -> dict:
             risk_note=_RISK_NOTE_LONG,
         )
 
+    # X3 (fix round 2): when an external/session band drove the card it is the
+    # SINGLE source (F2). If we reach here with an external band set, the ``app_fv``
+    # branch above could not form a usable margin-of-safety band (e.g. no
+    # conservative floor / ``fair_value_low``). Rather than silently fall back to the
+    # LOCAL ``fva_obj`` (the documented leak — confidence / conservative / anchor all
+    # read from the local instance while the card claims the external band), degrade
+    # to the technical-only reference so ZERO anchor-derived fields are read from the
+    # local instance when an external band is present.
+    if tech.get("external_band") is not None:
+        stop = _long_stop(cp, sma200, atr)
+        return _logic(
+            "wait", stop=stop, sizing=_SIZE_REASSESS,
+            reason=_LONG_DEGRADE_REASON, next_trigger=_LONG_DEGRADE_TRIGGER,
+            risk_note=_RISK_NOTE_LONG,
+        )
+
     # long — three-tier valuation-confidence margin-of-safety band (Entry v4).
     fva_obj = tech.get("fva_obj")
     confidence = getattr(fva_obj, "confidence", "low") if fva_obj is not None else "low"
-    conservative = getattr(fva_obj, "conservative_anchor", None) if fva_obj is not None else None
-    analyst = getattr(fva_obj, "analyst_anchor", None) if fva_obj is not None else None
+    # Anchor Intel v2 (U1): conservative + analyst anchors mapped from the unified
+    # AppFairValue producer (fair_value_low / analyst_target), replacing the retired
+    # FairValueAnchor.conservative_anchor / .analyst_anchor. Entry-zone FORMULAS
+    # (×0.90 high, ×0.85 medium) are unchanged — only the anchor inputs changed.
+    conservative = _app_conservative_anchor(fva_obj)
+    analyst = getattr(fva_obj, "analyst_target", None) if fva_obj is not None else None
     vp = tech.get("valuation_percentile", 0.5)
     sma200v = sma200 if sma200 is not None else cp * 0.80
     entry_low = max(sma200v, nearest_support or 0.0, cp - 2.0 * atr, cp * 0.85)
@@ -1098,6 +1160,7 @@ def compute_price_levels(
     valuation_percentile: float = 0.5,
     scenario: str = "initiate",
     app_fair_value: Optional[dict] = None,
+    allow_fetch: bool = False,
 ) -> PriceLevelResult:
     """Compute the horizon-native, scenario-aware entry strategy for ``ticker``.
 
@@ -1109,6 +1172,20 @@ def compute_price_levels(
     (stop-vs-zone sanity, entry_status, risk_reward_ratio). Fail-closed: on any
     data failure a well-formed ``data_source="fixture"`` result is returned.
     ``approved_for_execution`` is ALWAYS ``False``.
+
+    **Anchor Intel v2 r2 (X1 — fail-closed network discipline):** ``allow_fetch``
+    distinguishes the two caller classes and DEFAULTS to ``False`` (fail-closed):
+
+    * Page paths (the Trading Desk — ``pages/9`` — and ``build_order_recommendation``)
+      pass ``allow_fetch=True``; ``_gather_technicals`` may then live-compute the
+      unified fair value (``compute_app_fair_value`` WITH the cyclical band fetcher).
+    * The ranking / Cockpit-refresh path (``opportunity_ranker.rank_opportunities``)
+      does NOT pass it, so it stays ``False``: ``_gather_technicals`` NEVER reaches a
+      live ``compute_app_fair_value`` / ``fetch_cyclical_band_history``. On that path
+      the fair value comes ONLY from a cached anchor band handed in via
+      ``app_fair_value``; when none is cached the LONG entry degrades honestly
+      (``fair_value_source="anchor_not_cached"``, no zone) rather than fabricating a
+      ``current_price``-derived proxy.
     """
     ticker = (ticker or "").upper().strip()
     cost_basis = _finite(getattr(holding, "cost_basis", None))
@@ -1126,7 +1203,7 @@ def compute_price_levels(
     else:
         scenario = "initiate"
 
-    tech = _gather_technicals(ticker, hz, vp)
+    tech = _gather_technicals(ticker, hz, vp, allow_fetch=allow_fetch)
     cp = tech["current_price"]
 
     # --- Step 0 (cont.) — App-computed fair value (Phase 6C-B + stop-bleed) -
@@ -1146,8 +1223,29 @@ def compute_price_levels(
     if band:
         _bstate = str(band.get("blend_state", "") or "").lower()
         _bconf = str(band.get("confidence", "") or "").lower()
+        # U3 single-source discipline: when an external/session band drives the
+        # card, ITS epoch is the card's epoch (not the local fva_obj's).
+        _band_epoch = str(band.get("computed_at") or "")
         if _bstate == "anchors_irreconcilable":
+            # Anchor Intel v2 r2 (F2): an external/session irreconcilable band
+            # drives the WHOLE card. EVERY anchor-derived field comes from it — the
+            # healthy local fva_obj must NOT leak a confident valuation wearing the
+            # external timestamp. ``external_band`` is the single marker _assemble
+            # reads so confidence, conservative anchor and the fair-value scalar all
+            # follow the band, not the local instance. For irreconcilable: no local
+            # scalar (anchor None), confidence low (or the band's own), conservative
+            # None, epoch from the band, valuation_unreliable degrade.
             tech["valuation_unreliable"] = True
+            tech["fair_value_anchor"] = None
+            tech["external_band"] = {
+                "blend_state": "anchors_irreconcilable",
+                "confidence": _bconf or "low",
+                "anchor": None,
+                "conservative": None,
+                "epoch": _band_epoch,
+            }
+            if _band_epoch:
+                tech["fair_value_computed_at"] = _band_epoch
         elif _bconf in ("high", "medium"):
             app_low = _finite(band.get("fair_value_low"))
             app_mid = _finite(band.get("fair_value_mid"))
@@ -1160,12 +1258,52 @@ def compute_price_levels(
                     "confidence": _bconf,
                 }
                 tech["fair_value_anchor"] = round(app_mid, 2)
+                # F2: mark the external band as the single source so _assemble
+                # takes confidence + conservative anchor + epoch from THIS band and
+                # never reads the local fva_obj for those fields.
+                tech["external_band"] = {
+                    "blend_state": _bstate or "blended",
+                    "confidence": _bconf,
+                    "anchor": round(app_mid, 2),
+                    "conservative": (app_low if (app_low is not None and app_low > 0)
+                                     else None),
+                    "epoch": _band_epoch,
+                }
+                if _band_epoch:
+                    tech["fair_value_computed_at"] = _band_epoch
 
-    # The analyst-proxy anchor (lib/valuation_anchor.py) can also be
-    # irreconcilable; that likewise degrades the LONG entry to technical-only.
-    _fva_obj = tech.get("fva_obj")
-    if getattr(_fva_obj, "anchor_state", "") == "anchors_irreconcilable":
+    # X1 (R8): on the network-free ranking / Cockpit-refresh path
+    # (``allow_fetch=False``) the fair value can come ONLY from a cached anchor band
+    # handed in via ``app_fair_value``. When none was cached (cold cache) there is no
+    # anchor to build a LONG margin-of-safety zone from — and we MUST NOT live-compute
+    # one here (that would be the R8 network violation). Degrade honestly: flag the
+    # LONG path AND record the provenance so the card reads ``anchor_not_cached``,
+    # never a fabricated ``current_price``-derived proxy. (The page paths set
+    # ``allow_fetch=True`` and have already live-computed ``fva_obj`` above, so this
+    # never fires for them.)
+    if not allow_fetch and band is None:
         tech["valuation_unreliable"] = True
+        tech["anchor_not_cached"] = True
+        # R3 (review): a missing anchor must be None, never a back-computed proxy.
+        # When OHLCV is unavailable on the cold path ``_gather_technicals`` returns
+        # the ``_fixture`` dict, which seeds ``fair_value_anchor=cp*0.85`` so the
+        # *technical* logic stays well-formed. That fabricated scalar must NOT ride
+        # through under ``anchor_not_cached`` — clear it explicitly so the honest
+        # degrade contract holds (anchor None, no zone, valuation_unreliable, token).
+        tech["fair_value_anchor"] = None
+
+    # The locally-computed AppFairValue can itself be irreconcilable (its
+    # inter-method dispersion gate collapsed the band); that likewise degrades the
+    # LONG entry to a technical-only reference. X3 (fix round 2): this LOCAL signal
+    # may degrade the card ONLY when NO external/session band drives it. When an
+    # external band is present it is the SINGLE source (F2) — a healthy external band
+    # must NOT be degraded by a stale / irreconcilable LOCAL instance (the inverse
+    # leak the prior round missed: §11 only covered irreconcilable-external + healthy
+    # -local, never healthy-external + irreconcilable-local).
+    if tech.get("external_band") is None:
+        _fva_obj = tech.get("fva_obj")
+        if str(getattr(_fva_obj, "blend_state", "") or "") == "anchors_irreconcilable":
+            tech["valuation_unreliable"] = True
 
     # --- Step 0 (cont.) — Portfolio context (fail-closed; cost-free proxy) -
     portfolio = _gather_portfolio(ticker, cp, holding, shares)
@@ -1211,12 +1349,23 @@ def compute_price_levels(
     return _assemble(ticker, scenario, hz, cost_basis, tech, logic, portfolio, overlay)
 
 
-def _gather_technicals(ticker: str, hz: str, valuation_percentile: float) -> dict:
+def _gather_technicals(ticker: str, hz: str, valuation_percentile: float,
+                       *, allow_fetch: bool = False) -> dict:
     """Fetch the technical snapshot + fair-value anchor (Step 0). Fail-closed.
 
     On any failure returns a deterministic fixture dict (``data_source="fixture"``)
     seeded with a ~$100 price proxy and a ~3% ATR so the downstream logic still
     produces a well-formed result.
+
+    **Anchor Intel v2 r2 (X1):** the OHLCV / technical snapshot is always loaded
+    from the local cache (network-free). The fair-value producer
+    (``compute_app_fair_value``), however, performs a live ``_fetch_raw`` (and, with
+    the cyclical fetcher, a multi-year price fetch). It is therefore invoked ONLY
+    when ``allow_fetch`` is ``True`` (the page paths). On the ranking / Cockpit
+    -refresh path (``allow_fetch=False``) it is NEVER imported or called: there is no
+    live ``fva_obj`` and no fabricated proxy (``fair_value_anchor=None``); the fair
+    value, if any, arrives via the cached ``app_fair_value`` band in
+    ``compute_price_levels``.
     """
     def _fixture(cp: float = 100.0) -> dict:
         atr = round(cp * 0.03, 2)
@@ -1227,14 +1376,13 @@ def _gather_technicals(ticker: str, hz: str, valuation_percentile: float) -> dic
             "nearest_support": None, "nearest_resistance": None,
             "above_sma200": False, "pct_from_52w_high": None,
             "fair_value_anchor": round(cp * 0.85, 2),
-            "fva_obj": None, "valuation_percentile": 0.5,
+            "fva_obj": None, "fair_value_computed_at": "", "valuation_percentile": 0.5,
             "support_levels": [], "resistance_levels": [], "data_source": _FIXTURE,
         }
 
     try:
         from ui_utils import load_ohlcv
         from lib.technical import snapshot
-        from lib.valuation_anchor import compute_fair_value_anchor
 
         df = load_ohlcv(ticker, "6mo")
         if df is None or len(df) < 30:
@@ -1249,16 +1397,39 @@ def _gather_technicals(ticker: str, hz: str, valuation_percentile: float) -> dic
             atr = round(cp * 0.03, 2)
         vol_ratio = _finite(snap.get("Vol_ratio_20d"))
         supports, resistances = _significant_levels(df)
+        # Anchor Intelligence v2 (U1 + r2/F1 + X1): the SINGLE fair-value producer is
+        # lib.equity_valuation.compute_app_fair_value (AppFairValue). Calling it does
+        # a live ``_fetch_raw`` (network), so it is gated on ``allow_fetch``:
+        #   * Page paths (allow_fetch=True) — the Trading-Desk page-path call site, a
+        #     page path, so the cyclical band fetch is permitted. We pass
+        #     ``cyclical_history_fetcher`` so that when THIS surface is the first
+        #     writer of the shared cache entry the band is still cyclical-capable (the
+        #     fetcher is an underscore-prefixed param on the cached worker, excluded
+        #     from the cache key — the Equity page and the Trading Desk therefore
+        #     share one instance + one epoch per ticker).
+        #   * Ranking / Cockpit-refresh path (allow_fetch=False) — the producer and
+        #     the cyclical fetcher are NEVER imported or invoked here, so the path is
+        #     structurally network-free (R8). ``fva_obj`` stays None and there is NO
+        #     fabricated proxy (``fva`` None -> ``fair_value_anchor`` None); the fair
+        #     value, if any, comes from the cached ``app_fair_value`` band upstream.
         fva_obj = None
-        try:
-            fva_obj = compute_fair_value_anchor(ticker, cp, valuation_percentile)
-            fva = fva_obj.fair_value_anchor
-        except Exception:  # noqa: BLE001 — fail-closed
-            fva_obj = None
-            fva = round(cp * 0.85, 2)
+        fva = None
+        if allow_fetch:
+            from lib.equity_valuation import (
+                compute_app_fair_value, fetch_cyclical_band_history,
+            )
+            try:
+                fva_obj = compute_app_fair_value(
+                    ticker, cp, cyclical_history_fetcher=fetch_cyclical_band_history)
+                _mid = _finite(getattr(fva_obj, "fair_value_mid", None))
+                fva = _mid if (_mid is not None and _mid > 0) else round(cp * 0.85, 2)
+            except Exception:  # noqa: BLE001 — fail-closed
+                fva_obj = None
+                fva = round(cp * 0.85, 2)
         candle = snap.get("candlestick_pattern") or _candlestick_pattern(df)
         return {
             "fva_obj": fva_obj,
+            "fair_value_computed_at": str(getattr(fva_obj, "computed_at", "") or ""),
             "valuation_percentile": valuation_percentile,
             "current_price": round(cp, 2),
             "ema10": _finite(snap.get("EMA_10")),
@@ -1291,15 +1462,28 @@ def _assemble(ticker: str, scenario: str, hz: str, cost_basis: Optional[float],
     portfolio = portfolio or {}
     overlay = overlay or {}
     fva_obj = tech.get("fva_obj")
-    valuation_confidence = getattr(fva_obj, "confidence", "low") if fva_obj is not None else "low"
-    conservative_anchor = getattr(fva_obj, "conservative_anchor", None) if fva_obj is not None else None
-    # When a high/medium app-computed (or cached) fair-value band drives the LONG
-    # zone, the LONG valuation confidence reflects THAT band — otherwise a low
-    # analyst-proxy confidence would force the Cockpit status to Research Required
-    # even though a real value band exists (the stop-bleed Cockpit fix).
-    _app_band = tech.get("app_fair_value")
-    if _app_band and _app_band.get("confidence"):
-        valuation_confidence = str(_app_band.get("confidence"))
+    # Anchor Intel v2 r2 (F2) — SINGLE source per card: when an external/session
+    # band drives the card (``tech["external_band"]`` set by compute_price_levels),
+    # EVERY anchor-derived field comes from THAT band — confidence, conservative
+    # anchor, the fair-value scalar (cleared upstream) and the epoch — and the local
+    # fva_obj is NOT read for any of them. This is the audit fix: previously only
+    # the high/medium path overrode confidence + conservative, so an external
+    # irreconcilable band leaked the healthy local confidence/anchor/conservative
+    # while only the epoch + degrade flag switched. For an irreconcilable external
+    # band the band carries confidence "low" + conservative None, so the card reads
+    # honestly as "anchors irreconcilable", never as a confident local valuation
+    # wearing an external timestamp.
+    _ext = tech.get("external_band")
+    if _ext:
+        valuation_confidence = str(_ext.get("confidence") or "low")
+        conservative_anchor = _ext.get("conservative")
+    else:
+        # No external band: the locally-computed AppFairValue drives. conservative
+        # anchor == the tier-dependent _app_conservative_anchor mapping (U1); None
+        # when the local band is suppressed (irreconcilable / no_anchor / low).
+        valuation_confidence = (getattr(fva_obj, "confidence", "low")
+                                if fva_obj is not None else "low")
+        conservative_anchor = _app_conservative_anchor(fva_obj)
     cp = tech["current_price"]
     atr = tech["atr"]
     action = logic["action"]
@@ -1327,14 +1511,29 @@ def _assemble(ticker: str, scenario: str, hz: str, cost_basis: Optional[float],
         target_price = round(cp + 3 * atr, 2)
 
     # --- Phase 6C-B — app-computed fair value source + upside target -------
+    # ``fair_value_source`` provenance tokens:
+    #   * "app_computed"   — an external/session AppFairValue band (high/medium)
+    #                        drives the card (the Equity-page hand-off / Cockpit
+    #                        cache enrichment).
+    #   * "app_fair_value" — the locally-computed unified AppFairValue producer on
+    #                        live data (Anchor Intel v2 r2 / C5 rename: was the
+    #                        misleading "analyst_proxy" — there is no analyst proxy
+    #                        anymore, the value comes from the unified producer).
+    #   * "anchor_not_cached" — Anchor Intel v2 r2 (X1): the network-free ranking /
+    #                        Cockpit-refresh path (allow_fetch=False) found no cached
+    #                        anchor band; the LONG entry degraded honestly rather than
+    #                        live-computing or fabricating a proxy.
+    #   * "fixture"        — fail-closed fixture data.
     app_fv = tech.get("app_fair_value")
     if app_fv:
         fair_value_source = "app_computed"
         app_high = app_fv.get("high")
         if app_high is not None and app_high > cp:
             target_price = round(app_high, 2)  # fair_value_high is the upside target
+    elif tech.get("anchor_not_cached"):
+        fair_value_source = "anchor_not_cached"
     elif tech.get("data_source") == _LIVE:
-        fair_value_source = "analyst_proxy"
+        fair_value_source = "app_fair_value"
     else:
         fair_value_source = _FIXTURE
 
@@ -1399,6 +1598,7 @@ def _assemble(ticker: str, scenario: str, hz: str, cost_basis: Optional[float],
         data_source=tech.get("data_source", _FIXTURE),
         fair_value_source=fair_value_source,
         approved_for_execution=False,
+        fair_value_computed_at=tech.get("fair_value_computed_at", ""),
         # --- v4 fields ---
         valuation_confidence=valuation_confidence,
         conservative_anchor=conservative_anchor,
@@ -1799,6 +1999,7 @@ def build_order_recommendation(holding, thesis_check, macro_regime: str = "unkno
         thesis_status=getattr(thesis_check, "thesis_status", "intact"),
         horizon=getattr(holding, "horizon", "mid"),
         eps_revision_direction=getattr(thesis_check, "eps_revision_direction", "unknown"),
+        allow_fetch=True,  # X1: order-recommendation builder is a page/desk path
     )
     narrative = generate_order_narrative(holding, levels, thesis_check, macro_regime, lang)
     return OrderRecommendation(

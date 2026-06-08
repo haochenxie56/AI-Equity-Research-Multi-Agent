@@ -560,6 +560,13 @@ check("9.15 XOM blended band (mid > 0, not analyst-parroting)",
 # 9.16 Degradation: cyclical with NO fetcher (cached/ranking path) -> analyst-only
 # + the real caveat tokens. Network-free path takes this degrade.
 with mock.patch.object(eqv, "_fetch_raw", return_value=dict(_MU_RAW)):
+    # Anchor Intel v2 r2 (F1): compute_app_fair_value is now ONE st.cache_data
+    # producer keyed on (ticker, price, override) with the fetcher EXCLUDED from
+    # the key. This subtest deliberately re-computes (MU, 100.0) with a different
+    # fetcher (none) than 9.7, so clear the shared cache to exercise the degrade
+    # scenario in isolation (in production a given ticker/price is computed once
+    # per epoch — only the tests probe multiple fetchers on one key).
+    getattr(eqv._compute_cached, "clear", lambda: None)()
     _mu_deg = eqv.compute_app_fair_value("MU", 100.0)  # no fetcher (cyclical via override)
 check("9.17 degraded cyclical -> analyst-only blend",
       _names(_mu_deg.anchors) == {"analyst"}, detail=str(_names(_mu_deg.anchors)))
@@ -577,6 +584,7 @@ def _short_fetcher(_tk):
 
 
 with mock.patch.object(eqv, "_fetch_raw", return_value=dict(_MU_RAW)):
+    getattr(eqv._compute_cached, "clear", lambda: None)()  # F1: fresh key (see 9.16)
     _mu_short = eqv.compute_app_fair_value("MU", 100.0,
                                            cyclical_history_fetcher=_short_fetcher)
 check("9.22 < 3 annual obs -> band degraded + caveat",
@@ -741,6 +749,88 @@ _xom_cls = vr.classify_company(
     revenue_growth=0.05, profit_margin=0.12, market_cap=4.0e11)
 check("12.5 XOM 'Oil & Gas Integrated' -> cyclical via industry/sector (no override)",
       _xom_cls.company_type == "cyclical", detail=_xom_cls.company_type)
+
+
+# ===========================================================================
+# Section 13 — Anchor Intelligence v2 (U2): structured analyst anchor +
+#             pool-dispersion confidence gate
+# ===========================================================================
+
+# 13.1 Structured analyst pool carried on AppFairValue (median/mean/high/low/n/as_of);
+# as_of stamped to computed_at. Median is the central estimate entering the blend.
+_SP_RAW = {
+    "fcf_ttm": None, "fcf_source": "", "ebitda": None, "shares": 1.0e9,
+    "growth_rate": 0.05, "trailing_eps": 5.0, "forward_eps": None,
+    "sector": "Technology", "industry": None,
+    "analyst_median": 120.0, "analyst_mean": 122.0,
+    "analyst_high": 140.0, "analyst_low": 105.0, "analyst_count": 12, "live": True,
+}
+with mock.patch.object(eqv, "_fetch_raw", return_value=dict(_SP_RAW)):
+    _sp = eqv.compute_app_fair_value("SP1", 100.0)
+check("13.1 AppFairValue carries structured analyst_pool dict",
+      isinstance(_sp.analyst_pool, dict)
+      and _sp.analyst_pool.get("median") == 120.0
+      and _sp.analyst_pool.get("high") == 140.0
+      and _sp.analyst_pool.get("low") == 105.0
+      and _sp.analyst_pool.get("n") == 12,
+      detail=str(_sp.analyst_pool))
+check("13.2 analyst_pool.as_of stamped to computed_at",
+      _sp.analyst_pool.get("as_of") == _sp.computed_at, detail=str(_sp.analyst_pool))
+check("13.3 median is the analyst anchor entering the blend (robust to outliers)",
+      _sp.analyst_target == 120.0, detail=str(_sp.analyst_target))
+
+# 13.4 GATE FIRING — MU verified live pool (median 575, mean 739.48, high 1750,
+# low 249, n 40 -> (1750-249)/575 = 2.61x > 1.0x). Median still blends; confidence
+# is CAPPED at low and the caveat token is emitted. (Fixture honesty: real live MU.)
+_MU_POOL = {"median": 575.0, "mean": 739.48, "high": 1750.0, "low": 249.0, "n": 40}
+check("13.4 pool dispersion computed (MU 2.61x)",
+      abs((eqv.analyst_pool_dispersion(_MU_POOL) or 0) - 2.6104) < 1e-3,
+      detail=str(eqv.analyst_pool_dispersion(_MU_POOL)))
+_mu_gate = eqv.build_app_fair_value("MU", 500.0, dcf_value=None, relative_value=None,
+                                    analyst_target=575.0, analyst_count=40,
+                                    analyst_pool=_MU_POOL)
+check("13.5 dispersed pool -> confidence capped at low",
+      _mu_gate.confidence == "low", detail=_mu_gate.confidence)
+check("13.6 dispersed pool -> analyst_pool_dispersed caveat emitted",
+      "analyst_pool_dispersed" in (_mu_gate.caveats or []), detail=str(_mu_gate.caveats))
+check("13.7 dispersed pool -> median still entered the blend (mid > 0, not suppressed)",
+      _mu_gate.blend_state == "blended" and _mu_gate.fair_value_mid > 0,
+      detail=f"{_mu_gate.blend_state}/{_mu_gate.fair_value_mid}")
+
+# 13.8 GATE NON-FIRING — a tight pool (median 100, high 110, low 95, n 10 -> 0.15x)
+# does NOT cap confidence and emits no caveat.
+_tight = {"median": 100.0, "mean": 101.0, "high": 110.0, "low": 95.0, "n": 10}
+_tight_fv = eqv.build_app_fair_value("TGT", 100.0, dcf_value=95.0, relative_value=98.0,
+                                     analyst_target=100.0, analyst_count=10,
+                                     analyst_pool=_tight)
+check("13.9 tight pool -> confidence NOT capped (high, 3 anchors)",
+      _tight_fv.confidence == "high", detail=_tight_fv.confidence)
+check("13.10 tight pool -> no analyst_pool_dispersed caveat",
+      "analyst_pool_dispersed" not in (_tight_fv.caveats or []), detail=str(_tight_fv.caveats))
+
+# 13.11 BOUNDARY — dispersion EXACTLY 1.0 is NOT dispersed (gate uses '>').
+_edge = {"median": 100.0, "mean": 100.0, "high": 200.0, "low": 100.0, "n": 10}
+check("13.11 boundary dispersion == 1.0 -> not dispersed",
+      abs((eqv.analyst_pool_dispersion(_edge) or 0) - 1.0) < 1e-9,
+      detail=str(eqv.analyst_pool_dispersion(_edge)))
+_edge_fv = eqv.build_app_fair_value("EDG", 100.0, dcf_value=95.0, relative_value=98.0,
+                                    analyst_target=100.0, analyst_count=10,
+                                    analyst_pool=_edge)
+check("13.12 boundary == 1.0 -> confidence not capped",
+      _edge_fv.confidence == "high"
+      and "analyst_pool_dispersed" not in (_edge_fv.caveats or []),
+      detail=f"{_edge_fv.confidence}/{_edge_fv.caveats}")
+
+# 13.13 GATE INERT — too few analysts (n < MIN_ANALYST_POOL_N) cannot trust the
+# spread, so a wide pool with n=2 does NOT cap.
+_fewn = {"median": 100.0, "mean": 100.0, "high": 300.0, "low": 50.0, "n": 2}
+check("13.13 n < min -> dispersion None (gate inert)",
+      eqv.analyst_pool_dispersion(_fewn) is None, detail=str(eqv.analyst_pool_dispersion(_fewn)))
+
+# 13.14 GATE INERT — missing high/low (no pool extremes) cannot measure dispersion.
+_nohl = {"median": 100.0, "mean": 100.0, "high": None, "low": None, "n": 20}
+check("13.14 missing high/low -> dispersion None (gate inert)",
+      eqv.analyst_pool_dispersion(_nohl) is None)
 
 
 # ===========================================================================

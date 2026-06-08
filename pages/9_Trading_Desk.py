@@ -299,6 +299,7 @@ def _refresh(active_holdings, force: bool = False) -> None:
                     eps_revision_direction=(
                         getattr(chk, "eps_revision_direction", "unknown") if chk else "unknown"
                     ),
+                    allow_fetch=True,  # X1: Trading Desk is a page path (network allowed)
                 )
                 narrative = generate_order_narrative(h, levels, chk, regime, lang)
                 order_recs[h.id] = {"levels": levels, "narrative": narrative}
@@ -338,6 +339,7 @@ def _refresh(active_holdings, force: bool = False) -> None:
                     horizon=_dominant_horizon(s),
                     eps_revision_direction=str(s.get("eps_revision_direction", "unknown") or "unknown"),
                     valuation_percentile=_as_float(s.get("valuation_percentile"), 0.5),
+                    allow_fetch=True,  # X1: Trading Desk is a page path (network allowed)
                 )
             except Exception:  # noqa: BLE001 — fail-closed; skip this candidate
                 continue
@@ -1032,10 +1034,10 @@ def _render_order_card(h, rec) -> None:
             _fva = getattr(levels, "fair_value_anchor", None)
             if _fva is not None:
                 # Phase 6C-B — surface the provenance of the fair-value anchor.
-                _fvs = getattr(levels, "fair_value_source", "analyst_proxy")
+                _fvs = getattr(levels, "fair_value_source", "app_fair_value")
                 _fvs_lbl = {
                     "app_computed": t("td_fv_src_app"),
-                    "analyst_proxy": t("td_fv_src_analyst"),
+                    "app_fair_value": t("td_fv_src_app_fair_value"),
                     "fixture": t("td_fv_src_fixture"),
                 }.get(_fvs, _fvs)
                 _fvs_color = "#3fb950" if _fvs == "app_computed" else (
@@ -1045,6 +1047,13 @@ def _render_order_card(h, rec) -> None:
                     + _badge(f"{t('td_fair_value_source')}: {_fvs_lbl}", _fvs_color),
                     unsafe_allow_html=True,
                 )
+                # Epoch stamp (Anchor Intel v2, U3) — the AppFairValue compute time
+                # behind this anchor, surfaced unobtrusively (caption only). All
+                # anchor-derived numbers on this card come from that one instance.
+                _fvc = getattr(levels, "fair_value_computed_at", "") or ""
+                if _fvc:
+                    st.caption(
+                        f"{t('cockpit_fv_computed_at')}: {_fvc[:16].replace('T', ' ')} UTC")
             st.caption(t("td_kelly_note"))
             _src = t("td_data_live") if levels.data_source == "live" else t("td_data_fixture")
             st.caption(f"· {_src}")

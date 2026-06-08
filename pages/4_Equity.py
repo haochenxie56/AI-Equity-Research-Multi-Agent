@@ -819,6 +819,23 @@ with fv_slot.container().expander(t("cockpit_fv_header"), expanded=True):
             t("cockpit_fv_analyst"),
             (f"${_fv.analyst_target:.2f} (n={_fv.analyst_count})"
              if _fv.analyst_target is not None else "N/A"))
+        # Structured analyst pool (Anchor Intel v2, U2): the sell-side target
+        # distribution behind the consensus. Surfaced under the analyst metric so a
+        # wide pool (which caps confidence — see the analyst_pool_dispersed caveat) is
+        # visible. Median is the central estimate that entered the blend.
+        _pool = getattr(_fv, "analyst_pool", None)
+        if isinstance(_pool, dict):
+            _pmd, _phi, _plo = _pool.get("median"), _pool.get("high"), _pool.get("low")
+            if _pmd is not None and _phi is not None and _plo is not None:
+                _scols[2].caption(
+                    f"{t('cockpit_fv_analyst_pool')}: ${_plo:.0f}–${_phi:.0f} "
+                    f"(med ${_pmd:.0f}, n={_pool.get('n', 0)})")
+
+        # Epoch stamp (U3) — unobtrusive caption so the anchor's freshness is visible
+        # without cluttering the primary cells.
+        _capr = getattr(_fv, "computed_at", "") or ""
+        if _capr:
+            st.caption(f"{t('cockpit_fv_computed_at')}: {_capr[:16].replace('T', ' ')} UTC")
 
         st.divider()
 

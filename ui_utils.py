@@ -1248,6 +1248,9 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "cockpit_fv_caveat_implausible_forward_eps":   "前瞻EPS异常（远高于滚动EPS）——已剔除相对估值锚",
         "cockpit_fv_caveat_anchor_implausible_vs_price": "某估值锚相对现价明显失真——已剔除该锚",
         "cockpit_fv_caveat_implausible_growth_input":  "营收增速数据异常——分类与同业匹配按缺失处理",
+        "cockpit_fv_caveat_analyst_pool_dispersed":    "分析师目标区间过于离散——置信度已下调至「低」（中位数仍纳入融合）",
+        "cockpit_fv_analyst_pool":     "分析师目标区间",
+        "cockpit_fv_computed_at":      "估值计算时间",
         "cockpit_fv_running":           "正在计算估值…",
         "cockpit_fv_update":            "🔄 更新估值",
         "cockpit_fv_update_hint":       "请先在财务分析页面运行 DCF",
@@ -1260,7 +1263,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         # ── Phase 6C-B: Trading Desk fair-value source badge ────────────────────
         "td_fair_value_source":         "估值来源",
         "td_fv_src_app":                "应用计算",
-        "td_fv_src_analyst":            "分析师代理",
+        "td_fv_src_app_fair_value":     "应用估值",
         "td_fv_src_fixture":            "占位数据",
         # ── Phase 6C-A: Trading Desk ─────────────────────────────────────────────
         "td_page_title":      "交易台",
@@ -2676,6 +2679,9 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "cockpit_fv_caveat_implausible_forward_eps":   "Forward EPS implausible (far above trailing EPS) — relative anchor excluded",
         "cockpit_fv_caveat_anchor_implausible_vs_price": "An anchor was implausible vs the current price — that anchor was excluded",
         "cockpit_fv_caveat_implausible_growth_input":  "Revenue-growth input implausible — treated as missing for classification & peer matching",
+        "cockpit_fv_caveat_analyst_pool_dispersed":    "Analyst target pool too dispersed — confidence capped at low (median still blended)",
+        "cockpit_fv_analyst_pool":     "Analyst pool",
+        "cockpit_fv_computed_at":      "Computed",
         "cockpit_fv_running":           "Computing valuation…",
         "cockpit_fv_update":            "🔄 Update Valuation",
         "cockpit_fv_update_hint":       "Run DCF on the Financials tab first",
@@ -2688,7 +2694,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         # ── Phase 6C-B: Trading Desk fair-value source badge ────────────────────
         "td_fair_value_source":         "Fair value source",
         "td_fv_src_app":                "app-computed",
-        "td_fv_src_analyst":            "analyst proxy",
+        "td_fv_src_app_fair_value":     "app fair value",
         "td_fv_src_fixture":            "fixture",
         # ── Phase 6C-A: Trading Desk ─────────────────────────────────────────────
         "td_page_title":      "Trading Desk",

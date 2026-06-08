@@ -528,6 +528,41 @@ for name, src in _ALL_SRCS.items():
 
 
 # ---------------------------------------------------------------------------
+# Section 11 — Anchor Intelligence v2 (U1/U3): unified producer + epoch rendered
+# ---------------------------------------------------------------------------
+
+_EQUITY_SRC = _read(os.path.join(_REPO_ROOT, "pages", "4_Equity.py"))
+
+# U1 — production unifies on lib.equity_valuation.compute_app_fair_value; the
+# retired lib.valuation_anchor.compute_fair_value_anchor is no longer consulted.
+check("11.1 order_advisor consumes the unified compute_app_fair_value producer",
+      "compute_app_fair_value" in _ORDER_SRC)
+check("11.2 order_advisor no longer calls the retired compute_fair_value_anchor",
+      "compute_fair_value_anchor" not in _ORDER_SRC)
+
+# U3 — PriceLevelResult carries the epoch; the Trading Desk renders it.
+if _oa is not None:
+    _plr_fields = {f.name for f in dataclasses.fields(_oa.PriceLevelResult)}
+    check("11.3 PriceLevelResult exposes fair_value_computed_at (epoch)",
+          "fair_value_computed_at" in _plr_fields, detail=str(sorted(_plr_fields)))
+check("11.4 Trading Desk page renders the anchor epoch (caption)",
+      "fair_value_computed_at" in _PAGE_SRC and "cockpit_fv_computed_at" in _PAGE_SRC)
+
+# U2/U3 — Equity page surfaces the structured analyst pool + the epoch.
+check("11.5 Equity page renders the structured analyst pool",
+      "analyst_pool" in _EQUITY_SRC and "cockpit_fv_analyst_pool" in _EQUITY_SRC)
+check("11.6 Equity page renders the computed_at epoch",
+      "cockpit_fv_computed_at" in _EQUITY_SRC)
+
+# i18n contract — new caveat + label keys are bilingual (>=2 occurrences each).
+check("11.7 analyst_pool_dispersed caveat key is bilingual",
+      _UI_SRC.count('"cockpit_fv_caveat_analyst_pool_dispersed"') >= 2)
+check("11.8 analyst-pool / computed-at labels are bilingual",
+      _UI_SRC.count('"cockpit_fv_analyst_pool"') >= 2
+      and _UI_SRC.count('"cockpit_fv_computed_at"') >= 2)
+
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 
