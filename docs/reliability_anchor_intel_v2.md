@@ -16,8 +16,17 @@ hardening fix rounds (F-round, X-round) and the R3 real-path fix were reviewed a
 `scripts/test_reliability_phase_6c_v3_entry_v4.py` **90/90** (52 → 73 after fix
 round 1 → 87 after fix round 2 → 90 after the R3 missing-OHLCV real-path case);
 canonical sweep green. **All deterministic; no LLM invents a fair-value anchor.**
-**Rounds v2.2–v2.5 remain pending** (future scope, not started — to be specified
-when each round opens).
+
+**Update — v2.3 fully CLOSED.** The v2.3 anchor-historization main body (U1
+append-only archive at the `store_equity_research_result` producer chokepoint / U2
+single-vintage snapshot anchor block / U3 deterministic migration readout +
+read-only `thesis_monitor` watch note; fix round F1–F4) was reviewed and **APPROVED
+at `9f6c37e`** and merged into `main` at `97c8f1f`. The **historical backfill** —
+recomputable anchors only, the analyst anchor never fabricated for a past date, with
+the G1 filing-lag look-ahead defence and the G2 same-date seam guard; suite
+`scripts/test_reliability_anchor_backfill.py` **60/60** — was reviewed and
+**APPROVED at `c57e56e`** and merged now. **Rounds v2.4–v2.5 remain pending**
+(future scope, not started — to be specified when each round opens).
 
 ## Goal
 

@@ -5,6 +5,34 @@
 > history preserved verbatim). This file keeps only the active phase. The
 > long-form running status remains in `docs/ai_dev_state/PROJECT_STATE.md`.
 
+## Anchor Intelligence v2.3 — Anchor Historization + Historical Backfill (fully CLOSED)
+
+v2.3 turns the unified anchor (Round 1) into an **append-only historical series** and
+seeds it with recomputable history. **Deterministic; no LLM invents an anchor, and
+the analyst input is never fabricated for a past date.** Phase doc
+`docs/reliability_anchor_intel_v2.md`. Both review-gated bodies are CLOSED:
+
+- **Main body — APPROVED at `9f6c37e`, merged at `97c8f1f`.** **U1** append-only
+  anchor archive at the `store_equity_research_result` producer chokepoint; **U2**
+  daily snapshot carries a single-vintage anchor block; **U3** deterministic
+  migration readout + read-only `thesis_monitor` anchor-migration watch note
+  (thesis_status untouched). Fix round F1–F4 hardened the chokepoint capture,
+  surfaced the watch note, and recorded the archive-read cost.
+- **Historical backfill — APPROVED at `c57e56e`, merging now.** Offline engine
+  (`lib/anchor_backfill.py`, `scripts/backfill_anchors.py`) seeds **recomputable
+  anchors only**; the **analyst anchor is never fabricated** for a historical date
+  (additive `record_origin` + analyst sentinel keep live vs. backfilled rows
+  distinct). B1/B2/B3 + the **G1/G2 fix round** added a **filing-lag look-ahead
+  defence** (`FILING_LAG_DAYS = {annual: 75, quarterly: 45}`, period_end + lag <= D,
+  threaded into the DCF/relative raw AND the cyclical PB/PS band) and a **same-date
+  seam guard** (`covered_vintages` spans both origins; live wins). Suite
+  `scripts/test_reliability_anchor_backfill.py` **60/60**; canonical sweep
+  unchanged-green.
+
+**Rounds v2.4 / v2.5 remain pending** (future scope, not started).
+
+---
+
 ## Anchor Intelligence v2 — Round 1 (CLOSED — review APPROVED at 9e53f04)
 
 Unifies the fair-value anchor onto a single producer, makes the sell-side analyst
