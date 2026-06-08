@@ -446,6 +446,39 @@ Bumping would orphan older live rows behind the read-time version guard.
 - `lib/macro_regime.py` untouched; i18n additive (inline bilingual note, no
   `TRANSLATIONS` change); `.gitattributes` keeps LF (`git diff --check` clean).
 
+### Backfill fix round (REQUEST CHANGES — G1/G2, both P1)
+
+- **G1 (P1, look-ahead leak — core defect).** `_slice_frame_asof` filtered by
+  fiscal-period END, treating a statement as available on its period-end though it
+  is filed weeks later — recomputing a past-date anchor with a not-yet-public
+  statement is look-ahead bias that contaminates the whole backfilled history. The
+  free loader has no filing-date metadata, so a **conservative publication-lag** is
+  applied: visible config `FILING_LAG_DAYS = {annual: 75, quarterly: 45}`; a
+  statement counts at as-of date `D` only when `period_end + filing_lag <= D` (errs
+  toward using data LATER, never earlier — the only safe direction). The gate is
+  threaded from `_backfill_one` (annual lag) into the slices feeding BOTH the
+  DCF/relative `raw` (via `_newest_cols`) AND the cyclical PB/PS band (the gated
+  frames are handed to `build_pb_ps_history`), so no anchor can read a too-fresh
+  statement. A date the lag leaves with insufficient fundamentals degrades (zeroed
+  band + `backfill_insufficient_fundamentals`) — it NEVER falls back to a
+  not-yet-public statement. Corrected goldens: a date just after a period-end but
+  before `period_end+75` uses the PRIOR year (mid **112.0**); after the lag the
+  fresh statement is used (mid **103.47**). Discrimination: reverting the gate
+  (`lag=0`) leaks the fresh statement and the assertions fail.
+- **G2 (P1, seam double-count).** The weekly grid includes `end_date`, but the
+  idempotency guard skipped only existing **backfill** vintages — an existing
+  **live** row for that date did not prevent a backfill row, so migration counted
+  the seam date twice. New read-only `anchor_archive.covered_vintages` spans BOTH
+  origins; `backfill_ticker` now skips any date already covered by a live OR
+  backfill record (live wins — a real contemporaneous compute beats a historical
+  approximation). `backfilled_vintages` is retained for diagnostics.
+- **Results.** `scripts/test_reliability_anchor_backfill.py` **46 → 60** (+8 G1
+  filing-lag gate / corrected goldens / discrimination / pre-filing degrade; +6 G2
+  same-date seam guard + single-count migration). Canonical sweep unchanged-green
+  (entry_v4 92, 7A 115, 7B 193, router 104, 6c_b 47, stopbleed 65, archive 60);
+  full `test_reliability_*` **GREEN=64 / RED=13** (identical pre-existing reds).
+  `macro_regime.py` untouched; no i18n change this round; `git diff --check` clean.
+
 ## Pending — rounds v2.4–v2.5
 
 Not started. Scope to be specified when each round opens. Round 1 establishes the
