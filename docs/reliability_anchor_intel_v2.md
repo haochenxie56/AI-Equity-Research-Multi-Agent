@@ -640,10 +640,51 @@ guard.
 - **B4 — read cost:** O(total archive bytes) → **O(one ticker's records)** for every
   hot-path read (Matrix B "AFTER" column).
 
-### Status
+### Results (implemented — awaiting review)
 
-**STEP 0 matrices committed; implementation in progress.** Tests / results /
-canonical-sweep counts recorded at closure.
+- **New module** `lib/valuation_diagnosis.py` (pure, deterministic, no I/O):
+  `build_valuation_diagnosis` + `classify_valuation_role` + the visible
+  `VALUATION_ROLE_RULES` config block. **New suite**
+  `scripts/test_reliability_valuation_diagnosis.py` — **46/46**: assembly (§1),
+  consistency cluster/outlier (§2), EVERY `valuation_role` boundary incl. the strict
+  `>15%` long-eligible edge (§3), what_would_change mechanical/placeholder split (§4),
+  reverse-DCF Phase-8 slot (§5), determinism + fail-soft (§6), the
+  `PriceLevelResult.app_fair_value_obj` data-path threading — page sets it /
+  network-free leaves it None, driven on the REAL `compute_price_levels` (§7), render
+  bindings + snapshot EXCLUSION (§8), and i18n token coverage in both languages (§9).
+- **Archive sharding** (`lib/anchor_archive.py`): `ANCHOR_ARCHIVE_DIR` +
+  `shard_path()`; per-ticker reads via `_iter_ticker`; `load_all_records` globs all
+  shards (diagnostics only). One-time offline `scripts/migrate_anchor_archive_to_shards.py`.
+  Read cost **O(total) → O(one ticker's records)**. Tests migrated to the sharded
+  layout + new assertions: `anchor_archive` **60 → 71** (shard isolation 2.11–2.13,
+  migration-script split + idempotent double-run 9.1–9.7), `anchor_backfill`
+  **60 → 61** (5.8 shard write), `phase_6c_v3_entry_v4` **92/92** (§13.10
+  cold-ranking zero-write/zero-network re-run against `ANCHOR_ARCHIVE_DIR`).
+- **Render** on pages/4 (fv expander) + pages/9 (LONG order card + LONG opportunity
+  candidate). `PriceLevelResult.app_fair_value_obj` additive (superset preserved);
+  no diagnosis field enters any snapshot (render-time only — parity by explicit
+  exclusion).
+- **Canonical sweep GREEN:** entry_v4 92 · trading_desk 126 · cockpit_rebuild 47 ·
+  7A 115 · 7B 193 · router 117 · stopbleed 65 · render_order 50 · archive 71 ·
+  backfill 61 · valuation_diagnosis 46. Full `test_reliability_*` sweep
+  **GREEN=65 / RED=13** — the 13 are the documented pre-existing orthogonal reds
+  (5e–5s UI/AppTest planning, agent_evaluation, 6b_signal_layer); GREEN rose 64 → 65
+  from the new diagnosis suite. None of this round's files are in the red set.
+- `lib/macro_regime.py` untouched; i18n additive bilingual (`valdiag_*` in both
+  `TRANSLATIONS` blocks). **`.gitattributes` now fully enforced:** `ui_utils.py` —
+  the LONE `i/crlf` file of 308 at the branch base — was normalized to LF, so
+  `git ls-files --eol | grep i/crlf` is empty and `git diff --check` is clean.
+
+### Reliability invariants preserved
+
+- Deterministic computation unchanged: the diagnosis is assembled from existing
+  `AppFairValue` / migration fields — no LLM, no new anchor math, no number invented.
+- No card read triggers a compute/fetch on any path; the network-free ranking path
+  carries no `app_fair_value_obj` and assembles no card.
+- Archive: append-only, page-path-only writes (§13.10), single-vintage,
+  never-fabricate, G2 seam guard — all preserved under per-ticker sharding.
+- `valuation_role` is the documented deterministic INTERFACE to the 7A three-horizon
+  view; reverse-DCF + narrative catalysts are NAMED Phase-8-pending placeholders.
 
 ## Pending — round v2.5
 

@@ -5,6 +5,34 @@
 > history preserved verbatim). This file keeps only the active phase. The
 > long-form running status remains in `docs/ai_dev_state/PROJECT_STATE.md`.
 
+## Anchor Intelligence v2.4 — Valuation Diagnosis Card + F4 Archive Sharding (implemented — AWAITING REVIEW)
+
+Branch `phase-anchor-intel-v2-4` off `990ed90`. Access-path-first (STEP 0 matrices
+committed at `b5277b8` before any code). **Deterministic; no LLM invents a number;
+the diagnosis adds no anchor math and triggers no compute/fetch on any path.** Phase
+doc `docs/reliability_anchor_intel_v2.md`.
+
+- **PART A — valuation diagnosis card.** New pure `lib/valuation_diagnosis.py`:
+  `build_valuation_diagnosis` ASSEMBLES a `ValuationDiagnosis` from existing
+  `AppFairValue` + migration fields (company_type, applicable/rejected methods with
+  reasons, anchor consistency cluster-vs-outlier, endorsed range incl. honest
+  irreconcilable state, confidence). NEW deterministic `classify_valuation_role`
+  (visible config block) → `{informational|mid_term_supportive|long_term_eligible}`,
+  the documented interface to 7A (wiring deferred). `what_would_change` = MECHANICAL
+  conditions now (price-vs-range, analyst-pool deterioration) + NARRATIVE Phase-8
+  placeholder; reverse-DCF = named Phase-8 slot. Rendered on pages/4 + pages/9 via
+  `ui_utils.render_valuation_diagnosis_card`; threaded via additive
+  `PriceLevelResult.app_fair_value_obj` (no second compute; None on the network-free
+  path). No snapshot field (render-time only). Suite **46/46**.
+- **PART B — F4 sharding.** `lib/anchor_archive.py` sharded per ticker
+  (`data/anchor_archive/<TICKER>.jsonl`); reads O(total) → O(ticker). One-time
+  offline `scripts/migrate_anchor_archive_to_shards.py`. Invariants preserved
+  (append-only, page-path-only writes/§13.10, single-vintage, never-fabricate, G2
+  seam). `anchor_archive` 60→71, `anchor_backfill` 60→61, `entry_v4` 92/92.
+- **Sweep** GREEN=65 / RED=13 (pre-existing orthogonal reds). `ui_utils.py`
+  normalized to LF (lone CRLF outlier); `git diff --check` clean. **Awaiting review;
+  not merged.** Next: relay reviewer APPROVE → merge `--no-ff` to `main`.
+
 ## Anchor Intelligence v2.3 — Anchor Historization + Historical Backfill (fully CLOSED)
 
 v2.3 turns the unified anchor (Round 1) into an **append-only historical series** and
