@@ -343,6 +343,41 @@ check("8.4 valuation_role / diagnosis is NOT in the snapshot anchor-block keys "
 
 
 # ===========================================================================
+# 9. A5 — i18n coverage: EVERY token the render can emit has a bilingual key
+# ===========================================================================
+import ui_utils as _ui  # noqa: E402
+
+_zh = _ui.TRANSLATIONS["zh"]
+_en = _ui.TRANSLATIONS["en"]
+# The dynamic keys render_valuation_diagnosis_card builds via t(f"...{token}").
+_needed = ["valdiag_header", "valdiag_role", "valdiag_consistency",
+           "valdiag_endorsed_range", "valdiag_range_irreconcilable",
+           "valdiag_range_unavailable", "valdiag_applicable_methods",
+           "valdiag_rejected_methods", "valdiag_what_would_change",
+           "valdiag_outlier", "valdiag_cond_met", "valdiag_cond_armed",
+           "valdiag_reverse_dcf_pending", "valdiag_narrative_pending",
+           "valdiag_reason_dcf_unavailable", "valdiag_reason_excluded_anchor"]
+_needed += [f"valdiag_role_{r}" for r in
+            (vd.VALUATION_ROLE_INFORMATIONAL, vd.VALUATION_ROLE_MID, vd.VALUATION_ROLE_LONG)]
+_needed += [f"valdiag_consistency_{s}" for s in
+            (vd.CONSISTENCY_CONSISTENT, vd.CONSISTENCY_SINGLE,
+             vd.CONSISTENCY_IRRECONCILABLE, vd.CONSISTENCY_NO_ANCHOR)]
+_needed += [f"valdiag_cond_{c}" for c in
+            (vd.COND_PRICE_ABOVE_RANGE, vd.COND_PRICE_BELOW_RANGE,
+             vd.COND_ANALYST_POOL_DETERIORATING)]
+_missing_zh = [k for k in _needed if k not in _zh]
+_missing_en = [k for k in _needed if k not in _en]
+check("9.1 every diagnosis-card token has a zh translation key",
+      _missing_zh == [], detail=str(_missing_zh))
+check("9.2 every diagnosis-card token has an en translation key",
+      _missing_en == [], detail=str(_missing_en))
+check("9.3 render helper + the role-reason flag key it reuses exist",
+      hasattr(_ui, "render_valuation_diagnosis_card")
+      and "cockpit_fv_flag_cycle_distorted" in _zh
+      and "cockpit_fv_flag_cycle_distorted" in _en)
+
+
+# ===========================================================================
 print("\n".join(_failures))
 total = PASS + FAIL
 print(f"\nAnchor Intelligence v2.4 — valuation diagnosis card — {PASS}/{total} checks passed.")
