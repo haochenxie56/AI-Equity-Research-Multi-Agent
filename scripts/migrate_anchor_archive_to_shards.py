@@ -19,6 +19,12 @@ Properties:
   ``computed_at`` + ``data_vintage``) is skipped, so a re-run writes ZERO duplicates.
 * **Non-destructive.** The legacy file is LEFT in place; remove it manually once the
   migration is verified. (Reads no longer consult it.)
+* **Semantically faithful (NOT byte-faithful).** Records are parsed (``json.loads``)
+  and re-serialized (``json.dumps``) into the shard, so the on-disk BYTE representation
+  may differ (JSON key order / whitespace). What IS guaranteed: every record's semantic
+  fields are preserved exactly, the total record count is preserved, and the
+  append-only invariant holds. The field-level fidelity + count guarantee is enforced
+  by ``scripts/test_reliability_anchor_archive.py`` §9.
 
 Usage::
 

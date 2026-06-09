@@ -290,6 +290,26 @@ def reset_dedup_cache() -> None:
     _APPENDED_KEYS.clear()
 
 
+def _canonical_shard_str(p: Path) -> str:
+    """Canonical absolute string for a shard path (dedup-key stable; F-B2).
+
+    Uses ``Path.resolve()`` so equivalent aliases of the same shard — relative vs.
+    absolute, a ``./`` prefix, or a symlinked root — collapse to ONE key and cannot
+    bypass the append dedup (which would let the same vintage be appended twice and
+    corrupt the append-only series / migration speed). ``resolve(strict=False)`` does
+    not require the file to exist (a first append targets a not-yet-created shard).
+    Fail-closed: an unresolvable path falls back to its absolute form, then its raw
+    string, so the dedup key is always well-defined.
+    """
+    try:
+        return str(p.resolve())
+    except Exception:  # noqa: BLE001 — fail-closed; still canonicalize what we can
+        try:
+            return str(p.absolute())
+        except Exception:  # noqa: BLE001
+            return str(p)
+
+
 def append_record(record: dict, path: Optional[Path] = None) -> bool:
     """Append one well-formed ``record`` to the archive (atomic, fail-closed).
 
@@ -305,7 +325,7 @@ def append_record(record: dict, path: Optional[Path] = None) -> bool:
     if not tk:
         return False
     p = shard_path(tk, path)
-    key = (str(p), tk, str((record or {}).get("computed_at", "") or ""))
+    key = (_canonical_shard_str(p), tk, str((record or {}).get("computed_at", "") or ""))
     if key in _APPENDED_KEYS:
         return True  # same vintage re-surfaced this session — append-only no-op
     try:

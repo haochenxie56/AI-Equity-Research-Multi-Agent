@@ -209,6 +209,22 @@ _all_tickers = {r["ticker"] for r in aa.load_all_records(path=_root)}
 check("2.13 load_all_records globs ALL shards (MU + WNDW present)",
       _all_tickers == {"MU", "WNDW"}, detail=str(sorted(_all_tickers)))
 
+# F-B2 — the in-process dedup memo keys on the CANONICAL (resolved) shard path, so two
+# ALIAS forms of the same root (here `root` vs `root/.`) cannot bypass dedup and append
+# the same vintage twice. Without Path.resolve() the str keys differ -> 2 rows (a real
+# append-only / migration-speed corruption); with it -> exactly 1 row.
+_dal = tempfile.mkdtemp()
+_root_x = Path(_dal)
+_root_alias = Path(_dal) / "."          # resolves to the SAME directory
+aa.reset_dedup_cache()
+_alias_fv = _fv(ticker="ALIASX", mid=50.0, computed_at="2026-06-07T00:00:00+00:00")
+check("2.14 append via root form #1 succeeds", aa.append_anchor_record(_alias_fv, path=_root_x))
+check("2.14b append via alias root form (./) is deduped (same vintage, NOT a 2nd row)",
+      aa.append_anchor_record(_alias_fv, path=_root_alias))
+_alias_rows = aa.shard_path("ALIASX", _root_x).read_text(encoding="utf-8").splitlines()
+check("2.15 F-B2: alias root forms collapse to ONE dedup key -> exactly one row",
+      len(_alias_rows) == 1, detail=f"rows={len(_alias_rows)}")
+
 
 # ===========================================================================
 # 3. U1/F1 — archive at the PRODUCER chokepoint (covers pages/4, pages/7, pages/9)
@@ -576,6 +592,33 @@ check("9.6 IDEMPOTENT: a second migration writes ZERO duplicate rows",
 check("9.7 shards unchanged after the idempotent re-run (still 2+1 rows)",
       len(aa.read_archive("AAA", path=_shard_root)) == 2
       and len(aa.read_archive("BBB", path=_shard_root)) == 1)
+
+# F-B3 — SEMANTIC fidelity (NOT byte fidelity): the migration parses + re-serializes,
+# so on-disk bytes may differ (key order / whitespace) — that is NOT asserted. What IS
+# asserted: record COUNT preserved across the split, and every migrated record equals
+# an original record FIELD-FOR-FIELD (a dict==dict semantic match), and vice-versa.
+_migrated_all = (aa.read_archive("AAA", path=_shard_root)
+                 + aa.read_archive("BBB", path=_shard_root))
+check("9.8 record COUNT preserved across the split (3 legacy -> 3 sharded)",
+      len(_migrated_all) == len(_legacy_recs),
+      detail=f"{len(_migrated_all)} vs {len(_legacy_recs)}")
+
+
+def _rec_key(r):
+    return (r.get("ticker"), r.get("computed_at"), r.get("data_vintage"))
+
+
+_orig_by_key = {_rec_key(r): r for r in _legacy_recs}
+_mig_by_key = {_rec_key(r): r for r in _migrated_all}
+check("9.9 every migrated record matches its original FIELD-FOR-FIELD (semantic fidelity)",
+      set(_orig_by_key) == set(_mig_by_key)
+      and all(_mig_by_key[k] == _orig_by_key[k] for k in _orig_by_key),
+      detail=str([k for k in _orig_by_key if _mig_by_key.get(k) != _orig_by_key.get(k)]))
+# Byte representation MAY differ (reserialization) — assert that's tolerated, not that
+# it's required: a re-dumped record need not be byte-equal but MUST be field-equal.
+_sample_k = _rec_key(_legacy_recs[0])
+check("9.10 semantic (not byte) contract: fields equal even if dumped-byte order differs",
+      _mig_by_key[_sample_k] == _orig_by_key[_sample_k])
 
 
 # ===========================================================================
