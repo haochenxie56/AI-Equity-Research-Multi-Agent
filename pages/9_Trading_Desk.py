@@ -33,7 +33,8 @@ if str(_REPO_ROOT) not in sys.path:
 
 import streamlit as st
 
-from ui_utils import apply_theme, render_sidebar, t
+from ui_utils import apply_theme, render_sidebar, t, render_valuation_diagnosis_card
+from lib.valuation_diagnosis import build_valuation_diagnosis
 
 from lib.holdings import (
     HoldingRecord,
@@ -944,6 +945,17 @@ def _render_order_card(h, rec) -> None:
                     f'margin:4px 0;color:var(--t0);">📉 {_amn}</div>',
                     unsafe_allow_html=True,
                 )
+        # Anchor Intel v2.4 — valuation diagnosis card (LONG horizon; pure assembly,
+        # NO live compute). Built from the AppFairValue the page-path compute_price_levels
+        # ALREADY produced (levels.app_fair_value_obj) + the migration the monitor already
+        # read (_chk.anchor_migration) — see the v2.4 STEP 0 Matrix A.
+        if (_hz or "").strip().lower() == "long":
+            _fv_obj = getattr(levels, "app_fair_value_obj", None)
+            if _fv_obj is not None:
+                _mig = getattr(_chk, "anchor_migration", None) if _chk is not None else None
+                render_valuation_diagnosis_card(build_valuation_diagnosis(
+                    _fv_obj, migration=_mig,
+                    current_price=getattr(levels, "current_price", None)))
         # Row 2 — entry / stop / target. The entry zone may be None (blocked).
         r2 = st.columns(3)
         if blocked:
@@ -1219,6 +1231,16 @@ def _render_opp_entry_zone(levels, signal: dict | None = None) -> None:
         _wt = _nt or getattr(levels, "wait_target", "") or getattr(levels, "entry_blocked_reason", "")
         if _wt:
             st.caption(f"⏭️ {t('opp_next_trigger')}: {_wt}")
+    # Anchor Intel v2.4 — valuation diagnosis card (LONG candidates; pure assembly).
+    # The candidate is not a holding, so there is no thesis-monitor migration readout
+    # (analyst-pool condition simply absent); the AppFairValue was already computed on
+    # the page-path compute_price_levels (levels.app_fair_value_obj). No live compute.
+    if (horizon or "").strip().lower() == "long":
+        _fv_obj = getattr(levels, "app_fair_value_obj", None)
+        if _fv_obj is not None:
+            render_valuation_diagnosis_card(build_valuation_diagnosis(
+                _fv_obj, migration=None,
+                current_price=getattr(levels, "current_price", None)))
 
 
 if not _opp_candidates:

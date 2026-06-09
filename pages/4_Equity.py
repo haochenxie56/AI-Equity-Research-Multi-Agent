@@ -21,7 +21,7 @@ from ui_utils import (
     apply_theme, render_sidebar, load_info, load_ohlcv, load_earnings,
     fmt_large, fmt_pct, fmt_val, apply_layout, apply_legend,
     download_report_button, page_header, translate_to_chinese, render_table,
-    load_news, t, render_workflow_bar,
+    load_news, t, render_workflow_bar, render_valuation_diagnosis_card,
 )
 from financial_tab import render_financial_tab
 from pv_tab import render_pv_tab
@@ -672,6 +672,18 @@ _fv = st.session_state[_fv_key]
 
 _fv_irreconcilable = getattr(_fv, "blend_state", "blended") == "anchors_irreconcilable"
 
+# Anchor Intel v2.4 — valuation diagnosis card (pure assembly; NO live compute).
+# Reads the already-computed _fv + the read-only migration readout (no network); see
+# the v2.4 STEP 0 Matrix A. Assembled once here, rendered inside the fv expander.
+from lib.valuation_diagnosis import build_valuation_diagnosis  # noqa: E402
+try:
+    from lib.anchor_migration import read_migration  # noqa: E402
+
+    _val_migration = read_migration(ticker)
+except Exception:  # noqa: BLE001 — fail-soft; no migration readout
+    _val_migration = None
+_val_diag = build_valuation_diagnosis(_fv, migration=_val_migration, current_price=price)
+
 
 def _render_company_type_badge(_fv) -> None:
     """Render the method-router badge: company type + methods used + excluded
@@ -718,6 +730,9 @@ def _render_company_type_badge(_fv) -> None:
 
 with fv_slot.container().expander(t("cockpit_fv_header"), expanded=True):
     _render_company_type_badge(_fv)
+    # Valuation diagnosis card (v2.4): why-this-valuation, role, what-would-change.
+    render_valuation_diagnosis_card(_val_diag)
+    st.divider()
     if _fv.fair_value_mid <= 0 and not _fv_irreconcilable:
         st.info(t("cockpit_fv_na"))
     elif _fv_irreconcilable:
