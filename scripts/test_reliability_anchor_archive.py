@@ -210,19 +210,32 @@ check("2.13 load_all_records globs ALL shards (MU + WNDW present)",
       _all_tickers == {"MU", "WNDW"}, detail=str(sorted(_all_tickers)))
 
 # F-B2 — the in-process dedup memo keys on the CANONICAL (resolved) shard path, so two
-# ALIAS forms of the same root (here `root` vs `root/.`) cannot bypass dedup and append
-# the same vintage twice. Without Path.resolve() the str keys differ -> 2 rows (a real
-# append-only / migration-speed corruption); with it -> exactly 1 row.
+# GENUINELY-aliased root forms cannot bypass dedup and append the same vintage twice.
+# The two forms must STRING-DIFFER before resolve() (else the test would pass with OR
+# without the fix and would not guard F-B2 — review C4): `root` vs `root/sub/..`, where
+# `sub` is a real directory so `sub/..` traverses on disk AND collapses under resolve().
+# pathlib does NOT normalize `..` (it could change meaning across symlinks), so the raw
+# strings differ; resolve() collapses them to one path. Pre-fix (str(p) key): the two
+# differing strings -> 2 dedup keys -> 2 rows (append-only / migration-speed corruption).
+# Post-fix (resolve() key): one canonical key -> exactly 1 row.
 _dal = tempfile.mkdtemp()
-_root_x = Path(_dal)
-_root_alias = Path(_dal) / "."          # resolves to the SAME directory
+_abs_root = Path(_dal)
+(Path(_dal) / "sub").mkdir(parents=True, exist_ok=True)   # real dir so sub/.. traverses
+_alias_root = Path(_dal) / "sub" / ".."                   # str-differs; resolves equal
 aa.reset_dedup_cache()
 _alias_fv = _fv(ticker="ALIASX", mid=50.0, computed_at="2026-06-07T00:00:00+00:00")
-check("2.14 append via root form #1 succeeds", aa.append_anchor_record(_alias_fv, path=_root_x))
-check("2.14b append via alias root form (./) is deduped (same vintage, NOT a 2nd row)",
-      aa.append_anchor_record(_alias_fv, path=_root_alias))
-_alias_rows = aa.shard_path("ALIASX", _root_x).read_text(encoding="utf-8").splitlines()
-check("2.15 F-B2: alias root forms collapse to ONE dedup key -> exactly one row",
+_shard_abs = aa.shard_path("ALIASX", _abs_root)
+_shard_alias = aa.shard_path("ALIASX", _alias_root)
+check("2.14 GENUINE alias: the two shard-path STRINGS differ but resolve to one path",
+      str(_shard_abs) != str(_shard_alias)
+      and _shard_abs.resolve() == _shard_alias.resolve(),
+      detail=f"{_shard_abs} vs {_shard_alias}")
+check("2.14b both appends succeed (abs form, then the str-different `sub/..` alias form)",
+      aa.append_anchor_record(_alias_fv, path=_abs_root)
+      and aa.append_anchor_record(_alias_fv, path=_alias_root))
+_alias_rows = _shard_abs.read_text(encoding="utf-8").splitlines()
+check("2.15 F-B2: str-different alias roots collapse to ONE canonical dedup key -> one row "
+      "(FAILS pre-fix: differing str(p) keys -> 2 rows)",
       len(_alias_rows) == 1, detail=f"rows={len(_alias_rows)}")
 
 
