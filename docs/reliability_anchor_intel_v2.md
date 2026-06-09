@@ -488,9 +488,168 @@ Bumping would orphan older live rows behind the read-time version guard.
   full `test_reliability_*` **GREEN=64 / RED=13** (identical pre-existing reds).
   `macro_regime.py` untouched; no i18n change this round; `git diff --check` clean.
 
-## Pending — rounds v2.4–v2.5
+## Round v2.4 — valuation diagnosis card + archive sharding (F4 repayment)
 
-Not started. Scope to be specified when each round opens. Round 1 establishes the
-single-producer / structured-pool / epoch foundation those rounds build on; v2.3
-adds the append-only historical series + migration readout, and the backfill round
-seeds that series with recomputable history.
+> **Round-1 lesson applied first (STEP 0 before any code).** Both features in this
+> round are *access-path* problems, not feature-bolt-ons. The **diagnosis card** is
+> an *assembly* problem: which surface already holds the `AppFairValue` / migration
+> readout, and does reading it on that surface trigger a live compute (it must not
+> on any network-free path)? **Archive sharding** is a *reader-migration* problem:
+> every current reader of the single-file archive must move to the bounded
+> per-shard read, or the O(total) cost survives in the un-migrated caller. The two
+> matrices below are committed BEFORE the code.
+
+### STEP 0 — caller-contract matrix (audited against the real call sites)
+
+#### Matrix A — valuation diagnosis card
+
+Every render surface that will show the card, the data it READS, and whether that
+read triggers a live compute/fetch. The card is a **render-time assembly**; it adds
+**no** anchor math and **no** new network call on any path.
+
+| surface (verified file:line) | reads from | live compute / fetch? |
+|---|---|---|
+| `lib/valuation_diagnosis.build_valuation_diagnosis(fv, migration)` (NEW, pure) | its arguments only | **NO I/O** — pure function; identical inputs → identical `ValuationDiagnosis` |
+| `lib/valuation_diagnosis.classify_valuation_role(...)` (NEW, A2) | `(confidence, anchor_consistency, upside_vs_price, blend_state)` scalars | **NO I/O** — pure deterministic config-table lookup |
+| `pages/4_Equity.py` (renders in the `fv_slot` expander, after the range bar ~:838) | `_fv` — the `AppFairValue` ALREADY in `st.session_state[_fv_key]`, computed once on the page path at `pages/4_Equity.py:668` (`compute_app_fair_value`, `allow_fetch` page path) **+** `anchor_migration.read_migration(ticker)` (read-only archive) | **NO new compute** — reuses the already-computed `_fv`; `read_migration` is read-only, **zero network** |
+| `pages/9_Trading_Desk.py` (renders in the LONG valuation block ~:925–1064) | `levels.app_fair_value_obj` — **NEW** `PriceLevelResult` field carrying the `fva_obj` the page-path `compute_price_levels(allow_fetch=True)` ALREADY live-computed at `order_advisor._gather_technicals:1422` **+** `_chk.anchor_migration` — the migration readout `thesis_monitor.check_holding` ALREADY read read-only at `thesis_monitor.py:590` | **NO new compute** — reuses the already-computed `fva_obj` + the migration the monitor already read |
+
+Derived invariants (enforced by tests):
+
+1. **No card read triggers a live compute or fetch.** pages/4 reuses the session
+   `_fv`; pages/9 reuses the `fva_obj` already computed inside `compute_price_levels`
+   (threaded out on the new `PriceLevelResult.app_fair_value_obj` field — set ONLY
+   when `fva_obj` exists, i.e. the `allow_fetch=True` page path; it is `None` on the
+   `allow_fetch=False` ranking/refresh path, so the ranking path carries no heavy
+   object and the card is never assembled there). `read_migration` is a read-only
+   archive read with no network on any path.
+2. **`PriceLevelResult` stays a strict superset** (the order-advisor test
+   constraint): `app_fair_value_obj: Optional[object] = None` is purely additive.
+3. **Snapshot parity — explicit EXCLUSION.** No diagnosis-card field (including
+   `valuation_role`) flows into the daily snapshot / `OpportunityCard.anchor_snapshot`
+   this round. The card is a render-time assembly on pages/4 + pages/9 ONLY, so there
+   is nothing to bind in the §18 / archive-suite §7 snapshot-parity partition. This
+   is the *bind-or-explicitly-exclude* discipline satisfied by explicit exclusion +
+   rationale. `valuation_role` is documented (A2) as the deterministic INTERFACE the
+   7A three-horizon view will later consume; wiring it INTO the ranker / snapshot is
+   **deferred** (out of scope this round — that would be a 7A scoring change).
+
+#### Matrix B — archive readers (sharding migration)
+
+Every CURRENT reader/writer of the append-only archive, audited against the real
+call sites. **No reader is left unclassified.** All production READS are already
+keyed by a single ticker — the one all-ticker reader (`load_all_records`) has **no
+production caller** — so per-ticker sharding bounds every hot-path read.
+
+| caller (verified file:line) | archive API | read scope | cost BEFORE (single file) | cost AFTER (sharded) |
+|---|---|---|---|---|
+| `anchor_migration.read_migration` `:242` | `read_archive(ticker, window, path)` | one ticker | O(total archive bytes) | **O(ticker shard)** |
+| `thesis_monitor.check_holding` `:590` | `read_migration(ticker)` (default path) | one ticker | O(total) | **O(ticker shard)** |
+| `anchor_backfill.backfill_ticker` `:525` | `covered_vintages(tk, path)` | one ticker | O(total) | **O(ticker shard)** |
+| `anchor_archive.read_archive` `:307` | internal `_iter_records` then filter by ticker | one ticker | O(total) | **O(ticker shard)** — reads only `<root>/<TICKER>.jsonl` |
+| `anchor_archive.covered_vintages` `:341` | internal `_iter_records` then filter | one ticker | O(total) | **O(ticker shard)** |
+| `anchor_archive.backfilled_vintages` `:325` | internal `_iter_records` then filter | one ticker (diagnostics/tests) | O(total) | **O(ticker shard)** |
+| `anchor_archive.load_all_records` `:302` | internal `_iter_records` | ALL tickers — **NO production caller** (diagnostics/tests only) | O(total) | O(total) — globs `<root>/*.jsonl`; unchanged, not on any hot path |
+| **WRITE** `equity_valuation.compute_app_fair_value` `:1626` | `append_anchor_record(fv)` (no path) | one ticker append | O(1) append | O(1) append to `<root>/<TICKER>.jsonl` |
+| **WRITE** `anchor_backfill.backfill_ticker` `:544` | `append_record(rec, path)` | one ticker append | O(1) | O(1) to shard |
+| Tests: `test_reliability_anchor_archive.py`, `test_reliability_anchor_backfill.py`, `test_reliability_phase_6c_v3_entry_v4.py` §13.10 | inject `path` / patch `ANCHOR_ARCHIVE_PATH` | — | — | inject / patch the shard **ROOT** (`ANCHOR_ARCHIVE_DIR`) |
+
+**Non-readers explicitly classified (not archive readers):**
+`lib/reliability/company_research_hub.py:_result_iter_records` — a memory-query
+result iterator (different module, unrelated to `anchor_archive`); NOT an archive
+reader.
+
+**Sharding strategy & layout.** Per-ticker sharding — chosen over a tail-bounded
+read because the single file interleaves all tickers, so a tail read cannot bound a
+*per-ticker* read (the most-recent N records for ticker T may sit arbitrarily far
+back behind other tickers' appends); sharding makes a read for T touch only T's
+bytes, robustly. New canonical store: directory `data/anchor_archive/` with one
+shard `<TICKER>.jsonl` per ticker (constant `ANCHOR_ARCHIVE_DIR`). The injectable
+`path` / `archive_path` parameter is reinterpreted as the shard **ROOT directory**
+(default `ANCHOR_ARCHIVE_DIR`); the shard for ticker T is `<root>/<T>.jsonl`. The
+legacy single-file `data/anchor_archive.jsonl` (constant `ANCHOR_ARCHIVE_PATH`,
+retained) is read only by the one-time migration.
+
+**Backward compatibility — one-time OFFLINE migration.** `data/` is fully
+git-ignored, so the layout change touches **no tracked file**. A one-time
+`scripts/migrate_anchor_archive_to_shards.py` splits the legacy single file into
+per-ticker shards — an explicit offline step (like `backfill_anchors.py`), **never
+on app startup** and never on the ranking/refresh path. Reads do NOT auto-migrate
+(that would reintroduce the O(total) read). Append-only and atomicity are preserved
+per shard: appends `open(shard, "a")` + `flush` + `fsync` of one line, unchanged;
+the in-process dedup memo keys on `(resolved shard path, ticker, computed_at)`,
+still unique. The seam guard (`covered_vintages` spanning live + backfill) is intact
+— both origins live in the same per-ticker shard.
+
+**Invariants preserved (re-tested on the new layout):** append-only (no row
+mutation), page-path-only writes (the §13.10 cold-ranking zero-write/zero-network
+test is ported to the sharded layout), single-vintage, never-fabricate, G2 seam
+guard.
+
+### PART A — valuation diagnosis card (`lib/valuation_diagnosis.py`, NEW)
+
+- **A1 — `ValuationDiagnosis` (assembled, no new anchor math).** Pure
+  `build_valuation_diagnosis(fv, *, migration=None, current_price=None)` reads ONLY
+  fields already on `AppFairValue` + the migration readout: `company_type`;
+  `applicable_methods` (= `methods_used`); `rejected_methods` WITH reasons (reuse the
+  existing `excluded_anchors` `{name, value, basis, flag}` tokens incl.
+  `cycle_distorted`, plus the menu's "DCF excluded for type" rationale); plus the
+  Phase-8 `reverse_dcf` slot (A4); `anchor_consistency` (which anchors cluster vs the
+  outlier — derived from the existing `anchors` list + `anchor_dispersion` /
+  `blend_state`); `endorsed_range` (the blended `fair_value_low/high`, or the honest
+  `anchors_irreconcilable` "shown separately" state); `confidence` (the existing
+  value, already incl. the v2.2 pool-dispersion cap). Duck-typed via `getattr` (same
+  tolerance as `record_from_app_fair_value`); never raises.
+- **A2 — `valuation_role` (NEW deterministic mapping).** Single visible config block
+  `VALUATION_ROLE_RULES` mapping `(confidence × anchor_consistency × upside-vs-price)`
+  → `{informational | mid_term_supportive | long_term_eligible}`. Draft rules (tunable
+  in the config, not hardcoded): `confidence == low` → `informational` regardless;
+  `irreconcilable` anchors → `informational`; `medium` + consistent anchors →
+  `mid_term_supportive`; `high` + consistent + `upside > 15%` → `long_term_eligible`;
+  else `informational`. Fully deterministic, no LLM. **Documented intent:** this is
+  the interface between the valuation layer and the 7A three-horizon view; the
+  consumer wiring is a future round.
+- **A3 — `what_would_change`.** (i) MECHANICAL conditions implemented now, in the
+  same falsifiable-condition shape `thesis_monitor` uses: "price crosses above/below
+  the endorsed range without an estimate revision" (sourced from `endorsed_range` +
+  `current_price`), "analyst-pool migration crosses a deterioration threshold"
+  (sourced from the v2.3 migration readout's `deteriorating` / `consistency`).
+  (ii) NARRATIVE catalysts (margin guidance, etc.) — explicit **Phase-8 PLACEHOLDER**
+  field, empty this round.
+- **A4 — reverse-DCF slot.** A named, documented **Phase-8-pending** placeholder in
+  the method menu / card. Reverse DCF is NOT implemented this round.
+- **A5 — render on pages/4 + pages/9.** UI-copy discipline (the v1 #3 lesson):
+  decision-relevant, bilingual wording in the main view; method-detail / token-level
+  content folded into an expander/tooltip — no developer-text in primary cells. New
+  `t()` keys are additive bilingual in both `TRANSLATIONS` blocks.
+
+### PART B — F4 archive sharding repayment
+
+- **B1 — per-ticker sharding** (strategy + rationale above). `ANCHOR_ARCHIVE_DIR`
+  added; `_shard_path(ticker, root)` resolves `<root>/<TICKER>.jsonl`; `_iter_records`
+  reads ONE shard (the ticker's) for the per-ticker readers, via a new
+  ticker-scoped internal iterator.
+- **B2 — reader migration.** `read_archive`, `covered_vintages`, `backfilled_vintages`
+  read the single ticker shard; `load_all_records` globs all shards (diagnostics
+  only). `read_migration` / `backfill_ticker` / `thesis_monitor` inherit the bounded
+  read transparently (they already pass a ticker). Appends route to the per-ticker
+  shard. `scripts/migrate_anchor_archive_to_shards.py` ships the one-time split.
+- **B3 — invariants** preserved (append-only, page-path-only writes, §13.10
+  zero-write/zero-network re-run on the new layout, single-vintage, never-fabricate,
+  G2 seam guard).
+- **B4 — read cost:** O(total archive bytes) → **O(one ticker's records)** for every
+  hot-path read (Matrix B "AFTER" column).
+
+### Status
+
+**STEP 0 matrices committed; implementation in progress.** Tests / results /
+canonical-sweep counts recorded at closure.
+
+## Pending — round v2.5
+
+Not started. Scope to be specified when the round opens (multi-dimensional peer
+profile + honest `peer_match_quality` fallback). Round 1 establishes the
+single-producer / structured-pool / epoch foundation; v2.3 adds the append-only
+historical series + migration readout; the backfill round seeds that series with
+recomputable history; v2.4 adds the valuation diagnosis card + per-ticker archive
+sharding.
