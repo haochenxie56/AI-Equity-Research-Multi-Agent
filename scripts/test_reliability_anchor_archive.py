@@ -144,17 +144,23 @@ check("1.6 no analyst coverage -> analyst_pool None (not fabricated)",
 
 
 # ===========================================================================
-# 2. U1 — APPEND-ONLY + schema guard + fail-closed
+# 2. U1 — APPEND-ONLY + schema guard + fail-closed (v2.4: per-ticker shards)
 # ===========================================================================
+# v2.4 F4: ``path`` is now the shard ROOT directory; the MU rows land in
+# ``<root>/MU.jsonl``. Raw-file assertions read the ticker's shard via shard_path().
 _d = tempfile.mkdtemp()
-_p = Path(_d) / "anchor_archive.jsonl"
+_root = Path(_d)
+_mu_shard = aa.shard_path("MU", _root)
 
-check("2.1 append #1 succeeds", aa.append_anchor_record(_fv(mid=110.0), path=_p))
-_line1_after_first = _p.read_text(encoding="utf-8").splitlines()[0]
+check("2.1 append #1 succeeds", aa.append_anchor_record(_fv(mid=110.0), path=_root))
+check("2.1b append routes to the per-ticker shard <root>/MU.jsonl",
+      _mu_shard == _root / "MU.jsonl" and _mu_shard.is_file(),
+      detail=str(_mu_shard))
+_line1_after_first = _mu_shard.read_text(encoding="utf-8").splitlines()[0]
 check("2.2 append #2 (same ticker) succeeds",
       aa.append_anchor_record(
-          _fv(mid=105.0, computed_at="2026-06-09T13:00:00+00:00"), path=_p))
-_lines = _p.read_text(encoding="utf-8").splitlines()
+          _fv(mid=105.0, computed_at="2026-06-09T13:00:00+00:00"), path=_root))
+_lines = _mu_shard.read_text(encoding="utf-8").splitlines()
 check("2.3 second valuation APPENDS a row (2 lines total)", len(_lines) == 2,
       detail=str(len(_lines)))
 check("2.4 APPEND-ONLY: the prior row is byte-for-byte unchanged",
@@ -162,33 +168,46 @@ check("2.4 APPEND-ONLY: the prior row is byte-for-byte unchanged",
 check("2.5 the two rows carry the two distinct mids (no in-place edit)",
       json.loads(_lines[0])["fair_value_mid"] == 110.0
       and json.loads(_lines[1])["fair_value_mid"] == 105.0)
-_read = aa.read_archive("MU", path=_p)
+_read = aa.read_archive("MU", path=_root)
 check("2.6 read_archive returns both rows oldest->newest",
       [r["fair_value_mid"] for r in _read] == [110.0, 105.0],
       detail=str([r["fair_value_mid"] for r in _read]))
 
 # Schema-version guard: a hand-written wrong-version row is SKIPPED on read but the
 # valid rows survive (append-only file with mixed versions stays readable).
-with open(_p, "a", encoding="utf-8") as _fh:
+with open(_mu_shard, "a", encoding="utf-8") as _fh:
     _fh.write(json.dumps({"schema_version": 999, "ticker": "MU",
                           "computed_at": "2026-06-10T00:00:00+00:00",
                           "fair_value_mid": 1.0}) + "\n")
-_read2 = aa.read_archive("MU", path=_p)
+_read2 = aa.read_archive("MU", path=_root)
 check("2.7 schema-version guard skips the wrong-version row on read",
       [r["fair_value_mid"] for r in _read2] == [110.0, 105.0],
       detail=str([r["fair_value_mid"] for r in _read2]))
 check("2.8 fail-closed: append with no ticker returns False, writes nothing",
       aa.append_record({"fair_value_mid": 5.0}) is False)
-check("2.9 fail-closed: read of a missing archive -> []",
-      aa.read_archive("MU", path=Path(_d) / "nope.jsonl") == [])
-# window truncation
+check("2.9 fail-closed: read of a missing archive root -> []",
+      aa.read_archive("MU", path=Path(_d) / "nope") == [])
+# window truncation — WNDW lands in its OWN shard, isolated from MU.
 for i in range(5):
     aa.append_anchor_record(
         _fv(ticker="WNDW", mid=100.0 + i,
-            computed_at=f"2026-06-0{i+1}T00:00:00+00:00"), path=_p)
+            computed_at=f"2026-06-0{i+1}T00:00:00+00:00"), path=_root)
 check("2.10 read_archive window keeps only the most recent N",
-      [r["fair_value_mid"] for r in aa.read_archive("WNDW", window=2, path=_p)]
+      [r["fair_value_mid"] for r in aa.read_archive("WNDW", window=2, path=_root)]
       == [103.0, 104.0])
+
+# v2.4 F4 — SHARD ISOLATION: a read for one ticker touches ONLY its own shard.
+check("2.11 sharding: WNDW rows live in <root>/WNDW.jsonl, NOT in MU's shard",
+      aa.shard_path("WNDW", _root).is_file()
+      and all(r["ticker"] == "MU" for r in aa.read_archive("MU", path=_root))
+      and all(r["ticker"] == "WNDW" for r in aa.read_archive("WNDW", path=_root)),
+      detail=str(sorted(p.name for p in _root.glob("*.jsonl"))))
+check("2.12 sharding: read_archive(MU) is unaffected by WNDW appends (still 2 rows)",
+      [r["fair_value_mid"] for r in aa.read_archive("MU", path=_root)] == [110.0, 105.0])
+# load_all_records globs every shard (diagnostics only; the one O(total) reader).
+_all_tickers = {r["ticker"] for r in aa.load_all_records(path=_root)}
+check("2.13 load_all_records globs ALL shards (MU + WNDW present)",
+      _all_tickers == {"MU", "WNDW"}, detail=str(sorted(_all_tickers)))
 
 
 # ===========================================================================
@@ -198,10 +217,11 @@ check("2.10 read_archive window keeps only the most recent N",
 # store_equity_research_result — so EVERY page-path live compute is historized,
 # including the Trading Desk (pages/9), which never calls the hand-off.
 _d2 = tempfile.mkdtemp()
-_p2 = Path(_d2) / "anchor_archive.jsonl"
+_root2 = Path(_d2)
+_p2 = aa.shard_path("MU", _root2)
 aa.reset_dedup_cache()
 getattr(eqv._compute_cached, "clear", lambda: None)()
-with mock.patch.object(aa, "ANCHOR_ARCHIVE_PATH", _p2), \
+with mock.patch.object(aa, "ANCHOR_ARCHIVE_DIR", _root2), \
         mock.patch.object(eqv, "_fetch_raw", return_value=dict(_LIVE_RAW)):
     _fv_live1 = eqv.compute_app_fair_value("MU", 100.0)
     _fv_live2 = eqv.compute_app_fair_value("MU", 100.0)  # cache hit -> same vintage
@@ -222,10 +242,11 @@ check("3.3 archived row is the live MU vintage",
 # DOES enter the archive. This is the exact gap F1 closes; it would FAIL before the
 # producer-chokepoint move.
 _d3 = tempfile.mkdtemp()
-_p3 = Path(_d3) / "anchor_archive.jsonl"
+_root3 = Path(_d3)
+_p3 = aa.shard_path("TDX", _root3)
 aa.reset_dedup_cache()
 getattr(eqv._compute_cached, "clear", lambda: None)()
-with mock.patch.object(aa, "ANCHOR_ARCHIVE_PATH", _p3), \
+with mock.patch.object(aa, "ANCHOR_ARCHIVE_DIR", _root3), \
         mock.patch.object(eqv, "_fetch_raw", return_value=dict(_LIVE_RAW)), \
         mock.patch("ui_utils.load_ohlcv", return_value=_df40()), \
         mock.patch("lib.technical.snapshot", return_value=_snap100()), \
@@ -243,10 +264,11 @@ check("3.4 F1: Trading Desk (pages/9, allow_fetch=True) live anchor enters the a
 # 3.5 a fixture fallback (data_source != live) is NEVER historized — no fabricated
 # anchor in the migration series.
 _d4 = tempfile.mkdtemp()
-_p4 = Path(_d4) / "anchor_archive.jsonl"
+_root4 = Path(_d4)
+_p4 = aa.shard_path("FIXY", _root4)
 aa.reset_dedup_cache()
 getattr(eqv._compute_cached, "clear", lambda: None)()
-with mock.patch.object(aa, "ANCHOR_ARCHIVE_PATH", _p4), \
+with mock.patch.object(aa, "ANCHOR_ARCHIVE_DIR", _root4), \
         mock.patch.object(eqv, "_fetch_raw", return_value={}):
     _fv_fix = eqv.compute_app_fair_value("FIXY", 100.0)
 check("3.5 fixture fallback is NOT archived (data_source != live)",
@@ -255,9 +277,10 @@ check("3.5 fixture fallback is NOT archived (data_source != live)",
 
 # 3.6 store_equity_research_result no longer appends on its own (chokepoint moved).
 _d5 = tempfile.mkdtemp()
-_p5 = Path(_d5) / "anchor_archive.jsonl"
+_root5 = Path(_d5)
+_p5 = aa.shard_path("MU", _root5)
 aa.reset_dedup_cache()
-with mock.patch.object(aa, "ANCHOR_ARCHIVE_PATH", _p5):
+with mock.patch.object(aa, "ANCHOR_ARCHIVE_DIR", _root5):
     eqv.store_equity_research_result("MU", _fv(mid=110.0))
 check("3.6 store_equity_research_result is no longer an archive site (no double-write)",
       not _p5.exists(), detail=f"exists={_p5.exists()}")
@@ -506,6 +529,53 @@ _src9 = open(os.path.join(_REPO_ROOT, "pages", "9_Trading_Desk.py"),
              encoding="utf-8").read()
 check("8.4 Trading Desk order card binds anchor_migration_watch + _note",
       "anchor_migration_watch" in _src9 and "anchor_migration_note" in _src9)
+
+
+# ===========================================================================
+# 9. v2.4 F4 — one-time legacy→shards migration (offline, idempotent, append-only)
+# ===========================================================================
+import scripts.migrate_anchor_archive_to_shards as _mig  # noqa: E402
+
+# Build a legacy single-file archive with two tickers interleaved (the pre-v2.4
+# layout), then migrate it into per-ticker shards.
+_mig_d = tempfile.mkdtemp()
+_legacy = Path(_mig_d) / "anchor_archive.jsonl"
+_shard_root = Path(_mig_d) / "shards"
+_legacy_recs = [
+    aa.record_from_app_fair_value(_fv(ticker="AAA", mid=10.0,
+                                      computed_at="2026-06-01T00:00:00+00:00")),
+    aa.record_from_app_fair_value(_fv(ticker="BBB", mid=20.0,
+                                      computed_at="2026-06-02T00:00:00+00:00")),
+    aa.record_from_app_fair_value(_fv(ticker="AAA", mid=11.0,
+                                      computed_at="2026-06-03T00:00:00+00:00")),
+]
+with open(_legacy, "w", encoding="utf-8") as _fh:
+    for _r in _legacy_recs:
+        _fh.write(json.dumps(_r, ensure_ascii=False) + "\n")
+
+aa.reset_dedup_cache()
+_ms1 = _mig.migrate(_legacy, _shard_root)
+check("9.1 migration writes every legacy record (3) into shards",
+      _ms1["written"] == 3 and _ms1["legacy_records"] == 3,
+      detail=str(_ms1))
+check("9.2 migration creates one shard PER ticker (AAA.jsonl + BBB.jsonl)",
+      sorted(p.name for p in _shard_root.glob("*.jsonl")) == ["AAA.jsonl", "BBB.jsonl"],
+      detail=str(sorted(p.name for p in _shard_root.glob("*.jsonl"))))
+check("9.3 AAA shard holds ONLY AAA's two rows oldest->newest",
+      [r["fair_value_mid"] for r in aa.read_archive("AAA", path=_shard_root)] == [10.0, 11.0])
+check("9.4 BBB shard holds ONLY BBB's one row",
+      [r["fair_value_mid"] for r in aa.read_archive("BBB", path=_shard_root)] == [20.0])
+check("9.5 legacy file is LEFT in place (non-destructive)", _legacy.is_file())
+
+# Idempotent re-run (fresh process memo): every record already present → ZERO writes.
+aa.reset_dedup_cache()
+_ms2 = _mig.migrate(_legacy, _shard_root)
+check("9.6 IDEMPOTENT: a second migration writes ZERO duplicate rows",
+      _ms2["written"] == 0 and _ms2["skipped_already_present"] == 3,
+      detail=str(_ms2))
+check("9.7 shards unchanged after the idempotent re-run (still 2+1 rows)",
+      len(aa.read_archive("AAA", path=_shard_root)) == 2
+      and len(aa.read_archive("BBB", path=_shard_root)) == 1)
 
 
 # ===========================================================================

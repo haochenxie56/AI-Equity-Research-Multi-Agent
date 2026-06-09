@@ -828,7 +828,10 @@ check("13.9 X1 missing-OHLCV ranked card: honest degrade (LONG Research Required
 # archive write leaked onto the ranking path.
 import lib.anchor_archive as _aarch  # noqa: E402
 
-_arch_path_v23 = Path(tempfile.mkdtemp()) / "anchor_archive.jsonl"
+# v2.4 F4: the archive is sharded under ANCHOR_ARCHIVE_DIR (a directory); redirect
+# the production default there so any leaked write would land in this temp root, not
+# the real archive. A cold rank must create NEITHER the counter increment NOR the dir.
+_arch_root_v23 = Path(tempfile.mkdtemp()) / "anchor_archive_shards"
 _arch_calls_v23 = {"n": 0}
 _real_append_v23 = _aarch.append_anchor_record
 
@@ -845,14 +848,14 @@ with mock.patch("ui_utils.load_ohlcv", return_value=_dummy_df()), \
         mock.patch.object(eqv, "compute_app_fair_value", side_effect=_boom), \
         mock.patch.object(eqv, "fetch_cyclical_band_history", side_effect=_boom), \
         mock.patch.object(eqv, "_fetch_raw", side_effect=_boom), \
-        mock.patch.object(_aarch, "ANCHOR_ARCHIVE_PATH", _arch_path_v23), \
+        mock.patch.object(_aarch, "ANCHOR_ARCHIVE_DIR", _arch_root_v23), \
         mock.patch.object(_aarch, "append_anchor_record", _count_append_v23):
     _x1_arch_cards = orr.rank_opportunities(
         [dict(_x1_cand)], rs_map=_x1_rs, earnings_map={}, top_n=1,
         anchor_cache={}, today=_x1_today)
-check("13.10 X1 cold ranking appends ZERO archive records (page-path-only write)",
-      _arch_calls_v23["n"] == 0 and not _arch_path_v23.exists(),
-      detail=f"calls={_arch_calls_v23['n']}/exists={_arch_path_v23.exists()}")
+check("13.10 X1 cold ranking appends ZERO archive records (page-path-only write, sharded layout)",
+      _arch_calls_v23["n"] == 0 and not _arch_root_v23.exists(),
+      detail=f"calls={_arch_calls_v23['n']}/exists={_arch_root_v23.exists()}")
 check("13.11 X1 cold ranking with archive guard still network-free + one card",
       _net_calls["n"] == 0 and len(_x1_arch_cards) == 1,
       detail=f"net={_net_calls['n']}/cards={len(_x1_arch_cards)}")
