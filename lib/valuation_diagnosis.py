@@ -59,6 +59,12 @@ CONSISTENCY_SINGLE = "single_anchor"           # only one anchor entered the ble
 CONSISTENCY_IRRECONCILABLE = "irreconcilable"  # anchors disagreed beyond threshold
 CONSISTENCY_NO_ANCHOR = "no_anchor"            # no real anchor (band on current price)
 
+# Outlier sentinel: the producer flagged disagreement but did NOT unambiguously name a
+# single outlier (e.g. two anchors at equal deviation, or no per-anchor exclusion
+# signal). We report the ambiguity HONESTLY rather than picking one by list order —
+# the same never-fabricate discipline applied to classification.
+NO_CLEAR_OUTLIER = "no_clear_outlier"
+
 # ---------------------------------------------------------------------------
 # what_would_change — MECHANICAL condition tokens (A3-i). Falsifiable conditions
 # in the same shape thesis_monitor uses (a checkable statement + a current truth).
@@ -238,13 +244,24 @@ def _rejected_methods(fv) -> list:
 
 
 def _anchor_consistency(fv) -> AnchorConsistency:
-    """Derive which anchors cluster vs the outlier from the existing anchors list.
+    """Read (do NOT recompute) the producer's anchor-consistency classification.
 
-    No new math: uses ``blend_state`` + the ``anchors`` list + ``anchor_dispersion``.
-    For an irreconcilable band the OUTLIER is the anchor furthest from the median of
-    the raw anchor values (the diagnostic the card is for); the rest are the cluster.
-    A blended band means the anchors already agreed within the dispersion gate, so
-    all cluster. A single-anchor blend or no-anchor band states so honestly.
+    Assembly-only — the card never derives a fresh outlier metric (F-A1). Every field
+    is SOURCED from what the producer already decided:
+
+    * ``state`` ← ``blend_state`` (irreconcilable / no_anchor / single / blended) +
+      the ``single_anchor_blend`` caveat.
+    * ``clustered`` ← the anchor names the producer kept (its ``anchors`` list).
+    * ``dispersion`` ← the producer's ``anchor_dispersion`` (max/min ratio it already
+      computed) — passed through, not recomputed.
+    * ``outlier`` ← the producer's ONLY per-anchor "this one is off" signal,
+      ``excluded_anchors``. An outlier is reported ONLY when the producer excluded
+      EXACTLY ONE anchor (an unambiguous, producer-made judgment). When the producer
+      flagged the SET as irreconcilable but named no single culprit — or excluded
+      none, or excluded several — we report :data:`NO_CLEAR_OUTLIER` (irreconcilable)
+      or ``""`` (otherwise). We NEVER pick an outlier by list order or by a
+      card-side distance metric: an ambiguous classification is reported as ambiguous
+      (never-fabricate).
     """
     blend_state = str(_g(fv, "blend_state", "") or "")
     anchors = [a for a in (_g(fv, "anchors", []) or []) if isinstance(a, dict)]
@@ -252,33 +269,40 @@ def _anchor_consistency(fv) -> AnchorConsistency:
     dispersion = _g(fv, "anchor_dispersion", None)
     caveats = [str(c) for c in (_g(fv, "caveats", []) or [])]
 
-    if blend_state == _BLEND_IRRECONCILABLE and len(anchors) >= 2:
-        vals = [(str(a.get("name", "") or ""), float(a.get("value", 0.0) or 0.0))
-                for a in anchors
-                if isinstance(a.get("value"), (int, float))
-                and not isinstance(a.get("value"), bool)]
+    # Producer-flagged outlier = exactly one excluded anchor (unambiguous).
+    excluded_names = [str(a.get("name", "") or "")
+                      for a in (_g(fv, "excluded_anchors", []) or [])
+                      if isinstance(a, dict) and a.get("name")]
+
+    # --- state (sourced from blend_state + the single-anchor caveat) ---
+    if blend_state == _BLEND_IRRECONCILABLE:
+        state = CONSISTENCY_IRRECONCILABLE
+    elif blend_state == _BLEND_NONE or _g(fv, "fair_value_mid", 0.0) in (None, 0.0):
+        state = CONSISTENCY_NO_ANCHOR
+    elif len(anchors) <= 1 or "single_anchor_blend" in caveats:
+        state = CONSISTENCY_SINGLE
+    else:
+        state = CONSISTENCY_CONSISTENT
+
+    # --- outlier (sourced from excluded_anchors; ambiguity reported honestly) ---
+    if len(excluded_names) == 1:
+        outlier = excluded_names[0]
+    elif state == CONSISTENCY_IRRECONCILABLE:
+        # The producer refused to blend due to dispersion across the raw anchors but
+        # did NOT designate a single one. Report the ambiguity — do not pick by order.
+        outlier = NO_CLEAR_OUTLIER
+    else:
         outlier = ""
+
+    # --- clustered (the anchors NOT singled out, sourced — no recompute) ---
+    if outlier and outlier != NO_CLEAR_OUTLIER:
+        clustered = [n for n in names if n != outlier]
+    elif state in (CONSISTENCY_CONSISTENT, CONSISTENCY_SINGLE):
         clustered = list(names)
-        if len(vals) >= 2:
-            srt = sorted(v for _n, v in vals)
-            median = srt[len(srt) // 2] if len(srt) % 2 else (srt[len(srt) // 2 - 1] + srt[len(srt) // 2]) / 2.0
-            # outlier = max relative deviation from the median.
-            outlier = max(vals, key=lambda nv: abs(nv[1] - median) / median
-                          if median else 0.0)[0]
-            clustered = [n for n, _v in vals if n != outlier]
-        return AnchorConsistency(state=CONSISTENCY_IRRECONCILABLE, clustered=clustered,
-                                 outlier=outlier, dispersion=dispersion)
+    else:
+        clustered = []
 
-    if blend_state == _BLEND_NONE or _g(fv, "fair_value_mid", 0.0) in (None, 0.0):
-        return AnchorConsistency(state=CONSISTENCY_NO_ANCHOR, clustered=[], outlier="",
-                                 dispersion=dispersion)
-
-    if len(anchors) <= 1 or "single_anchor_blend" in caveats:
-        return AnchorConsistency(state=CONSISTENCY_SINGLE, clustered=names, outlier="",
-                                 dispersion=dispersion)
-
-    # blended, >= 2 anchors that passed the dispersion gate → they cluster.
-    return AnchorConsistency(state=CONSISTENCY_CONSISTENT, clustered=names, outlier="",
+    return AnchorConsistency(state=state, clustered=clustered, outlier=outlier,
                              dispersion=dispersion)
 
 

@@ -120,26 +120,65 @@ check("2.2 single-anchor blend -> single_anchor state",
       _single.anchor_consistency.state == vd.CONSISTENCY_SINGLE
       and _single.anchor_consistency.clustered == ["analyst"])
 
-# irreconcilable: three anchors, the analyst one is the far outlier.
+# irreconcilable with NO producer per-anchor exclusion: the producer flagged the SET
+# as irreconcilable but named no single culprit -> honest no_clear_outlier (F-A1).
+# NEVER pick one by list order or a card-side distance metric.
 _irr = vd.build_valuation_diagnosis(_fv(
     blend_state="anchors_irreconcilable", fair_value_low=0.0, fair_value_mid=0.0,
     fair_value_high=0.0, confidence="low", anchor_dispersion=3.4,
     anchors=[{"name": "dcf", "value": 105.0}, {"name": "relative", "value": 110.0},
              {"name": "analyst", "value": 360.0}]))
-check("2.3 irreconcilable -> state irreconcilable, outlier is the far anchor (analyst)",
+check("2.3 irreconcilable + no producer-excluded anchor -> outlier=no_clear_outlier (not invented)",
       _irr.anchor_consistency.state == vd.CONSISTENCY_IRRECONCILABLE
-      and _irr.anchor_consistency.outlier == "analyst"
-      and set(_irr.anchor_consistency.clustered) == {"dcf", "relative"},
-      detail=f"outlier={_irr.anchor_consistency.outlier}/clustered={_irr.anchor_consistency.clustered}")
+      and _irr.anchor_consistency.outlier == vd.NO_CLEAR_OUTLIER,
+      detail=f"outlier={_irr.anchor_consistency.outlier}")
 check("2.4 irreconcilable -> endorsed_range honest 'irreconcilable' (no fake mid)",
       _irr.endorsed_range.state == "irreconcilable"
       and _irr.endorsed_range.mid is None)
 
+# F-A1 ORDER-INVARIANCE: two equal-deviation anchors, irreconcilable. Either input
+# order must give the SAME (no_clear_outlier) classification — never order-dependent.
+_pair_a = _fv(blend_state="anchors_irreconcilable", fair_value_low=0.0,
+              fair_value_mid=0.0, fair_value_high=0.0, confidence="low",
+              anchors=[{"name": "dcf", "value": 90.0}, {"name": "relative", "value": 110.0}])
+_pair_b = _fv(blend_state="anchors_irreconcilable", fair_value_low=0.0,
+              fair_value_mid=0.0, fair_value_high=0.0, confidence="low",
+              anchors=[{"name": "relative", "value": 110.0}, {"name": "dcf", "value": 90.0}])
+_oa = vd.build_valuation_diagnosis(_pair_a).anchor_consistency
+_ob = vd.build_valuation_diagnosis(_pair_b).anchor_consistency
+check("2.5 ORDER-INVARIANT: two equal-deviation anchors -> no_clear_outlier in BOTH orderings",
+      _oa.outlier == vd.NO_CLEAR_OUTLIER and _ob.outlier == vd.NO_CLEAR_OUTLIER
+      and _oa.outlier == _ob.outlier,
+      detail=f"a={_oa.outlier}/b={_ob.outlier}")
+
+# F-A1 GENUINE producer-flagged outlier: the producer excluded EXACTLY ONE anchor
+# (its own per-anchor judgment) -> that name is reported; the kept anchors cluster.
+_flagged = vd.build_valuation_diagnosis(_fv(
+    methods_used=["dcf", "relative"],
+    anchors=[{"name": "dcf", "value": 108.0}, {"name": "relative", "value": 112.0}],
+    excluded_anchors=[{"name": "pe", "value": 8.1, "basis": "trailing",
+                       "flag": "cycle_distorted"}]))
+check("2.6 genuine producer-flagged outlier (1 excluded anchor) -> reported by name",
+      _flagged.anchor_consistency.outlier == "pe"
+      and set(_flagged.anchor_consistency.clustered) == {"dcf", "relative"},
+      detail=f"outlier={_flagged.anchor_consistency.outlier}/clustered={_flagged.anchor_consistency.clustered}")
+
+# Two excluded anchors -> NOT a single unambiguous outlier -> no name picked.
+_two_ex = vd.build_valuation_diagnosis(_fv(
+    blend_state="anchors_irreconcilable", fair_value_mid=0.0,
+    anchors=[{"name": "dcf", "value": 100.0}, {"name": "relative", "value": 200.0}],
+    excluded_anchors=[{"name": "pe", "value": 8.0}, {"name": "ev_s", "value": 300.0}]))
+check("2.7 multiple excluded anchors -> no single outlier (irreconcilable -> no_clear_outlier)",
+      _two_ex.anchor_consistency.outlier == vd.NO_CLEAR_OUTLIER,
+      detail=f"outlier={_two_ex.anchor_consistency.outlier}")
+
 _noanchor = vd.build_valuation_diagnosis(
     _fv(blend_state="no_anchor", fair_value_mid=0.0, anchors=[], methods_used=[]))
-check("2.5 no_anchor band -> no_anchor consistency + unavailable range",
+check("2.8 no_anchor band -> no_anchor consistency + unavailable range",
       _noanchor.anchor_consistency.state == vd.CONSISTENCY_NO_ANCHOR
       and _noanchor.endorsed_range.state == "unavailable")
+check("2.9 consistent blend with no exclusions -> outlier '' (no disagreement)",
+      _d.anchor_consistency.outlier == "")
 
 
 # ===========================================================================
@@ -354,7 +393,8 @@ _needed = ["valdiag_header", "valdiag_role", "valdiag_consistency",
            "valdiag_endorsed_range", "valdiag_range_irreconcilable",
            "valdiag_range_unavailable", "valdiag_applicable_methods",
            "valdiag_rejected_methods", "valdiag_what_would_change",
-           "valdiag_outlier", "valdiag_cond_met", "valdiag_cond_armed",
+           "valdiag_outlier", "valdiag_no_clear_outlier",
+           "valdiag_cond_met", "valdiag_cond_armed",
            "valdiag_reverse_dcf_pending", "valdiag_narrative_pending",
            "valdiag_reason_dcf_unavailable", "valdiag_reason_excluded_anchor"]
 _needed += [f"valdiag_role_{r}" for r in

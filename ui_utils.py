@@ -1272,6 +1272,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "valdiag_consistency_irreconcilable": "锚不可调和",
         "valdiag_consistency_no_anchor":      "无有效锚",
         "valdiag_outlier":              "离群锚",
+        "valdiag_no_clear_outlier":     "无明确离群锚",
         "valdiag_clustered":            "聚合锚",
         "valdiag_endorsed_range":       "认可区间",
         "valdiag_range_irreconcilable": "区间暂不给出（各锚分歧过大，分别列示）",
@@ -2731,6 +2732,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "valdiag_consistency_irreconcilable": "Anchors irreconcilable",
         "valdiag_consistency_no_anchor":      "No valid anchor",
         "valdiag_outlier":              "Outlier",
+        "valdiag_no_clear_outlier":     "no clear outlier",
         "valdiag_clustered":            "Clustered",
         "valdiag_endorsed_range":       "Endorsed range",
         "valdiag_range_irreconcilable": "Range withheld (anchors disagree — shown separately)",
@@ -4025,7 +4027,9 @@ def render_valuation_diagnosis_card(diag) -> None:
         _ac_state = getattr(_ac, "state", "no_anchor")
         _ac_line = f"{t('valdiag_consistency')}: {t(f'valdiag_consistency_{_ac_state}')}"
         _outlier = getattr(_ac, "outlier", "") or ""
-        if _outlier:
+        if _outlier == "no_clear_outlier":
+            _ac_line += f"  ·  {t('valdiag_outlier')}: {t('valdiag_no_clear_outlier')}"
+        elif _outlier:
             _ac_line += f"  ·  {t('valdiag_outlier')}: {_outlier.upper()}"
         st.caption(_ac_line)
         # ── What would change this (mechanical, falsifiable) ────────────────────
