@@ -33,7 +33,8 @@ path.** Phase doc `docs/reliability_anchor_intel_v2.md`.
   superset) threads the page-path AppFairValue out so pages/9 assembles the card with
   NO second compute (None on the network-free path → no card there). No diagnosis
   field enters any snapshot (render-time only — parity by explicit exclusion). New
-  suite `scripts/test_reliability_valuation_diagnosis.py` **46/46**.
+  suite `scripts/test_reliability_valuation_diagnosis.py` **50/50** (incl. the F-A1
+  fix-round cases).
 - **PART B — F4 archive sharding repayment** (`lib/anchor_archive.py`). The v2.3
   archive read the whole single file (O(total)) per read; now SHARDED per ticker —
   canonical store `data/anchor_archive/` with one `<TICKER>.jsonl` shard, so a read
@@ -45,7 +46,8 @@ path.** Phase doc `docs/reliability_anchor_intel_v2.md`.
   tracked file change). Read cost **O(total) → O(one ticker's records)**. Invariants
   preserved (append-only, page-path-only writes, §13.10 zero-write/zero-network on
   the new layout, single-vintage, never-fabricate, G2 seam guard). `anchor_archive`
-  **60 → 71**, `anchor_backfill` **60 → 61**, `entry_v4` **92/92**.
+  **60 → 77** (incl. the F-B2/F-B3 fix-round cases), `anchor_backfill` **60 → 61**,
+  `entry_v4` **92/92**.
 - **Sweep:** full `test_reliability_*` **GREEN=65 / RED=13** (the 13 are the
   documented pre-existing orthogonal reds; none of this round's files are in the
   set). `macro_regime.py` untouched; i18n additive. Housekeeping: `ui_utils.py` (the
@@ -54,7 +56,11 @@ path.** Phase doc `docs/reliability_anchor_intel_v2.md`.
 
 Commits on branch (review-gated, NOT merged): `b5277b8` (STEP 0 matrix) · `307797f`
 (sharding) · `0358848` (card module + threading) · `8d751c1` (i18n + render + LF) ·
-`92b67ad` (i18n-coverage test) · docs-sync commit (this).
+`92b67ad` (i18n-coverage test) · `3c7680a` (docs-sync) · **fix round (REQUEST
+CHANGES):** `d9417eb` (F-A1 sourced consistency, no recomputed outlier) · `00e7d06`
+(F-B2 canonical dedup key + F-B3 semantic-fidelity migration contract) · fix-round
+docs-sync (this). `valuation_diagnosis` 46→50, `anchor_archive` 71→77; sweep
+GREEN=65/RED=13 unchanged.
 
 ## Anchor Intelligence v2.3 — Anchor Historization + Historical Backfill — fully CLOSED
 

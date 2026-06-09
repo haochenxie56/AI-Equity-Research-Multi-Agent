@@ -577,9 +577,18 @@ per-ticker shards — an explicit offline step (like `backfill_anchors.py`), **n
 on app startup** and never on the ranking/refresh path. Reads do NOT auto-migrate
 (that would reintroduce the O(total) read). Append-only and atomicity are preserved
 per shard: appends `open(shard, "a")` + `flush` + `fsync` of one line, unchanged;
-the in-process dedup memo keys on `(resolved shard path, ticker, computed_at)`,
+the in-process dedup memo keys on `(canonical resolved shard path, ticker,
+computed_at)` (F-B2 — `Path.resolve()` so alias root forms can't bypass dedup),
 still unique. The seam guard (`covered_vintages` spanning live + backfill) is intact
 — both origins live in the same per-ticker shard.
+
+**Migration fidelity — SEMANTIC, not byte (F-B3).** The migration parses
+(`json.loads`) and re-serializes (`json.dumps`) each record, so the on-disk BYTE
+representation may legitimately differ (JSON key order / whitespace). The guarantee
+is *semantic*: every migrated record's fields are preserved EXACTLY, the total
+record count is preserved, and the append-only invariant holds. This (correct,
+not-over-strong) contract is enforced by a field-level + count fidelity test
+(`test_reliability_anchor_archive.py` §9), NOT a byte-equality assertion.
 
 **Invariants preserved (re-tested on the new layout):** append-only (no row
 mutation), page-path-only writes (the §13.10 cold-ranking zero-write/zero-network
@@ -594,12 +603,19 @@ guard.
   `applicable_methods` (= `methods_used`); `rejected_methods` WITH reasons (reuse the
   existing `excluded_anchors` `{name, value, basis, flag}` tokens incl.
   `cycle_distorted`, plus the menu's "DCF excluded for type" rationale); plus the
-  Phase-8 `reverse_dcf` slot (A4); `anchor_consistency` (which anchors cluster vs the
-  outlier — derived from the existing `anchors` list + `anchor_dispersion` /
-  `blend_state`); `endorsed_range` (the blended `fair_value_low/high`, or the honest
-  `anchors_irreconcilable` "shown separately" state); `confidence` (the existing
-  value, already incl. the v2.2 pool-dispersion cap). Duck-typed via `getattr` (same
-  tolerance as `record_from_app_fair_value`); never raises.
+  Phase-8 `reverse_dcf` slot (A4); `anchor_consistency` — **SOURCED, not recomputed
+  (F-A1)**: `state` from `blend_state` (+ the `single_anchor_blend` caveat),
+  `dispersion` passed through from the producer's `anchor_dispersion`, `clustered`
+  from the producer's kept `anchors`, and `outlier` from the producer's ONLY
+  per-anchor signal — `excluded_anchors` (an outlier is named ONLY when EXACTLY ONE
+  anchor was producer-excluded). The card NEVER derives a fresh outlier metric and
+  NEVER picks one by list order; when the producer flagged the set irreconcilable but
+  named no single culprit (or excluded none/several) it reports the sentinel
+  `no_clear_outlier` (never-fabricate); `endorsed_range` (the blended
+  `fair_value_low/high`, or the honest `anchors_irreconcilable` "shown separately"
+  state); `confidence` (the existing value, already incl. the v2.2 pool-dispersion
+  cap). Duck-typed via `getattr` (same tolerance as `record_from_app_fair_value`);
+  never raises.
 - **A2 — `valuation_role` (NEW deterministic mapping).** Single visible config block
   `VALUATION_ROLE_RULES` mapping `(confidence × anchor_consistency × upside-vs-price)`
   → `{informational | mid_term_supportive | long_term_eligible}`. Draft rules (tunable
@@ -685,6 +701,43 @@ guard.
   never-fabricate, G2 seam guard — all preserved under per-ticker sharding.
 - `valuation_role` is the documented deterministic INTERFACE to the 7A three-horizon
   view; reverse-DCF + narrative catalysts are NAMED Phase-8-pending placeholders.
+
+### Fix round (REQUEST CHANGES — F-A1 / F-B2 / F-B3)
+
+- **F-A1 (P1) — `anchor_consistency` is SOURCED, never recomputed.** The first cut
+  computed a median-relative outlier inside the card (new judgment + order-dependent
+  when two anchors tie). Now `_anchor_consistency` reads ONLY the producer's existing
+  decisions: `state` ← `blend_state` (+ `single_anchor_blend`), `dispersion` ←
+  `anchor_dispersion` (pass-through), `clustered` ← the producer's kept `anchors`, and
+  `outlier` ← `excluded_anchors` — a name is reported ONLY when the producer excluded
+  EXACTLY ONE anchor. When the producer flagged the set irreconcilable but named no
+  single culprit (or excluded none/several), the card reports the sentinel
+  `NO_CLEAR_OUTLIER` (`"no_clear_outlier"`, rendered "no clear outlier / 无明确离群锚")
+  — never picks by list order. Tests: two equal-deviation anchors → `no_clear_outlier`
+  in BOTH input orderings (order-invariance, §2.5); one producer-excluded anchor →
+  reported by name (§2.6); multiple excluded → no single outlier (§2.7).
+- **F-B2 (P1) — dedup key on the CANONICAL shard path.** `append_record` now keys the
+  in-process dedup memo on `_canonical_shard_str(p)` = `Path(p).resolve()` (fail-closed
+  to `.absolute()` then raw str), so alias root forms (relative vs. absolute, `./`
+  prefix, symlink) collapse to ONE key and cannot bypass dedup (which would append the
+  same vintage twice and corrupt the append-only series / migration speed). Test: the
+  same `(ticker, computed_at)` appended via `root` and `root/.` → exactly one row
+  (§2.14/2.15).
+- **F-B3 (P2) — migration guarantee narrowed to SEMANTIC fidelity.** The migration
+  parses + re-serializes records, so the on-disk byte representation may legitimately
+  differ (key order / whitespace); byte-equality is NOT (and should not be) claimed or
+  enforced. The documented guarantee (script docstring + the migration paragraph
+  above) is now "semantically faithful — every record's fields preserved exactly,
+  record count preserved, append-only intact; bytes may differ." Enforced by a
+  field-level + count fidelity test (§9.8–9.10): every migrated record `==` its
+  original field-for-field and the count is preserved, with NO byte-equality
+  assertion.
+- **Fix-round counts:** `valuation_diagnosis` **46 → 50** (F-A1 order-invariance +
+  genuine/ambiguous outlier cases), `anchor_archive` **71 → 77** (F-B2 alias dedup +
+  F-B3 field-level fidelity). Full `test_reliability_*` sweep **GREEN=65 / RED=13**
+  (the 13 pre-existing orthogonal reds unchanged). `macro_regime.py` untouched; i18n
+  additive (`valdiag_no_clear_outlier`); `git diff --check` clean (no EOL churn this
+  round — `ui_utils.py` already LF).
 
 ## Pending — round v2.5
 

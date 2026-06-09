@@ -115,7 +115,7 @@
 
 - **78 个可靠性测试套件、数千条断言**（`scripts/test_reliability_*.py`）：机会排序、估值止血、估值分型路由、轮动与内部结构、交易台、入场策略、Cockpit 重建、渲染顺序、主题篮子、估值锚历史 / 历史回填、**估值诊断卡**等
 - **决策层 canonical sweep（v2.3 收口 @ `84daa4a` 全绿）**：entry_v4 92 · 7A 115 · 7B 193 · 估值路由 104 · 估值止血 65 · Cockpit 重建 47 · 锚历史 60 · 历史回填 60 · 主题篮子 146 · 交易台 118 · 三周期评分 189 · 渲染顺序 50
-- **v2.4（待审查）新增 / 更新**：估值诊断卡 46（新）· 锚历史 71（分片）· 历史回填 61 · entry_v4 92；full `test_reliability_*` sweep **GREEN=65 / RED=13**（13 红为既有正交项，与本轮无关）
+- **v2.4（待审查，含 REQUEST CHANGES 修复轮）新增 / 更新**：估值诊断卡 50（新）· 锚历史 77（分片）· 历史回填 61 · entry_v4 92；full `test_reliability_*` sweep **GREEN=65 / RED=13**（13 红为既有正交项，与本轮无关）
 - **不变量测试**：tighten-only（脆弱度强制 high 时 regime 对象逐字节不变）、宏观镜头永不改主题排名、排序路径零网络调用（结构化断言）、历史回填零网络 / 零归档写入（冷排序 DoD）、分析师锚在历史日期绝不杜撰
 - **Parity 测试**：驱动真实刷新函数，断言两个页面的渲染 token 与同次刷新写出的快照 `_meta` 完全一致，并以负向对照证明分歧必然被捕获
 - **校准回填工具**：`scripts/calibrate_fragility_backfill.py` 重算过去 30 交易日逐日脆弱度组件表（四道质量门），供阈值校准与盘感对照
@@ -294,7 +294,7 @@ investment-agents/
 | 估值重构 v1 | ✅ | 公司分型路由器（五型方法菜单）+ 增长画像同业匹配；目标：实质降低「锚不可调和」率。REQUEST CHANGES 五项修复已应用（DCF 结构性排除、周期 ≤4 年年度区间、缓存拒绝旧版、token 边界匹配、状态文档对齐）；**复审通过，已于 ca5ad14 关闭** |
 | 脆弱度小项批次 + 杂务 | ✅ | 脆弱度 banner + 量缩（vol_shrink）组件（B1/B2/B3）+ 校准回填工具扩展；杂务：Development Discipline 文档 + `scripts/diag/` 忽略（approved @ b5c128a） |
 | Anchor Intelligence v2 | ✅ | **Round 1**：生产者统一 + 结构化分析师锚池 + epoch 戳（approved @ 9e53f04）。**v2.3**：只追加估值锚历史（U1）+ 单 vintage 快照锚区块（U2）+ 确定性迁移读出 + thesis 锚迁移 watch（U3，主体 approved @ 9f6c37e）+ **历史回填**（可重算锚 / 分析师绝不杜撰 / 披露滞后前视防护 / 同日接缝守卫，approved @ c57e56e，merged @ 84daa4a） |
-| Anchor Intelligence v2.4 | 🔬 待审查 | **估值诊断卡**（公司分型 · 适用/已排除方法及原因 · 锚一致性聚合/离群 · 认可区间 · 确定性 `valuation_role` 映射 → 7A 三时间维度接口 · 价格越界/锚池下移等可证伪机械条件；反向 DCF 与叙事催化为 Phase-8 占位）渲染于个股研究 + 交易台；**F4 估值锚归档按 ticker 分片**（`data/anchor_archive/<TICKER>.jsonl`，读取 O(全量)→O(单票)，一次性离线迁移脚本）。纯确定性、零新增锚计算、任何路径零联网；46 项诊断断言，full sweep GREEN=65/RED=13 |
+| Anchor Intelligence v2.4 | 🔬 待审查 | **估值诊断卡**（公司分型 · 适用/已排除方法及原因 · 锚一致性聚合/离群 · 认可区间 · 确定性 `valuation_role` 映射 → 7A 三时间维度接口 · 价格越界/锚池下移等可证伪机械条件；反向 DCF 与叙事催化为 Phase-8 占位）渲染于个股研究 + 交易台；**F4 估值锚归档按 ticker 分片**（`data/anchor_archive/<TICKER>.jsonl`，读取 O(全量)→O(单票)，一次性离线迁移脚本）。纯确定性、零新增锚计算、任何路径零联网；50 项诊断断言，full sweep GREEN=65/RED=13 |
 | Anchor Intelligence v2.5 | 计划 | 多维同业画像 + `peer_match_quality` 诚实兜底（同业不足时显式降级，不假装可比） |
 | Thesis Ingestion MVP | 计划 | 人选稿、机器结构化：访谈/研报 → 带可证伪条件的 thesis 卡片 |
 | Phase 7C / 7D | 计划 | 主题受益层级与跨层比较 → 反馈环（推荐质量复盘） |

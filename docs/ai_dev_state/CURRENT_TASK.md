@@ -23,15 +23,21 @@ doc `docs/reliability_anchor_intel_v2.md`.
   placeholder; reverse-DCF = named Phase-8 slot. Rendered on pages/4 + pages/9 via
   `ui_utils.render_valuation_diagnosis_card`; threaded via additive
   `PriceLevelResult.app_fair_value_obj` (no second compute; None on the network-free
-  path). No snapshot field (render-time only). Suite **46/46**.
+  path). No snapshot field (render-time only). Suite **50/50**.
 - **PART B — F4 sharding.** `lib/anchor_archive.py` sharded per ticker
   (`data/anchor_archive/<TICKER>.jsonl`); reads O(total) → O(ticker). One-time
   offline `scripts/migrate_anchor_archive_to_shards.py`. Invariants preserved
   (append-only, page-path-only writes/§13.10, single-vintage, never-fabricate, G2
-  seam). `anchor_archive` 60→71, `anchor_backfill` 60→61, `entry_v4` 92/92.
+  seam). `anchor_archive` 60→77, `anchor_backfill` 60→61, `entry_v4` 92/92.
 - **Sweep** GREEN=65 / RED=13 (pre-existing orthogonal reds). `ui_utils.py`
-  normalized to LF (lone CRLF outlier); `git diff --check` clean. **Awaiting review;
-  not merged.** Next: relay reviewer APPROVE → merge `--no-ff` to `main`.
+  normalized to LF (lone CRLF outlier); `git diff --check` clean.
+- **Fix round (REQUEST CHANGES — re-review pending):** F-A1 `anchor_consistency`
+  sourced from the producer (no recomputed/order-dependent outlier; `no_clear_outlier`
+  when ambiguous) · F-B2 dedup key on the canonical resolved shard path (alias forms
+  can't bypass dedup) · F-B3 migration guarantee narrowed to SEMANTIC fidelity
+  (field-level + count test, not byte-equality). `valuation_diagnosis` 46→50,
+  `anchor_archive` 71→77. **Awaiting re-review; not merged.** Next: relay reviewer
+  APPROVE → merge `--no-ff` to `main`.
 
 ## Anchor Intelligence v2.3 — Anchor Historization + Historical Backfill (fully CLOSED)
 
