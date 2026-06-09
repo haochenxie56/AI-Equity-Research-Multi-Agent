@@ -14,9 +14,9 @@
 
 ---
 
-**EN** · A personal investment operating system for US equities, evolved from a multi-agent research workflow into a full decision-support stack: opportunity ranking, dual-track signal engine, market-internals fragility monitoring, valuation anchoring, entry strategy, and thesis monitoring — all surfaced through an Investment Cockpit. Deterministic code computes every number; Claude handles language and reasoning. **Review-only by design: the system never places orders.**
+**EN** · A personal investment operating system for US equities, evolved from a multi-agent research workflow into a full decision-support stack: opportunity ranking, dual-track signal engine, market-internals fragility monitoring, type-routed valuation with a structured analyst-anchor pool and an append-only anchor history, entry strategy, and thesis monitoring — all surfaced through an Investment Cockpit. Deterministic code computes every number; Claude handles language and reasoning. **Review-only by design: the system never places orders.**
 
-**中** · 一个面向美股的个人投资操作系统。由最初的多 Agent 研究工作流，演进为完整的决策支持栈：机会排序、双轨信号引擎、市场内部结构（脆弱度）监控、估值锚定、入场策略与持仓 thesis 监控，统一汇聚于「投研中枢 / Investment Cockpit」。**所有数字由确定性代码计算，LLM 只负责语言与推理；系统设计上仅供审阅（review-only），永不下单。**
+**中** · 一个面向美股的个人投资操作系统。由最初的多 Agent 研究工作流，演进为完整的决策支持栈：机会排序、双轨信号引擎、市场内部结构（脆弱度）监控、公司分型估值（结构化分析师锚池 + 只追加估值锚历史）、入场策略与持仓 thesis 监控，统一汇聚于「投研中枢 / Investment Cockpit」。**所有数字由确定性代码计算，LLM 只负责语言与推理；系统设计上仅供审阅（review-only），永不下单。**
 
 > ⚠️ **风险提示 / Disclaimer** · 本系统输出内容仅供学习与研究参考，不构成任何投资建议。All outputs are for research and educational purposes only and do not constitute investment advice.
 
@@ -35,6 +35,10 @@
 | **信号轨 / 审计轨分离** | 滚动重算（缓存行情的纯函数）回答「市场做了什么」并驱动迟滞；每日快照记录「系统当天说了什么」专司复盘审计 |
 | **Parity 验证纪律** | 测试驱动真实刷新路径，断言 UI 渲染与快照 `_meta` 逐字段一致；快照每个字段要么绑定 UI surface 要么显式排除并注明理由 |
 | **降级词汇表** | 每条数据不可用都有具体原因（`finnhub_unavailable` / `no_reports_in_window` / `partial_frame_coverage` / `implausible_count`…），监控组件永不静默消失 |
+| **绝不编造数字 / Never fabricate a number** | LLM 永不发明估值、技术指标、评分或市场数据；历史回填只重算「可计算锚」，分析师锚在历史日期绝不杜撰（`record_origin` + 分析师哨兵区分 live / backfill 行） |
+| **前视防护 / Filing-lag look-ahead defence** | 历史锚重算按披露滞后门控（`FILING_LAG_DAYS`：年报 75 天 / 季报 45 天，`period_end + lag ≤ as-of` 方可使用），宁可用更晚的数据，绝不读尚未公开的财报 |
+| **访问路径矩阵优先 / Access-path-matrix-first** | 统一一个生产者是「访问路径」问题，而非物理合并——先画 caller-contract 矩阵（页面=需区间+可联网；排序=零网络；刷新=不污染缓存）再动手 |
+| **只追加审计轨 / Append-only audit trail** | 估值锚历史与每日快照只追加、绝不改写既有行；跨页共享同一锚生产者 + epoch，使任何分歧可被检出 |
 
 ---
 
@@ -63,8 +67,9 @@
 
 - 🧊 **市场内部结构脆弱度层** — 派发日计数（IBD 式）、利好遭抛（财报 beat 次日遭抛）、广度水平与斜率、弱反弹、攻守轮动读数 → 复合等级「正常 / 警戒 / 警报」，交易日历迟滞防单日尖峰；30 天回填校准中，警报领先 2026-06 初回撤约两周
 - 🔄 **多窗口相对强弱** — 5D/10D/1M/3M/6M/12M 超额收益（vs SPY/QQQ，日期索引对齐），短/中/长周期各取所需窗口
-- ⚓ **估值锚体系** — forward 口径相对锚 + 分析师锚 + DCF，锚分歧 >3x 拒绝融合；锚缓存使 Cockpit 长线状态可分化
-- 📒 **每日快照** — 全量候选 + 宏观/脆弱度 `_meta` 原子落盘（JSONL），审计轨 + 未来反馈环的数据地基
+- ⚓ **公司分型估值 + 多锚融合** — 按公司类型路由方法菜单（成熟盈利 / 成长盈利 / 成长未盈利 / 项目型 / 周期型，各取 DCF · EV/S · EV/EBITDA · PB/PS 区间）；forward 口径相对锚 + 结构化分析师锚池（`{median, mean, high, low, n}` + 离散度门控）+ DCF；锚分歧 >3x 拒绝融合并诚实输出「估值锚不一致」而非假中值；数据合理性守卫剔除异常年度并标记；锚缓存使 Cockpit 长线状态可分化
+- 🗂️ **只追加估值锚历史** — 每个页面路径的 live 锚在单一生产者 chokepoint 落盘（`data/anchor_archive.jsonl`）；迁移读出按 30 交易日窗口刻画各序列方向 / 速度与跨序列一致性，thesis monitor 据此给出锚迁移 watch（只注释、永不自动卖出或改 thesis 状态）；离线回填以可重算锚 + 披露滞后门控为历史序列播种（分析师锚绝不杜撰）
+- 📒 **每日快照** — 全量候选 + 宏观/脆弱度 `_meta` + 单 vintage 锚区块 原子落盘（JSONL），审计轨 + 未来反馈环的数据地基
 - 🌐 **中英双语** / 🌙 **深色浅色主题** / ⚡ **Parquet 本地缓存** / 📄 **Markdown 报告导出**
 
 ---
@@ -108,8 +113,9 @@
 
 本项目把个人项目按生产标准开发：**每个阶段 = 实现（Claude Code）→ 独立审查（Codex）→ 修复 → 单点复审 → 关闭**，全部审查记录沉淀于 `docs/`。
 
-- **12+ 个可靠性测试套件、约 1,000+ 条断言**（`scripts/test_reliability_*.py`）：机会排序、估值止血、轮动与内部结构、交易台、入场策略、Cockpit 重建、渲染顺序、主题篮子等
-- **不变量测试**：tighten-only（脆弱度强制 high 时 regime 对象逐字节不变）、宏观镜头永不改主题排名、排序路径零网络调用（结构化断言）
+- **77 个可靠性测试套件、数千条断言**（`scripts/test_reliability_*.py`）：机会排序、估值止血、估值分型路由、轮动与内部结构、交易台、入场策略、Cockpit 重建、渲染顺序、主题篮子、估值锚历史 / 历史回填等
+- **决策层 canonical sweep（最近一次收口 @ `84daa4a` 全绿）**：entry_v4 92 · 7A 115 · 7B 193 · 估值路由 104 · 估值止血 65 · Cockpit 重建 47 · 锚历史 60 · 历史回填 60 · 主题篮子 146 · 交易台 118 · 三周期评分 189 · 渲染顺序 50
+- **不变量测试**：tighten-only（脆弱度强制 high 时 regime 对象逐字节不变）、宏观镜头永不改主题排名、排序路径零网络调用（结构化断言）、历史回填零网络 / 零归档写入（冷排序 DoD）、分析师锚在历史日期绝不杜撰
 - **Parity 测试**：驱动真实刷新函数，断言两个页面的渲染 token 与同次刷新写出的快照 `_meta` 完全一致，并以负向对照证明分歧必然被捕获
 - **校准回填工具**：`scripts/calibrate_fragility_backfill.py` 重算过去 30 交易日逐日脆弱度组件表（四道质量门），供阈值校准与盘感对照
 
@@ -241,17 +247,22 @@ investment-agents/
 │   ├── relative_strength.py        # 多窗口 RS（日期对齐 + vintage 标记）
 │   ├── rotation.py                 # GICS 外环：轮动评分 + 攻守读数
 │   ├── theme_baskets.py            # AI 主题内环：超额动量/背离矩阵/广度
-│   ├── equity_valuation.py         # 多锚估值融合 + 锚一致性门控
-│   ├── valuation_anchor.py         # FairValueAnchor（forward 口径）
+│   ├── equity_valuation.py         # 多锚估值融合 + 分型方法菜单 + 锚一致性门控
+│   ├── valuation_router.py         # 公司分型分类器 + 方法菜单 + 增长画像同业匹配
+│   ├── valuation_anchor.py         # FairValueAnchor（forward 口径；已退役保留兼容）
 │   ├── anchor_cache.py             # 估值锚本地缓存（版本守卫/原子写）
+│   ├── anchor_archive.py           # 只追加估值锚历史（生产者 chokepoint / 原子追加）
+│   ├── anchor_migration.py         # 确定性锚迁移读出（方向/速度/跨序列一致性）
+│   ├── anchor_backfill.py          # 离线历史回填引擎（可重算锚 + 披露滞后门控）
 │   ├── technical.py / data_fetcher.py / cache_manager.py / sectors.py
 │   ├── valuation.py / financial_tab.py / pv_tab.py / report_writer.py
 │   ├── workflow_state.py / translator.py
 │   └── reliability/                # 可靠性基础设施（适配器层）
 │
 ├── scripts/
-│   ├── test_reliability_*.py       # 12+ 可靠性测试套件（~1,000+ 断言）
+│   ├── test_reliability_*.py       # 77 个可靠性测试套件（数千条断言）
 │   ├── calibrate_fragility_backfill.py  # 30 日脆弱度校准回填工具
+│   ├── backfill_anchors.py         # 估值锚历史离线回填 CLI（可重算锚 + 披露滞后门控）
 │   ├── daily_scan.py / fetch_financials.py / run_research.py
 │
 ├── docs/
@@ -278,6 +289,10 @@ investment-agents/
 | 估值止血 | ✅ | 锚一致性门控、forward 口径、锚缓存 |
 | Phase 7B — 轮动 + 市场内部结构 | ✅ | 多窗口 RS、两环轮动、脆弱度层（tighten-only + 迟滞 + 滚动双轨 + vintage 统一 + parity 纪律）；30 日校准通过 |
 | 估值重构 v1 | ✅ | 公司分型路由器（五型方法菜单）+ 增长画像同业匹配；目标：实质降低「锚不可调和」率。REQUEST CHANGES 五项修复已应用（DCF 结构性排除、周期 ≤4 年年度区间、缓存拒绝旧版、token 边界匹配、状态文档对齐）；**复审通过，已于 ca5ad14 关闭** |
+| 脆弱度小项批次 + 杂务 | ✅ | 脆弱度 banner + 量缩（vol_shrink）组件（B1/B2/B3）+ 校准回填工具扩展；杂务：Development Discipline 文档 + `scripts/diag/` 忽略（approved @ b5c128a） |
+| Anchor Intelligence v2 | ✅ | **Round 1**：生产者统一 + 结构化分析师锚池 + epoch 戳（approved @ 9e53f04）。**v2.3**：只追加估值锚历史（U1）+ 单 vintage 快照锚区块（U2）+ 确定性迁移读出 + thesis 锚迁移 watch（U3，主体 approved @ 9f6c37e）+ **历史回填**（可重算锚 / 分析师绝不杜撰 / 披露滞后前视防护 / 同日接缝守卫，approved @ c57e56e，merged @ 84daa4a） |
+| Anchor Intelligence v2.4 | 计划 | 估值诊断卡（「为何锚不可调和」的可读拆解）+ F4 估值锚归档分片偿还（>~5MB 或可感延迟触发 → sharding / tail-read / index） |
+| Anchor Intelligence v2.5 | 计划 | 多维同业画像 + `peer_match_quality` 诚实兜底（同业不足时显式降级，不假装可比） |
 | Thesis Ingestion MVP | 计划 | 人选稿、机器结构化：访谈/研报 → 带可证伪条件的 thesis 卡片 |
 | Phase 7C / 7D | 计划 | 主题受益层级与跨层比较 → 反馈环（推荐质量复盘） |
 | Phase 8 — Evidence Infrastructure | 计划 | 证据包 + 反向 DCF + 对抗式估值辩论 + 宏观 LLM 事件/归因 + IPO/流动性日历；首个「章节 agent」在此验证 |

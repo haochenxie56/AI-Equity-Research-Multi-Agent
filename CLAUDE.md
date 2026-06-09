@@ -290,3 +290,19 @@ Expected behavior after Phase 0 is implemented:
 - **Throwaway diagnostic scripts live in `scripts/diag/`**, which is gitignored
   except for its `README.md`. Do not commit ad-hoc diagnostic dumps or one-off
   probe scripts into tracked paths.
+
+### Closure Documentation Sync
+
+- **At EVERY phase/round closure, one docs commit keeps the full doc set in sync
+  with what shipped.** That set is `docs/ai_dev_state/PROJECT_STATE.md`,
+  `docs/ai_dev_state/CURRENT_TASK.md`, the relevant phase doc under `docs/`, **and
+  `README.md`**. None of them may lag a closed phase.
+- **`README.md` is a tracked, first-class deliverable, not an afterthought.** It is
+  part of the closure sync set and must reflect the current shipped state (feature
+  list, core mechanics, design principles, reliability suite counts, roadmap
+  status) at every closure — it never trails the latest closed phase.
+- **The truthfulness rule applies to all closure docs (README included):** update
+  real content sourced from the commit history and review record (approval SHAs,
+  actual suite counts). Never fabricate phases, numbers, approvals, or shipped
+  behavior. Planned/pending scope must be labeled as such, distinct from shipped
+  work.
