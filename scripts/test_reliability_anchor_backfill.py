@@ -230,14 +230,15 @@ check("4.4 no as-of price -> NO record (price is never fabricated)", _no_px is N
 # 5. B2 — idempotency (double-run = zero duplicate rows) + append-only + offline
 # ===========================================================================
 _d = tempfile.mkdtemp()
-_p = Path(_d) / "anchor_archive.jsonl"
+_root = Path(_d)                       # v2.4 F4: archive_path is the shard ROOT dir
+_p = aa.shard_path("MU", _root)        # MU's shard, for raw-file assertions
 aa.reset_dedup_cache()
 # First run: writes all price-bearing as-of dates. Patch the live producer/fetch to
 # BLOW UP so we also prove the engine never touches the live network path.
 with mock.patch.object(eqv, "_fetch_raw", side_effect=_boom), \
         mock.patch.object(eqv, "compute_app_fair_value", side_effect=_boom):
     _net["n"] = 0
-    _s1 = ab.backfill_ticker("MU", end_date=_END, archive_path=_p, data_loader=_loader)
+    _s1 = ab.backfill_ticker("MU", end_date=_END, archive_path=_root, data_loader=_loader)
 _lines1 = _p.read_text(encoding="utf-8").splitlines()
 check("5.1 first run writes one row per as-of date (no live producer/fetch reached)",
       _s1["written"] == len(_dates) and len(_lines1) == len(_dates) and _net["n"] == 0,
@@ -246,7 +247,7 @@ _first_line = _lines1[0]
 
 # Second run (fresh process memo) — every as-of date already covered → ZERO writes.
 aa.reset_dedup_cache()
-_s2 = ab.backfill_ticker("MU", end_date=_END, archive_path=_p, data_loader=_loader)
+_s2 = ab.backfill_ticker("MU", end_date=_END, archive_path=_root, data_loader=_loader)
 _lines2 = _p.read_text(encoding="utf-8").splitlines()
 check("5.2 IDEMPOTENT: a double-run adds ZERO duplicate rows",
       _s2["written"] == 0 and len(_lines2) == len(_lines1),
@@ -261,11 +262,13 @@ check("5.5 every persisted row is a current-schema backfill record",
           and json.loads(ln)["schema_version"] == aa.ANCHOR_ARCHIVE_SCHEMA_VERSION
           for ln in _lines2))
 # read_archive returns them oldest->newest; mids are the golden value (fiscal-stable).
-_back = aa.read_archive("MU", path=_p)
+_back = aa.read_archive("MU", path=_root)
 check("5.6 read_archive returns the backfilled series oldest->newest",
       [r["data_vintage"] for r in _back] == [d.isoformat() for d in _dates])
 check("5.7 backfilled_vintages reports exactly the covered as-of dates",
-      aa.backfilled_vintages("MU", path=_p) == {d.isoformat() for d in _dates})
+      aa.backfilled_vintages("MU", path=_root) == {d.isoformat() for d in _dates})
+check("5.8 v2.4 sharding: backfill wrote to <root>/MU.jsonl (per-ticker shard)",
+      _p == _root / "MU.jsonl" and _p.is_file(), detail=str(_p))
 
 
 # ===========================================================================
@@ -470,7 +473,7 @@ check("9.8 lag gate leaves a pre-filing date with NO fundamentals -> degraded re
 # The weekly grid includes end_date; a LIVE row may already exist for it. The guard
 # must skip a date with a record of EITHER origin so the seam never double-counts.
 _dd = tempfile.mkdtemp()
-_pp = Path(_dd) / "anchor_archive.jsonl"
+_pp = Path(_dd)                        # v2.4 F4: shard ROOT dir
 aa.reset_dedup_cache()
 _seam_vintage = _END.isoformat()  # the grid's newest point == end_date
 _live_seam = {"schema_version": aa.ANCHOR_ARCHIVE_SCHEMA_VERSION,

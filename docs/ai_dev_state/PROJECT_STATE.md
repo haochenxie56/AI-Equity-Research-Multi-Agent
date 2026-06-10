@@ -1,12 +1,68 @@
 # AI Investment Agent — Project State
 
-**Last updated**: 2026-06-08 (**Anchor Intelligence v2.3 — fully CLOSED**: anchor
-historization (main body, review APPROVED at 9f6c37e, merged at 97c8f1f) +
-historical backfill (review APPROVED at c57e56e, merged now) — see the v2.3 section
-immediately below. The Round 1 section (producer unification + structured analyst
-anchor + epoch stamping, APPROVED at 9e53f04) follows. Valuation Refactor v1, Phase
-7B, Valuation Stop-the-Bleed, and Phase 7A sections follow that. Prior status blob
-preserved verbatim afterward.)
+**Last updated**: 2026-06-09 (**Anchor Intelligence v2.4 — CLOSED (APPROVED @
+`18dfcf2`, merged to `main` via `--no-ff`)**: valuation diagnosis card +
+F4 archive sharding — see the v2.4 section immediately below. The v2.3 section
+(fully CLOSED — historization + backfill) follows, then Round 1, Valuation Refactor
+v1, Phase 7B, Valuation Stop-the-Bleed, and Phase 7A. Prior status blob preserved
+verbatim afterward.)
+
+## Anchor Intelligence v2.4 — Valuation Diagnosis Card + F4 Archive Sharding — CLOSED (APPROVED @ 18dfcf2, merged to main)
+
+v2.4 ships two access-path-first features (STEP 0 matrices committed at `b5277b8`
+BEFORE any code, per the round-1 lesson). **All deterministic; no LLM invents a
+number; the diagnosis adds NO anchor math and triggers NO compute/fetch on any
+path.** Phase doc `docs/reliability_anchor_intel_v2.md`.
+
+- **PART A — valuation diagnosis card** (`lib/valuation_diagnosis.py`, NEW pure
+  module). `build_valuation_diagnosis(fv, migration, current_price)` ASSEMBLES a
+  structured `ValuationDiagnosis` from fields already on `AppFairValue` + the v2.3
+  migration readout: company_type, applicable/rejected methods WITH reasons (reusing
+  the existing `excluded_anchors`/`dcf_note` tokens), anchor consistency
+  (cluster-vs-outlier), endorsed range (incl. the honest irreconcilable state),
+  confidence. The one NEW deterministic mapping `classify_valuation_role`
+  (visible config block) maps `(confidence × consistency × upside)` →
+  `{informational | mid_term_supportive | long_term_eligible}` — documented as the
+  interface to the 7A three-horizon view (consumer wiring deferred). `what_would_change`
+  has MECHANICAL falsifiable conditions now (price-vs-endorsed-range; analyst-pool
+  deterioration from the migration readout) + a NARRATIVE Phase-8 placeholder;
+  reverse-DCF is a NAMED Phase-8-pending slot. Rendered on pages/4 (fv expander) and
+  pages/9 (LONG order card + LONG opportunity candidate) via a shared
+  `ui_utils.render_valuation_diagnosis_card` (bilingual; decision-relevant in the main
+  view, method detail folded). `PriceLevelResult.app_fair_value_obj` (additive
+  superset) threads the page-path AppFairValue out so pages/9 assembles the card with
+  NO second compute (None on the network-free path → no card there). No diagnosis
+  field enters any snapshot (render-time only — parity by explicit exclusion). New
+  suite `scripts/test_reliability_valuation_diagnosis.py` **50/50** (incl. the F-A1
+  fix-round cases).
+- **PART B — F4 archive sharding repayment** (`lib/anchor_archive.py`). The v2.3
+  archive read the whole single file (O(total)) per read; now SHARDED per ticker —
+  canonical store `data/anchor_archive/` with one `<TICKER>.jsonl` shard, so a read
+  for ticker T touches only T's bytes. The injectable `path`/`archive_path` is now
+  the shard ROOT dir; `read_archive`/`covered_vintages`/`backfilled_vintages` read
+  ONLY the ticker shard; `load_all_records` globs all shards (diagnostics only — no
+  production caller). One-time OFFLINE `scripts/migrate_anchor_archive_to_shards.py`
+  splits the legacy single file (idempotent, non-destructive; `data/` gitignored, no
+  tracked file change). Read cost **O(total) → O(one ticker's records)**. Invariants
+  preserved (append-only, page-path-only writes, §13.10 zero-write/zero-network on
+  the new layout, single-vintage, never-fabricate, G2 seam guard). `anchor_archive`
+  **60 → 77** (incl. the F-B2/F-B3 fix-round cases), `anchor_backfill` **60 → 61**,
+  `entry_v4` **92/92**.
+- **Sweep:** full `test_reliability_*` **GREEN=65 / RED=13** (the 13 are the
+  documented pre-existing orthogonal reds; none of this round's files are in the
+  set). `macro_regime.py` untouched; i18n additive. Housekeeping: `ui_utils.py` (the
+  LONE `i/crlf` file of 308 at the base) normalized to LF, so `git diff --check` is
+  clean and no CRLF file remains.
+
+Commits on branch (review-APPROVED @ `18dfcf2`, merged to `main` via `--no-ff`):
+`b5277b8` (STEP 0 matrix) · `307797f`
+(sharding) · `0358848` (card module + threading) · `8d751c1` (i18n + render + LF) ·
+`92b67ad` (i18n-coverage test) · `3c7680a` (docs-sync) · **fix round (REQUEST
+CHANGES, then APPROVED):** `d9417eb` (F-A1 sourced consistency, no recomputed outlier) · `00e7d06`
+(F-B2 canonical dedup key + F-B3 semantic-fidelity migration contract) · `d04fa49`
+(fix-round docs-sync) · `18dfcf2` (discriminating alias-dedup test).
+`valuation_diagnosis` 46→50, `anchor_archive` 71→77; sweep
+GREEN=65/RED=13 unchanged. **Next active phase: v2.5 — pending, not started.**
 
 ## Anchor Intelligence v2.3 — Anchor Historization + Historical Backfill — fully CLOSED
 

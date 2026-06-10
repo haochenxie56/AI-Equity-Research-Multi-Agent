@@ -5,19 +5,26 @@ ticker (overwrite-only), so historical anchors are LOST on every refresh — the
 documented gap behind the MU anchor-swing diagnosis (snapshots carried no anchor,
 so there was no way to tell a thesis-breaking analyst-pool downshift from price
 noise). This module adds the missing **append-only history**: each PAGE-PATH
-valuation appends one immutable record to a JSONL archive, building a per-ticker
+valuation appends one immutable record to the archive, building a per-ticker
 time series that :mod:`lib.anchor_migration` reads to compute a deterministic
 migration readout.
+
+**Layout (v2.4 — F4 repayment):** the archive is SHARDED per ticker — the canonical
+store is the directory :data:`ANCHOR_ARCHIVE_DIR` with one shard ``<TICKER>.jsonl``
+per ticker, so a read for ticker T touches only T's bytes (O(T's records), not
+O(total)). See the sharding note at :data:`ANCHOR_ARCHIVE_DIR`.
 
 Access-path contract (Anchor Intel v2.3 STEP 0 matrix — see
 ``docs/reliability_anchor_intel_v2.md``):
 
-* **Write only on page paths.** The single archive-append chokepoint is
-  ``lib.equity_valuation.store_equity_research_result`` (called only from
-  ``pages/4`` and the Cockpit on-demand ``_run_equity_research`` — both
-  ``allow_fetch=True`` page paths). The ranking / Cockpit-refresh path
-  (``rank_opportunities`` / ``_run_refresh``) appends NOTHING and makes no network
-  call.
+* **Write only on page paths.** The single archive-append chokepoint is the producer
+  ``lib.equity_valuation.compute_app_fair_value`` (appended on its live return; F1
+  moved it here from ``store_equity_research_result`` so pages/9 / the Trading Desk,
+  which never calls the hand-off, is historized too). It is invoked ONLY on
+  ``allow_fetch=True`` page paths (pages/4, the Cockpit on-demand
+  ``_run_equity_research``, and pages/9 via ``order_advisor._gather_technicals``).
+  The ranking / Cockpit-refresh path (``rank_opportunities`` / ``_run_refresh``)
+  appends NOTHING and makes no network call.
 * **Append-only — HARD INVARIANT.** Records are NEVER rewritten or mutated in
   place (mirrors git's no-rewrite-published-history rule). A second valuation of
   the same ticker adds a row; it never edits the prior row.
@@ -62,13 +69,37 @@ from typing import Optional
 
 _log = logging.getLogger("anchor_archive")
 
-# data/anchor_archive.jsonl lives under the repo-root data/ directory, alongside
+# The archive lives under the repo-root data/ directory, alongside
 # anchor_cache.json (the hot "latest" cache, unchanged).
 _DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+
+# --- Per-ticker sharding (Anchor Intel v2.4, F4 repayment) -------------------
+# v2.3 stored the whole history in ONE file ``data/anchor_archive.jsonl`` and every
+# read scanned the entire file (O(total bytes)) before filtering by ticker — the
+# documented F4 cost. v2.4 SHARDS the archive per ticker: the canonical store is the
+# directory ``ANCHOR_ARCHIVE_DIR`` with one shard ``<TICKER>.jsonl`` per ticker, so a
+# read for ticker T touches ONLY T's bytes (O(T's records)). Every production read is
+# already keyed by a single ticker (``read_archive`` / ``covered_vintages`` /
+# ``backfilled_vintages``; ``load_all_records`` has no production caller), so sharding
+# bounds every hot-path read. Per-ticker sharding was chosen over a tail-bounded read
+# because the single file interleaved all tickers — a tail read cannot bound a
+# *per-ticker* read (T's most-recent records may sit arbitrarily far back behind other
+# tickers' appends).
+#
+# The injectable ``path`` / ``archive_path`` parameter is the shard ROOT DIRECTORY
+# (default ``ANCHOR_ARCHIVE_DIR``); the shard for ticker T is ``<root>/<T>.jsonl``.
+# The legacy single-file path below is RETAINED only as the source the one-time
+# offline migration (``scripts/migrate_anchor_archive_to_shards.py``) reads — reads
+# never auto-migrate (that would reintroduce the O(total) scan). ``data/`` is
+# git-ignored, so the layout change touches no tracked file.
+ANCHOR_ARCHIVE_DIR = _DATA_DIR / "anchor_archive"
+
+# Legacy single-file archive (pre-v2.4). NOT written or read on any hot path; the
+# migration script reads it once to split it into per-ticker shards.
 ANCHOR_ARCHIVE_PATH = _DATA_DIR / "anchor_archive.jsonl"
 
 # One visible schema-version constant. Bump on any record-shape change; the
-# read-time version guard (``_iter_records``) skips records of any other version so
+# read-time version guard (``_iter_file``) skips records of any other version so
 # an append-only file with mixed versions stays readable (older rows are ignored,
 # not migrated in place — append-only is preserved).
 ANCHOR_ARCHIVE_SCHEMA_VERSION = 1
@@ -109,6 +140,44 @@ def record_origin_of(record: dict) -> str:
     if not isinstance(record, dict):
         return RECORD_ORIGIN_LIVE
     return str(record.get("record_origin") or RECORD_ORIGIN_LIVE)
+
+
+# ---------------------------------------------------------------------------
+# Shard-path resolution (per-ticker sharding, v2.4)
+# ---------------------------------------------------------------------------
+
+
+def _resolve_root(path: Optional[Path] = None) -> Path:
+    """The shard ROOT directory (``path`` when given, else :data:`ANCHOR_ARCHIVE_DIR`).
+
+    Resolves :data:`ANCHOR_ARCHIVE_DIR` at call time (not signature-default) so a test
+    monkeypatching the module constant redirects production reads/writes.
+    """
+    return Path(path) if path else ANCHOR_ARCHIVE_DIR
+
+
+def _shard_name(ticker: str) -> str:
+    """Filesystem-safe shard filename for ``ticker`` (``<TICKER>.jsonl``).
+
+    Uppercases + strips, then keeps ``[A-Z0-9._-]`` (US tickers may carry ``.`` /
+    ``-`` / ``^``) and maps any other character to ``_`` so an exotic symbol can
+    never escape the shard directory. Returns ``""`` for an empty ticker (callers
+    guard on a falsy ticker before writing).
+    """
+    tk = (ticker or "").upper().strip()
+    if not tk:
+        return ""
+    safe = "".join(c if (c.isalnum() or c in "._-") else "_" for c in tk)
+    return f"{safe}.jsonl"
+
+
+def shard_path(ticker: str, root: Optional[Path] = None) -> Path:
+    """Absolute path of one ticker's shard under ``root`` (default the canonical dir).
+
+    The public layout helper — the migration script and the test suites resolve a
+    ticker's shard through this so the on-disk convention lives in exactly one place.
+    """
+    return _resolve_root(root) / _shard_name(ticker)
 
 
 # ---------------------------------------------------------------------------
@@ -221,21 +290,42 @@ def reset_dedup_cache() -> None:
     _APPENDED_KEYS.clear()
 
 
+def _canonical_shard_str(p: Path) -> str:
+    """Canonical absolute string for a shard path (dedup-key stable; F-B2).
+
+    Uses ``Path.resolve()`` so equivalent aliases of the same shard — relative vs.
+    absolute, a ``./`` prefix, or a symlinked root — collapse to ONE key and cannot
+    bypass the append dedup (which would let the same vintage be appended twice and
+    corrupt the append-only series / migration speed). ``resolve(strict=False)`` does
+    not require the file to exist (a first append targets a not-yet-created shard).
+    Fail-closed: an unresolvable path falls back to its absolute form, then its raw
+    string, so the dedup key is always well-defined.
+    """
+    try:
+        return str(p.resolve())
+    except Exception:  # noqa: BLE001 — fail-closed; still canonicalize what we can
+        try:
+            return str(p.absolute())
+        except Exception:  # noqa: BLE001
+            return str(p)
+
+
 def append_record(record: dict, path: Optional[Path] = None) -> bool:
     """Append one well-formed ``record`` to the archive (atomic, fail-closed).
 
-    HARD INVARIANT: append-only. This opens the file in append mode and writes a
-    single JSON line; it never reads, rewrites, or mutates any prior record.
-    Identical (path, ticker, computed_at) re-appends within the process are deduped
-    (a cache re-read of one vintage, not a new valuation) and reported as success
-    without writing a second row. Returns ``True`` on success / dedup, ``False`` on
-    any failure (never raises).
+    HARD INVARIANT: append-only. This opens the ticker's shard in append mode and
+    writes a single JSON line; it never reads, rewrites, or mutates any prior record.
+    The append routes to ``<root>/<TICKER>.jsonl`` (``path`` is the shard ROOT
+    directory; default :data:`ANCHOR_ARCHIVE_DIR`). Identical (shard, ticker,
+    computed_at) re-appends within the process are deduped (a cache re-read of one
+    vintage, not a new valuation) and reported as success without writing a second
+    row. Returns ``True`` on success / dedup, ``False`` on any failure (never raises).
     """
     tk = str((record or {}).get("ticker", "") or "").upper().strip()
     if not tk:
         return False
-    p = Path(path) if path else ANCHOR_ARCHIVE_PATH
-    key = (str(p), tk, str((record or {}).get("computed_at", "") or ""))
+    p = shard_path(tk, path)
+    key = (_canonical_shard_str(p), tk, str((record or {}).get("computed_at", "") or ""))
     if key in _APPENDED_KEYS:
         return True  # same vintage re-surfaced this session — append-only no-op
     try:
@@ -255,8 +345,9 @@ def append_anchor_record(fv, *, data_vintage: str = "",
                          path: Optional[Path] = None) -> bool:
     """Append-only archive write-through for an :class:`AppFairValue` (fail-closed).
 
-    Called ONLY from the page-path ``store_equity_research_result`` chokepoint —
-    never from the ranking / refresh path (see the v2.3 access-path matrix).
+    Called ONLY from the producer chokepoint ``compute_app_fair_value`` (page
+    paths) — never from the ranking / refresh path (see the access-path matrix).
+    Routes to the ticker's shard (``path`` is the shard ROOT directory).
     """
     try:
         record = record_from_app_fair_value(fv, data_vintage=data_vintage)
@@ -270,14 +361,13 @@ def append_anchor_record(fv, *, data_vintage: str = "",
 # ---------------------------------------------------------------------------
 
 
-def _iter_records(path: Optional[Path] = None):
-    """Yield each valid current-schema record from the archive (read-only).
+def _iter_file(p: Path):
+    """Yield each valid current-schema record from ONE shard file (read-only).
 
     Skips blank lines, unparseable lines, and records whose ``schema_version``
     differs from :data:`ANCHOR_ARCHIVE_SCHEMA_VERSION` (forward-migration safe —
     an append-only file with mixed versions stays readable). Never raises.
     """
-    p = Path(path) if path else ANCHOR_ARCHIVE_PATH
     if not p.is_file():
         return
     try:
@@ -299,23 +389,55 @@ def _iter_records(path: Optional[Path] = None):
         yield rec
 
 
+def _iter_ticker(ticker: str, root: Optional[Path] = None):
+    """Yield ``ticker``'s valid records by reading ONLY its shard (O(shard bytes)).
+
+    This is the bounded per-ticker read that repays F4: it opens
+    ``<root>/<TICKER>.jsonl`` and nothing else, so cost is O(the ticker's records)
+    rather than O(total archive bytes). Records inside a shard are already only that
+    ticker's, but the ``ticker`` guard is kept defensively. Never raises.
+    """
+    tk = (ticker or "").upper().strip()
+    if not tk:
+        return
+    for rec in _iter_file(shard_path(tk, root)):
+        if str(rec.get("ticker", "")).upper().strip() == tk:
+            yield rec
+
+
 def load_all_records(path: Optional[Path] = None) -> list:
-    """Return every valid record in the archive (read-only; fail-closed → [])."""
-    return list(_iter_records(path))
+    """Return every valid record across ALL shards (read-only; fail-closed → []).
+
+    Globs ``<root>/*.jsonl`` and reads each shard. O(total) by construction — it has
+    NO production caller (diagnostics / tests only); every hot-path read is the
+    bounded per-ticker :func:`read_archive`.
+    """
+    root = _resolve_root(path)
+    if not root.is_dir():
+        return []
+    out: list = []
+    try:
+        shards = sorted(root.glob("*.jsonl"))
+    except Exception:  # noqa: BLE001 — fail-closed
+        return []
+    for shard in shards:
+        out.extend(_iter_file(shard))
+    return out
 
 
 def read_archive(ticker: str, *, window: Optional[int] = None,
                  path: Optional[Path] = None) -> list:
     """Return one ticker's records, oldest→newest by ``computed_at`` (read-only).
 
-    ``window`` (when given) keeps only the most recent ``window`` records. Purely
-    read-only — no compute, no network, no write. Fail-closed → ``[]``.
+    Reads ONLY the ticker's shard (``<root>/<TICKER>.jsonl``) — O(the ticker's
+    records), not O(total archive). ``window`` (when given) keeps only the most
+    recent ``window`` records. Purely read-only — no compute, no network, no write.
+    Fail-closed → ``[]``.
     """
     tk = (ticker or "").upper().strip()
     if not tk:
         return []
-    out = [r for r in _iter_records(path)
-           if str(r.get("ticker", "")).upper().strip() == tk]
+    out = list(_iter_ticker(tk, path))
     out.sort(key=lambda r: str(r.get("computed_at", "")))
     if window is not None and window > 0:
         out = out[-int(window):]
@@ -325,33 +447,33 @@ def read_archive(ticker: str, *, window: Optional[int] = None,
 def backfilled_vintages(ticker: str, *, path: Optional[Path] = None) -> set:
     """Return the set of ``data_vintage`` dates already covered by BACKFILL records.
 
-    Reports only ``record_origin == "backfill"`` rows. Read-only; fail-closed →
-    ``set()``. (The backfill engine's skip-guard uses :func:`covered_vintages`,
-    which spans BOTH origins; this narrower view remains for diagnostics / tests.)
+    Reads ONLY the ticker's shard. Reports only ``record_origin == "backfill"`` rows.
+    Read-only; fail-closed → ``set()``. (The backfill engine's skip-guard uses
+    :func:`covered_vintages`, which spans BOTH origins; this narrower view remains
+    for diagnostics / tests.)
     """
     tk = (ticker or "").upper().strip()
     if not tk:
         return set()
-    return {str(r.get("data_vintage", "")) for r in _iter_records(path)
-            if str(r.get("ticker", "")).upper().strip() == tk
-            and record_origin_of(r) == RECORD_ORIGIN_BACKFILL
+    return {str(r.get("data_vintage", "")) for r in _iter_ticker(tk, path)
+            if record_origin_of(r) == RECORD_ORIGIN_BACKFILL
             and r.get("data_vintage")}
 
 
 def covered_vintages(ticker: str, *, path: Optional[Path] = None) -> set:
     """Return ``data_vintage`` dates already covered by ANY-origin records (G2 fix).
 
-    The persistent idempotency guard for the offline backfill engine: re-running
-    backfill skips any as-of date that already has a record of EITHER origin —
-    ``live`` OR ``backfill`` — for the ticker. A real contemporaneous (live) compute
-    for a date must NOT be double-counted by a historical backfill approximation of
-    the SAME date (the end_date seam, where the weekly grid includes today and a
-    live row may already exist): live wins. Robust across process restarts (the
-    in-process append memo is not). Read-only; fail-closed → ``set()``.
+    Reads ONLY the ticker's shard. The persistent idempotency guard for the offline
+    backfill engine: re-running backfill skips any as-of date that already has a
+    record of EITHER origin — ``live`` OR ``backfill`` — for the ticker. A real
+    contemporaneous (live) compute for a date must NOT be double-counted by a
+    historical backfill approximation of the SAME date (the end_date seam, where the
+    weekly grid includes today and a live row may already exist): live wins. Robust
+    across process restarts (the in-process append memo is not). Read-only;
+    fail-closed → ``set()``.
     """
     tk = (ticker or "").upper().strip()
     if not tk:
         return set()
-    return {str(r.get("data_vintage", "")) for r in _iter_records(path)
-            if str(r.get("ticker", "")).upper().strip() == tk
-            and r.get("data_vintage")}
+    return {str(r.get("data_vintage", "")) for r in _iter_ticker(tk, path)
+            if r.get("data_vintage")}

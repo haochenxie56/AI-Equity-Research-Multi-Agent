@@ -222,6 +222,13 @@ class PriceLevelResult:
     # else the locally-computed AppFairValue.computed_at. Surfaced unobtrusively
     # (caption/tooltip) on the Trading Desk so the anchor's freshness is visible.
     fair_value_computed_at: str = ""
+    # Anchor Intel v2.4 — the full AppFairValue the page-path live compute produced
+    # (``tech["fva_obj"]``), threaded out so the Trading Desk valuation-diagnosis card
+    # can be assembled WITHOUT a second compute. Set ONLY on the ``allow_fetch=True``
+    # page path (it is ``None`` on the network-free ranking/refresh path, so that path
+    # carries no heavy object and the card is never assembled there). Purely additive
+    # (PriceLevelResult stays a strict superset). Not serialized into any snapshot.
+    app_fair_value_obj: Optional[object] = None
     approved_for_execution: bool = False  # ALWAYS False (immutable invariant)
     # --- v4 fields (valuation confidence + scenario risk overlay) ---------
     valuation_confidence: str = "low"  # high | medium | low (LONG anchor confidence)
@@ -1599,6 +1606,9 @@ def _assemble(ticker: str, scenario: str, hz: str, cost_basis: Optional[float],
         fair_value_source=fair_value_source,
         approved_for_execution=False,
         fair_value_computed_at=tech.get("fair_value_computed_at", ""),
+        # Anchor Intel v2.4 — thread the page-path AppFairValue out for the
+        # diagnosis card (None on the network-free path; see the field doc).
+        app_fair_value_obj=tech.get("fva_obj"),
         # --- v4 fields ---
         valuation_confidence=valuation_confidence,
         conservative_anchor=conservative_anchor,

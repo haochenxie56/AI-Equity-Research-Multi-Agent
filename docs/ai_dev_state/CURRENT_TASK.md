@@ -5,6 +5,41 @@
 > history preserved verbatim). This file keeps only the active phase. The
 > long-form running status remains in `docs/ai_dev_state/PROJECT_STATE.md`.
 
+## Anchor Intelligence v2.4 — Valuation Diagnosis Card + F4 Archive Sharding (CLOSED — APPROVED @ 18dfcf2, merged to main)
+
+Branch `phase-anchor-intel-v2-4` off `990ed90`. Access-path-first (STEP 0 matrices
+committed at `b5277b8` before any code). **Deterministic; no LLM invents a number;
+the diagnosis adds no anchor math and triggers no compute/fetch on any path.** Phase
+doc `docs/reliability_anchor_intel_v2.md`.
+
+- **PART A — valuation diagnosis card.** New pure `lib/valuation_diagnosis.py`:
+  `build_valuation_diagnosis` ASSEMBLES a `ValuationDiagnosis` from existing
+  `AppFairValue` + migration fields (company_type, applicable/rejected methods with
+  reasons, anchor consistency cluster-vs-outlier, endorsed range incl. honest
+  irreconcilable state, confidence). NEW deterministic `classify_valuation_role`
+  (visible config block) → `{informational|mid_term_supportive|long_term_eligible}`,
+  the documented interface to 7A (wiring deferred). `what_would_change` = MECHANICAL
+  conditions now (price-vs-range, analyst-pool deterioration) + NARRATIVE Phase-8
+  placeholder; reverse-DCF = named Phase-8 slot. Rendered on pages/4 + pages/9 via
+  `ui_utils.render_valuation_diagnosis_card`; threaded via additive
+  `PriceLevelResult.app_fair_value_obj` (no second compute; None on the network-free
+  path). No snapshot field (render-time only). Suite **50/50**.
+- **PART B — F4 sharding.** `lib/anchor_archive.py` sharded per ticker
+  (`data/anchor_archive/<TICKER>.jsonl`); reads O(total) → O(ticker). One-time
+  offline `scripts/migrate_anchor_archive_to_shards.py`. Invariants preserved
+  (append-only, page-path-only writes/§13.10, single-vintage, never-fabricate, G2
+  seam). `anchor_archive` 60→77, `anchor_backfill` 60→61, `entry_v4` 92/92.
+- **Sweep** GREEN=65 / RED=13 (pre-existing orthogonal reds). `ui_utils.py`
+  normalized to LF (lone CRLF outlier); `git diff --check` clean.
+- **Fix round (REQUEST CHANGES — re-review pending):** F-A1 `anchor_consistency`
+  sourced from the producer (no recomputed/order-dependent outlier; `no_clear_outlier`
+  when ambiguous) · F-B2 dedup key on the canonical resolved shard path (alias forms
+  can't bypass dedup) · F-B3 migration guarantee narrowed to SEMANTIC fidelity
+  (field-level + count test, not byte-equality). `valuation_diagnosis` 46→50,
+  `anchor_archive` 71→77. **Re-review APPROVED at `18dfcf2`; merged to `main` via a
+  `--no-ff` merge commit — v2.4 CLOSED.** Next active phase: **v2.5** (multi-dim peer
+  profile + honest `peer_match_quality` degrade) — pending, not started.
+
 ## Anchor Intelligence v2.3 — Anchor Historization + Historical Backfill (fully CLOSED)
 
 v2.3 turns the unified anchor (Round 1) into an **append-only historical series** and

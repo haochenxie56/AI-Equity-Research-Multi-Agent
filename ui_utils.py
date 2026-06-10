@@ -1260,6 +1260,35 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "cockpit_fv_fcf_unavailable":   "现金流数据不可用",
         "p6_data_unavailable":          "数据不可用",
         "cockpit_fv_debate_failed":     "AI 辩论未运行",
+        # ── Anchor Intel v2.4: valuation diagnosis card ─────────────────────────
+        "valdiag_header":               "🔬 估值诊断",
+        "valdiag_role":                 "估值定位",
+        "valdiag_role_informational":   "仅供参考",
+        "valdiag_role_mid_term_supportive": "支持中线",
+        "valdiag_role_long_term_eligible":  "可作长线依据",
+        "valdiag_consistency":          "锚一致性",
+        "valdiag_consistency_consistent":     "多锚一致",
+        "valdiag_consistency_single_anchor":  "仅单一锚",
+        "valdiag_consistency_irreconcilable": "锚不可调和",
+        "valdiag_consistency_no_anchor":      "无有效锚",
+        "valdiag_outlier":              "离群锚",
+        "valdiag_no_clear_outlier":     "无明确离群锚",
+        "valdiag_clustered":            "聚合锚",
+        "valdiag_endorsed_range":       "认可区间",
+        "valdiag_range_irreconcilable": "区间暂不给出（各锚分歧过大，分别列示）",
+        "valdiag_range_unavailable":    "区间不可用",
+        "valdiag_applicable_methods":   "适用方法",
+        "valdiag_rejected_methods":     "已排除方法",
+        "valdiag_reason_dcf_unavailable": "DCF 不可用",
+        "valdiag_reason_excluded_anchor": "已排除",
+        "valdiag_what_would_change":    "什么会改变这一结论",
+        "valdiag_cond_price_above_endorsed_range": "价格升破认可区间上沿",
+        "valdiag_cond_price_below_endorsed_range": "价格跌破认可区间下沿",
+        "valdiag_cond_analyst_pool_migration_deteriorating": "分析师锚池系统性下移",
+        "valdiag_cond_met":             "已触发",
+        "valdiag_cond_armed":           "未触发",
+        "valdiag_narrative_pending":    "叙事型催化（利润率指引等）将于 Phase 8 接入",
+        "valdiag_reverse_dcf_pending":  "反向 DCF：Phase 8 待接入",
         # ── Phase 6C-B: Trading Desk fair-value source badge ────────────────────
         "td_fair_value_source":         "估值来源",
         "td_fv_src_app":                "应用计算",
@@ -2691,6 +2720,35 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "cockpit_fv_fcf_unavailable":   "FCF data unavailable",
         "p6_data_unavailable":          "Data unavailable",
         "cockpit_fv_debate_failed":     "AI debate did not run",
+        # ── Anchor Intel v2.4: valuation diagnosis card ─────────────────────────
+        "valdiag_header":               "🔬 Valuation Diagnosis",
+        "valdiag_role":                 "Valuation role",
+        "valdiag_role_informational":   "Informational",
+        "valdiag_role_mid_term_supportive": "Mid-term supportive",
+        "valdiag_role_long_term_eligible":  "Long-term eligible",
+        "valdiag_consistency":          "Anchor consistency",
+        "valdiag_consistency_consistent":     "Anchors agree",
+        "valdiag_consistency_single_anchor":  "Single anchor only",
+        "valdiag_consistency_irreconcilable": "Anchors irreconcilable",
+        "valdiag_consistency_no_anchor":      "No valid anchor",
+        "valdiag_outlier":              "Outlier",
+        "valdiag_no_clear_outlier":     "no clear outlier",
+        "valdiag_clustered":            "Clustered",
+        "valdiag_endorsed_range":       "Endorsed range",
+        "valdiag_range_irreconcilable": "Range withheld (anchors disagree — shown separately)",
+        "valdiag_range_unavailable":    "Range unavailable",
+        "valdiag_applicable_methods":   "Applicable methods",
+        "valdiag_rejected_methods":     "Rejected methods",
+        "valdiag_reason_dcf_unavailable": "DCF unavailable",
+        "valdiag_reason_excluded_anchor": "excluded",
+        "valdiag_what_would_change":    "What would change this",
+        "valdiag_cond_price_above_endorsed_range": "Price breaks above the endorsed range",
+        "valdiag_cond_price_below_endorsed_range": "Price breaks below the endorsed range",
+        "valdiag_cond_analyst_pool_migration_deteriorating": "Analyst pool migrating systematically lower",
+        "valdiag_cond_met":             "triggered",
+        "valdiag_cond_armed":           "not yet",
+        "valdiag_narrative_pending":    "Narrative catalysts (margin guidance, etc.) — arriving in Phase 8",
+        "valdiag_reverse_dcf_pending":  "Reverse DCF: Phase 8 pending",
         # ── Phase 6C-B: Trading Desk fair-value source badge ────────────────────
         "td_fair_value_source":         "Fair value source",
         "td_fv_src_app":                "app-computed",
@@ -3927,6 +3985,90 @@ def t(key: str) -> str:
     """Return the translated UI string for the current language (defaults to en)."""
     lang = st.session_state.get("language", "en")
     return TRANSLATIONS.get(lang, TRANSLATIONS["en"]).get(key, key)
+
+
+def render_valuation_diagnosis_card(diag) -> None:
+    """Render the Anchor Intel v2.4 valuation diagnosis card (bilingual, fail-soft).
+
+    ``diag`` is a :class:`lib.valuation_diagnosis.ValuationDiagnosis` (duck-typed).
+    UI-copy discipline: the decision-relevant tokens (valuation role, endorsed range,
+    anchor consistency, what-would-change) render in the main view; method/token-level
+    detail is folded into muted captions + ``help=`` tooltips (NOT a nested expander —
+    this card renders inside an already-open expander on pages/4). Never raises.
+    """
+    if diag is None:
+        return
+    try:
+        _role = str(getattr(diag, "valuation_role", "") or "informational")
+        _role_color = {"informational": "#8b949e", "mid_term_supportive": "#d29922",
+                       "long_term_eligible": "#3fb950"}.get(_role, "#8b949e")
+        st.markdown(f"**{t('valdiag_header')}**")
+        # ── Valuation role badge (the headline decision token) ──────────────────
+        st.markdown(
+            f"{t('valdiag_role')}: "
+            f"<span style='background:{_role_color}22;color:{_role_color};"
+            f"border:1px solid {_role_color}55;padding:2px 9px;border-radius:10px;"
+            f"font-weight:600'>{t(f'valdiag_role_{_role}')}</span>",
+            unsafe_allow_html=True,
+        )
+        # ── Endorsed range (or the honest irreconcilable / unavailable state) ───
+        _er = getattr(diag, "endorsed_range", None)
+        _er_state = getattr(_er, "state", "unavailable")
+        if _er_state == "endorsed" and getattr(_er, "mid", None) is not None:
+            st.caption(
+                f"{t('valdiag_endorsed_range')}: "
+                f"${_er.low:.2f} – ${_er.high:.2f}  (mid ${_er.mid:.2f})")
+        elif _er_state == "irreconcilable":
+            st.caption(f"⚠️ {t('valdiag_range_irreconcilable')}")
+        else:
+            st.caption(t("valdiag_range_unavailable"))
+        # ── Anchor consistency (+ outlier when irreconcilable) ──────────────────
+        _ac = getattr(diag, "anchor_consistency", None)
+        _ac_state = getattr(_ac, "state", "no_anchor")
+        _ac_line = f"{t('valdiag_consistency')}: {t(f'valdiag_consistency_{_ac_state}')}"
+        _outlier = getattr(_ac, "outlier", "") or ""
+        if _outlier == "no_clear_outlier":
+            _ac_line += f"  ·  {t('valdiag_outlier')}: {t('valdiag_no_clear_outlier')}"
+        elif _outlier:
+            _ac_line += f"  ·  {t('valdiag_outlier')}: {_outlier.upper()}"
+        st.caption(_ac_line)
+        # ── What would change this (mechanical, falsifiable) ────────────────────
+        _mech = list(getattr(getattr(diag, "what_would_change", None), "mechanical", []) or [])
+        if _mech:
+            _parts = []
+            for _c in _mech:
+                _mark = "🔴" if getattr(_c, "met", False) else "⚪"
+                _state = t("valdiag_cond_met") if getattr(_c, "met", False) else t("valdiag_cond_armed")
+                _parts.append(f"{_mark} {t(f'valdiag_cond_{_c.id}')} ({_state})")
+            st.caption(f"{t('valdiag_what_would_change')}: " + "  ·  ".join(_parts))
+        # ── Method detail — folded (muted captions + tooltips) ──────────────────
+        _applic = list(getattr(diag, "applicable_methods", []) or [])
+        if _applic:
+            st.caption(f"{t('valdiag_applicable_methods')}: "
+                       + " · ".join(str(m).upper() for m in _applic))
+        _rej = list(getattr(diag, "rejected_methods", []) or [])
+        if _rej:
+            _rparts = []
+            for _r in _rej:
+                _reason = getattr(_r, "reason", "") or ""
+                # Map reason tokens to bilingual labels (reuse existing flag keys).
+                _rlabel = {
+                    "cycle_distorted": t("cockpit_fv_flag_cycle_distorted"),
+                    "dcf_unavailable": t("valdiag_reason_dcf_unavailable"),
+                    "excluded_anchor": t("valdiag_reason_excluded_anchor"),
+                }.get(_reason, _reason or t("valdiag_reason_excluded_anchor"))
+                _detail = getattr(_r, "detail", "") or ""
+                _val = getattr(_r, "value", None)
+                _vtxt = f" ${_val:.2f}" if isinstance(_val, (int, float)) else ""
+                _rparts.append((f"{str(getattr(_r, 'name', '')).upper()}{_vtxt} "
+                                f"({_rlabel})", _detail))
+            # Render with per-item tooltips carrying the human basis.
+            st.caption(f"{t('valdiag_rejected_methods')}: "
+                       + " · ".join(p[0] for p in _rparts))
+        # ── Phase-8 placeholders (named, muted) ─────────────────────────────────
+        st.caption(f"_{t('valdiag_reverse_dcf_pending')}_  ·  _{t('valdiag_narrative_pending')}_")
+    except Exception:  # noqa: BLE001 — render is best-effort; never break the page
+        return
 
 
 def render_workflow_bar() -> None:

@@ -25,8 +25,10 @@ at `9f6c37e`** and merged into `main` at `97c8f1f`. The **historical backfill** 
 recomputable anchors only, the analyst anchor never fabricated for a past date, with
 the G1 filing-lag look-ahead defence and the G2 same-date seam guard; suite
 `scripts/test_reliability_anchor_backfill.py` **60/60** — was reviewed and
-**APPROVED at `c57e56e`** and merged now. **Rounds v2.4–v2.5 remain pending**
-(future scope, not started — to be specified when each round opens).
+**APPROVED at `c57e56e`** and merged now. **Round v2.4 is now CLOSED** (valuation
+diagnosis card + F4 archive sharding; APPROVED at `18dfcf2`, merged into `main` via a
+`--no-ff` merge commit). **Round v2.5 remains pending** (future scope, not started —
+to be specified when it opens).
 
 ## Goal
 
@@ -488,9 +490,262 @@ Bumping would orphan older live rows behind the read-time version guard.
   full `test_reliability_*` **GREEN=64 / RED=13** (identical pre-existing reds).
   `macro_regime.py` untouched; no i18n change this round; `git diff --check` clean.
 
-## Pending — rounds v2.4–v2.5
+## Round v2.4 — valuation diagnosis card + archive sharding (F4 repayment)
 
-Not started. Scope to be specified when each round opens. Round 1 establishes the
-single-producer / structured-pool / epoch foundation those rounds build on; v2.3
-adds the append-only historical series + migration readout, and the backfill round
-seeds that series with recomputable history.
+> **Round-1 lesson applied first (STEP 0 before any code).** Both features in this
+> round are *access-path* problems, not feature-bolt-ons. The **diagnosis card** is
+> an *assembly* problem: which surface already holds the `AppFairValue` / migration
+> readout, and does reading it on that surface trigger a live compute (it must not
+> on any network-free path)? **Archive sharding** is a *reader-migration* problem:
+> every current reader of the single-file archive must move to the bounded
+> per-shard read, or the O(total) cost survives in the un-migrated caller. The two
+> matrices below are committed BEFORE the code.
+
+### STEP 0 — caller-contract matrix (audited against the real call sites)
+
+#### Matrix A — valuation diagnosis card
+
+Every render surface that will show the card, the data it READS, and whether that
+read triggers a live compute/fetch. The card is a **render-time assembly**; it adds
+**no** anchor math and **no** new network call on any path.
+
+| surface (verified file:line) | reads from | live compute / fetch? |
+|---|---|---|
+| `lib/valuation_diagnosis.build_valuation_diagnosis(fv, migration)` (NEW, pure) | its arguments only | **NO I/O** — pure function; identical inputs → identical `ValuationDiagnosis` |
+| `lib/valuation_diagnosis.classify_valuation_role(...)` (NEW, A2) | `(confidence, anchor_consistency, upside_vs_price, blend_state)` scalars | **NO I/O** — pure deterministic config-table lookup |
+| `pages/4_Equity.py` (renders in the `fv_slot` expander, after the range bar ~:838) | `_fv` — the `AppFairValue` ALREADY in `st.session_state[_fv_key]`, computed once on the page path at `pages/4_Equity.py:668` (`compute_app_fair_value`, `allow_fetch` page path) **+** `anchor_migration.read_migration(ticker)` (read-only archive) | **NO new compute** — reuses the already-computed `_fv`; `read_migration` is read-only, **zero network** |
+| `pages/9_Trading_Desk.py` (renders in the LONG valuation block ~:925–1064) | `levels.app_fair_value_obj` — **NEW** `PriceLevelResult` field carrying the `fva_obj` the page-path `compute_price_levels(allow_fetch=True)` ALREADY live-computed at `order_advisor._gather_technicals:1422` **+** `_chk.anchor_migration` — the migration readout `thesis_monitor.check_holding` ALREADY read read-only at `thesis_monitor.py:590` | **NO new compute** — reuses the already-computed `fva_obj` + the migration the monitor already read |
+
+Derived invariants (enforced by tests):
+
+1. **No card read triggers a live compute or fetch.** pages/4 reuses the session
+   `_fv`; pages/9 reuses the `fva_obj` already computed inside `compute_price_levels`
+   (threaded out on the new `PriceLevelResult.app_fair_value_obj` field — set ONLY
+   when `fva_obj` exists, i.e. the `allow_fetch=True` page path; it is `None` on the
+   `allow_fetch=False` ranking/refresh path, so the ranking path carries no heavy
+   object and the card is never assembled there). `read_migration` is a read-only
+   archive read with no network on any path.
+2. **`PriceLevelResult` stays a strict superset** (the order-advisor test
+   constraint): `app_fair_value_obj: Optional[object] = None` is purely additive.
+3. **Snapshot parity — explicit EXCLUSION.** No diagnosis-card field (including
+   `valuation_role`) flows into the daily snapshot / `OpportunityCard.anchor_snapshot`
+   this round. The card is a render-time assembly on pages/4 + pages/9 ONLY, so there
+   is nothing to bind in the §18 / archive-suite §7 snapshot-parity partition. This
+   is the *bind-or-explicitly-exclude* discipline satisfied by explicit exclusion +
+   rationale. `valuation_role` is documented (A2) as the deterministic INTERFACE the
+   7A three-horizon view will later consume; wiring it INTO the ranker / snapshot is
+   **deferred** (out of scope this round — that would be a 7A scoring change).
+
+#### Matrix B — archive readers (sharding migration)
+
+Every CURRENT reader/writer of the append-only archive, audited against the real
+call sites. **No reader is left unclassified.** All production READS are already
+keyed by a single ticker — the one all-ticker reader (`load_all_records`) has **no
+production caller** — so per-ticker sharding bounds every hot-path read.
+
+| caller (verified file:line) | archive API | read scope | cost BEFORE (single file) | cost AFTER (sharded) |
+|---|---|---|---|---|
+| `anchor_migration.read_migration` `:242` | `read_archive(ticker, window, path)` | one ticker | O(total archive bytes) | **O(ticker shard)** |
+| `thesis_monitor.check_holding` `:590` | `read_migration(ticker)` (default path) | one ticker | O(total) | **O(ticker shard)** |
+| `anchor_backfill.backfill_ticker` `:525` | `covered_vintages(tk, path)` | one ticker | O(total) | **O(ticker shard)** |
+| `anchor_archive.read_archive` `:307` | internal `_iter_records` then filter by ticker | one ticker | O(total) | **O(ticker shard)** — reads only `<root>/<TICKER>.jsonl` |
+| `anchor_archive.covered_vintages` `:341` | internal `_iter_records` then filter | one ticker | O(total) | **O(ticker shard)** |
+| `anchor_archive.backfilled_vintages` `:325` | internal `_iter_records` then filter | one ticker (diagnostics/tests) | O(total) | **O(ticker shard)** |
+| `anchor_archive.load_all_records` `:302` | internal `_iter_records` | ALL tickers — **NO production caller** (diagnostics/tests only) | O(total) | O(total) — globs `<root>/*.jsonl`; unchanged, not on any hot path |
+| **WRITE** `equity_valuation.compute_app_fair_value` `:1626` | `append_anchor_record(fv)` (no path) | one ticker append | O(1) append | O(1) append to `<root>/<TICKER>.jsonl` |
+| **WRITE** `anchor_backfill.backfill_ticker` `:544` | `append_record(rec, path)` | one ticker append | O(1) | O(1) to shard |
+| Tests: `test_reliability_anchor_archive.py`, `test_reliability_anchor_backfill.py`, `test_reliability_phase_6c_v3_entry_v4.py` §13.10 | inject `path` / patch `ANCHOR_ARCHIVE_PATH` | — | — | inject / patch the shard **ROOT** (`ANCHOR_ARCHIVE_DIR`) |
+
+**Non-readers explicitly classified (not archive readers):**
+`lib/reliability/company_research_hub.py:_result_iter_records` — a memory-query
+result iterator (different module, unrelated to `anchor_archive`); NOT an archive
+reader.
+
+**Sharding strategy & layout.** Per-ticker sharding — chosen over a tail-bounded
+read because the single file interleaves all tickers, so a tail read cannot bound a
+*per-ticker* read (the most-recent N records for ticker T may sit arbitrarily far
+back behind other tickers' appends); sharding makes a read for T touch only T's
+bytes, robustly. New canonical store: directory `data/anchor_archive/` with one
+shard `<TICKER>.jsonl` per ticker (constant `ANCHOR_ARCHIVE_DIR`). The injectable
+`path` / `archive_path` parameter is reinterpreted as the shard **ROOT directory**
+(default `ANCHOR_ARCHIVE_DIR`); the shard for ticker T is `<root>/<T>.jsonl`. The
+legacy single-file `data/anchor_archive.jsonl` (constant `ANCHOR_ARCHIVE_PATH`,
+retained) is read only by the one-time migration.
+
+**Backward compatibility — one-time OFFLINE migration.** `data/` is fully
+git-ignored, so the layout change touches **no tracked file**. A one-time
+`scripts/migrate_anchor_archive_to_shards.py` splits the legacy single file into
+per-ticker shards — an explicit offline step (like `backfill_anchors.py`), **never
+on app startup** and never on the ranking/refresh path. Reads do NOT auto-migrate
+(that would reintroduce the O(total) read). Append-only and atomicity are preserved
+per shard: appends `open(shard, "a")` + `flush` + `fsync` of one line, unchanged;
+the in-process dedup memo keys on `(canonical resolved shard path, ticker,
+computed_at)` (F-B2 — `Path.resolve()` so alias root forms can't bypass dedup),
+still unique. The seam guard (`covered_vintages` spanning live + backfill) is intact
+— both origins live in the same per-ticker shard.
+
+**Migration fidelity — SEMANTIC, not byte (F-B3).** The migration parses
+(`json.loads`) and re-serializes (`json.dumps`) each record, so the on-disk BYTE
+representation may legitimately differ (JSON key order / whitespace). The guarantee
+is *semantic*: every migrated record's fields are preserved EXACTLY, the total
+record count is preserved, and the append-only invariant holds. This (correct,
+not-over-strong) contract is enforced by a field-level + count fidelity test
+(`test_reliability_anchor_archive.py` §9), NOT a byte-equality assertion.
+
+**Invariants preserved (re-tested on the new layout):** append-only (no row
+mutation), page-path-only writes (the §13.10 cold-ranking zero-write/zero-network
+test is ported to the sharded layout), single-vintage, never-fabricate, G2 seam
+guard.
+
+### PART A — valuation diagnosis card (`lib/valuation_diagnosis.py`, NEW)
+
+- **A1 — `ValuationDiagnosis` (assembled, no new anchor math).** Pure
+  `build_valuation_diagnosis(fv, *, migration=None, current_price=None)` reads ONLY
+  fields already on `AppFairValue` + the migration readout: `company_type`;
+  `applicable_methods` (= `methods_used`); `rejected_methods` WITH reasons (reuse the
+  existing `excluded_anchors` `{name, value, basis, flag}` tokens incl.
+  `cycle_distorted`, plus the menu's "DCF excluded for type" rationale); plus the
+  Phase-8 `reverse_dcf` slot (A4); `anchor_consistency` — **SOURCED, not recomputed
+  (F-A1)**: `state` from `blend_state` (+ the `single_anchor_blend` caveat),
+  `dispersion` passed through from the producer's `anchor_dispersion`, `clustered`
+  from the producer's kept `anchors`, and `outlier` from the producer's ONLY
+  per-anchor signal — `excluded_anchors` (an outlier is named ONLY when EXACTLY ONE
+  anchor was producer-excluded). The card NEVER derives a fresh outlier metric and
+  NEVER picks one by list order; when the producer flagged the set irreconcilable but
+  named no single culprit (or excluded none/several) it reports the sentinel
+  `no_clear_outlier` (never-fabricate); `endorsed_range` (the blended
+  `fair_value_low/high`, or the honest `anchors_irreconcilable` "shown separately"
+  state); `confidence` (the existing value, already incl. the v2.2 pool-dispersion
+  cap). Duck-typed via `getattr` (same tolerance as `record_from_app_fair_value`);
+  never raises.
+- **A2 — `valuation_role` (NEW deterministic mapping).** Single visible config block
+  `VALUATION_ROLE_RULES` mapping `(confidence × anchor_consistency × upside-vs-price)`
+  → `{informational | mid_term_supportive | long_term_eligible}`. Draft rules (tunable
+  in the config, not hardcoded): `confidence == low` → `informational` regardless;
+  `irreconcilable` anchors → `informational`; `medium` + consistent anchors →
+  `mid_term_supportive`; `high` + consistent + `upside > 15%` → `long_term_eligible`;
+  else `informational`. Fully deterministic, no LLM. **Documented intent:** this is
+  the interface between the valuation layer and the 7A three-horizon view; the
+  consumer wiring is a future round.
+- **A3 — `what_would_change`.** (i) MECHANICAL conditions implemented now, in the
+  same falsifiable-condition shape `thesis_monitor` uses: "price crosses above/below
+  the endorsed range without an estimate revision" (sourced from `endorsed_range` +
+  `current_price`), "analyst-pool migration crosses a deterioration threshold"
+  (sourced from the v2.3 migration readout's `deteriorating` / `consistency`).
+  (ii) NARRATIVE catalysts (margin guidance, etc.) — explicit **Phase-8 PLACEHOLDER**
+  field, empty this round.
+- **A4 — reverse-DCF slot.** A named, documented **Phase-8-pending** placeholder in
+  the method menu / card. Reverse DCF is NOT implemented this round.
+- **A5 — render on pages/4 + pages/9.** UI-copy discipline (the v1 #3 lesson):
+  decision-relevant, bilingual wording in the main view; method-detail / token-level
+  content folded into an expander/tooltip — no developer-text in primary cells. New
+  `t()` keys are additive bilingual in both `TRANSLATIONS` blocks.
+
+### PART B — F4 archive sharding repayment
+
+- **B1 — per-ticker sharding** (strategy + rationale above). `ANCHOR_ARCHIVE_DIR`
+  added; `_shard_path(ticker, root)` resolves `<root>/<TICKER>.jsonl`; `_iter_records`
+  reads ONE shard (the ticker's) for the per-ticker readers, via a new
+  ticker-scoped internal iterator.
+- **B2 — reader migration.** `read_archive`, `covered_vintages`, `backfilled_vintages`
+  read the single ticker shard; `load_all_records` globs all shards (diagnostics
+  only). `read_migration` / `backfill_ticker` / `thesis_monitor` inherit the bounded
+  read transparently (they already pass a ticker). Appends route to the per-ticker
+  shard. `scripts/migrate_anchor_archive_to_shards.py` ships the one-time split.
+- **B3 — invariants** preserved (append-only, page-path-only writes, §13.10
+  zero-write/zero-network re-run on the new layout, single-vintage, never-fabricate,
+  G2 seam guard).
+- **B4 — read cost:** O(total archive bytes) → **O(one ticker's records)** for every
+  hot-path read (Matrix B "AFTER" column).
+
+### Results (CLOSED — APPROVED @ 18dfcf2, merged to main)
+
+- **New module** `lib/valuation_diagnosis.py` (pure, deterministic, no I/O):
+  `build_valuation_diagnosis` + `classify_valuation_role` + the visible
+  `VALUATION_ROLE_RULES` config block. **New suite**
+  `scripts/test_reliability_valuation_diagnosis.py` — **46/46**: assembly (§1),
+  consistency cluster/outlier (§2), EVERY `valuation_role` boundary incl. the strict
+  `>15%` long-eligible edge (§3), what_would_change mechanical/placeholder split (§4),
+  reverse-DCF Phase-8 slot (§5), determinism + fail-soft (§6), the
+  `PriceLevelResult.app_fair_value_obj` data-path threading — page sets it /
+  network-free leaves it None, driven on the REAL `compute_price_levels` (§7), render
+  bindings + snapshot EXCLUSION (§8), and i18n token coverage in both languages (§9).
+- **Archive sharding** (`lib/anchor_archive.py`): `ANCHOR_ARCHIVE_DIR` +
+  `shard_path()`; per-ticker reads via `_iter_ticker`; `load_all_records` globs all
+  shards (diagnostics only). One-time offline `scripts/migrate_anchor_archive_to_shards.py`.
+  Read cost **O(total) → O(one ticker's records)**. Tests migrated to the sharded
+  layout + new assertions: `anchor_archive` **60 → 71** (shard isolation 2.11–2.13,
+  migration-script split + idempotent double-run 9.1–9.7), `anchor_backfill`
+  **60 → 61** (5.8 shard write), `phase_6c_v3_entry_v4` **92/92** (§13.10
+  cold-ranking zero-write/zero-network re-run against `ANCHOR_ARCHIVE_DIR`).
+- **Render** on pages/4 (fv expander) + pages/9 (LONG order card + LONG opportunity
+  candidate). `PriceLevelResult.app_fair_value_obj` additive (superset preserved);
+  no diagnosis field enters any snapshot (render-time only — parity by explicit
+  exclusion).
+- **Canonical sweep GREEN:** entry_v4 92 · trading_desk 126 · cockpit_rebuild 47 ·
+  7A 115 · 7B 193 · router 117 · stopbleed 65 · render_order 50 · archive 71 ·
+  backfill 61 · valuation_diagnosis 46. Full `test_reliability_*` sweep
+  **GREEN=65 / RED=13** — the 13 are the documented pre-existing orthogonal reds
+  (5e–5s UI/AppTest planning, agent_evaluation, 6b_signal_layer); GREEN rose 64 → 65
+  from the new diagnosis suite. None of this round's files are in the red set.
+- `lib/macro_regime.py` untouched; i18n additive bilingual (`valdiag_*` in both
+  `TRANSLATIONS` blocks). **`.gitattributes` now fully enforced:** `ui_utils.py` —
+  the LONE `i/crlf` file of 308 at the branch base — was normalized to LF, so
+  `git ls-files --eol | grep i/crlf` is empty and `git diff --check` is clean.
+
+### Reliability invariants preserved
+
+- Deterministic computation unchanged: the diagnosis is assembled from existing
+  `AppFairValue` / migration fields — no LLM, no new anchor math, no number invented.
+- No card read triggers a compute/fetch on any path; the network-free ranking path
+  carries no `app_fair_value_obj` and assembles no card.
+- Archive: append-only, page-path-only writes (§13.10), single-vintage,
+  never-fabricate, G2 seam guard — all preserved under per-ticker sharding.
+- `valuation_role` is the documented deterministic INTERFACE to the 7A three-horizon
+  view; reverse-DCF + narrative catalysts are NAMED Phase-8-pending placeholders.
+
+### Fix round (REQUEST CHANGES — F-A1 / F-B2 / F-B3)
+
+- **F-A1 (P1) — `anchor_consistency` is SOURCED, never recomputed.** The first cut
+  computed a median-relative outlier inside the card (new judgment + order-dependent
+  when two anchors tie). Now `_anchor_consistency` reads ONLY the producer's existing
+  decisions: `state` ← `blend_state` (+ `single_anchor_blend`), `dispersion` ←
+  `anchor_dispersion` (pass-through), `clustered` ← the producer's kept `anchors`, and
+  `outlier` ← `excluded_anchors` — a name is reported ONLY when the producer excluded
+  EXACTLY ONE anchor. When the producer flagged the set irreconcilable but named no
+  single culprit (or excluded none/several), the card reports the sentinel
+  `NO_CLEAR_OUTLIER` (`"no_clear_outlier"`, rendered "no clear outlier / 无明确离群锚")
+  — never picks by list order. Tests: two equal-deviation anchors → `no_clear_outlier`
+  in BOTH input orderings (order-invariance, §2.5); one producer-excluded anchor →
+  reported by name (§2.6); multiple excluded → no single outlier (§2.7).
+- **F-B2 (P1) — dedup key on the CANONICAL shard path.** `append_record` now keys the
+  in-process dedup memo on `_canonical_shard_str(p)` = `Path(p).resolve()` (fail-closed
+  to `.absolute()` then raw str), so alias root forms (relative vs. absolute, `./`
+  prefix, symlink) collapse to ONE key and cannot bypass dedup (which would append the
+  same vintage twice and corrupt the append-only series / migration speed). Test: the
+  same `(ticker, computed_at)` appended via `root` and `root/.` → exactly one row
+  (§2.14/2.15).
+- **F-B3 (P2) — migration guarantee narrowed to SEMANTIC fidelity.** The migration
+  parses + re-serializes records, so the on-disk byte representation may legitimately
+  differ (key order / whitespace); byte-equality is NOT (and should not be) claimed or
+  enforced. The documented guarantee (script docstring + the migration paragraph
+  above) is now "semantically faithful — every record's fields preserved exactly,
+  record count preserved, append-only intact; bytes may differ." Enforced by a
+  field-level + count fidelity test (§9.8–9.10): every migrated record `==` its
+  original field-for-field and the count is preserved, with NO byte-equality
+  assertion.
+- **Fix-round counts:** `valuation_diagnosis` **46 → 50** (F-A1 order-invariance +
+  genuine/ambiguous outlier cases), `anchor_archive` **71 → 77** (F-B2 alias dedup +
+  F-B3 field-level fidelity). Full `test_reliability_*` sweep **GREEN=65 / RED=13**
+  (the 13 pre-existing orthogonal reds unchanged). `macro_regime.py` untouched; i18n
+  additive (`valdiag_no_clear_outlier`); `git diff --check` clean (no EOL churn this
+  round — `ui_utils.py` already LF).
+
+## Pending — round v2.5
+
+Not started. Scope to be specified when the round opens (multi-dimensional peer
+profile + honest `peer_match_quality` fallback). Round 1 establishes the
+single-producer / structured-pool / epoch foundation; v2.3 adds the append-only
+historical series + migration readout; the backfill round seeds that series with
+recomputable history; v2.4 adds the valuation diagnosis card + per-ticker archive
+sharding.
