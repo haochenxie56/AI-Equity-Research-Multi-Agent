@@ -29,9 +29,11 @@ the G1 filing-lag look-ahead defence and the G2 same-date seam guard; suite
 diagnosis card + F4 archive sharding; APPROVED at `18dfcf2`, merged into `main` via a
 `--no-ff` merge commit). **Round v2.5 — multi-dimensional peer profile + honest
 `peer_match_quality` degrade — is the FINAL v2 round; implemented on branch
-`phase-anchor-intel-v2-5` (off `main` @ `ef8cb28`), new suite
-`scripts/test_reliability_anchor_peer_match.py` 44/44, canonical sweep green,
-awaiting review.** See "Round v2.5" below. With v2.5 the v2 series is complete.
+`phase-anchor-intel-v2-5` (off `main` @ `ef8cb28`). The B1 fix round (peer signature
+in the cache key — kills the cache-order dependence) is applied at `4feb9de`; new
+suite `scripts/test_reliability_anchor_peer_match.py` 49/49 (incl. the §10
+both-orders cache test), canonical sweep green, awaiting re-review.** See "Round
+v2.5" below. With v2.5 the v2 series is complete.
 
 ## Goal
 
@@ -950,12 +952,13 @@ low quality only WEAKENS reliance on the relative anchor, never fabricates confi
   excluded with the peer flag — *discriminating*, fails if the exclusion is reverted
   — → analyst-only $30, reconcilable) (§5); **byte-stable** `peers=None` path (§6);
   determinism + order-invariance (§7); token/config integrity (§8); card
-  bind-or-exclude parity (§9).
+  bind-or-exclude parity (§9); **B1 cache-order-independence, BOTH orders, REAL
+  cached path (§10 — fix round below)**.
 - **`scripts/test_reliability_valuation_diagnosis.py`** grew **50 → 54** (peer-match
   i18n guard + bind/exclude parity §10).
 - **Canonical sweep GREEN:** entry_v4 92 · trading_desk 126 · cockpit_rebuild 47 ·
   7A 115 · 7B 193 · router 117 · stopbleed 65 · render_order 50 · archive 77 ·
-  backfill 61 · valuation_diagnosis 54 · **peer_match 44**. Full
+  backfill 61 · valuation_diagnosis 54 · **peer_match 44 → 49 (B1 fix round)**. Full
   `test_reliability_*` sweep **GREEN=66 / RED=13** — the 13 are the documented
   pre-existing orthogonal reds (5e–5s UI/AppTest planning, agent_evaluation,
   6b_signal_layer); GREEN rose 65 → 66 from the new suite. None of this round's
@@ -964,6 +967,62 @@ low quality only WEAKENS reliance on the relative anchor, never fabricates confi
   `git diff --check` clean (no EOL churn — all touched files `i/lf`).
 - **Paid-taxonomy rejection** (MSCI Thematic / Syntax FIS / Morningstar) recorded
   above so it is not revisited.
+
+### Fix round (REQUEST CHANGES — B1, P1: cache-order dependence)
+
+> **Round-1 lesson recurring.** B1 is the SAME class as the round-1 epoch-mixing
+> bug: a cache key that EXCLUDES a parameter which affects the cached VALUE makes the
+> result first-writer-dependent. The first cut keyed `compute_app_fair_value` on
+> `(ticker, current_price, dcf_override)` with `_peers` underscore-excluded — but
+> `_peers` drives `peer_match_quality` AND the EV-anchor exclusion. So:
+> Trading-Desk-first (no peers) → a later Equity call reused `quality=""` and wrongly
+> BLENDED EV/S+EV/EBITDA; Equity-first (peers) → a later no-peer call inherited
+> `"low"` and wrongly degraded to analyst-only. The Trading Desk legitimately has NO
+> peers (it does no peer matching), so "make all callers pass peers" does not apply —
+> the two callers want DIFFERENT valuation semantics for the same ticker.
+
+**STEP 0 — A-vs-B coupling determination (the question that decides the model):**
+*does peer matching affect only the INCLUSION of `ev_s`/`ev_ebitda`, or also their
+NUMERIC VALUE?* **Answer: BOTH.** In `_assemble_fair_value`, a `high`
+`peer_match_quality` makes the qualified-set **median multiples** (`peer_ps`,
+`peer_ev_ebitda`) drive `_compute_ev_s` / `_compute_ev_ebitda` — so the EV anchor's
+NUMERIC VALUE is computed from the matched peer set (v1's growth-matched-multiple
+feature, carried into v2.5's qualified set). Because the value (not only inclusion)
+depends on the peer set, **Option B (peer-agnostic cache + Equity post-process) is
+ruled out** — it could not reproduce the peer-median EV value without re-doing anchor
+math in a second place (violating one-producer / one-anchor-math). → **Option A: the
+peer-set signature enters the cache key.**
+
+**B1 fix (Option A).** `_peers_signature(peers)` = the SORTED, deduplicated peer
+ticker list (or `""` when None/empty) — deterministic and order-independent. It is
+threaded into `_compute_cached` as a **non-underscore keyed parameter** `peer_sig`,
+so `st.cache_data` INCLUDES it: the key becomes
+`(ticker, current_price, dcf_override, peer_sig)`. The `_peers` LIST stays
+underscore-prefixed (the list object is not a stable hash input); `peer_sig` is its
+stable key proxy. Now the peer-bearing Equity path (`peer_sig != ""`) and the
+peer-less Trading-Desk / ranking / refresh / fixture paths (`peer_sig == ""`) cache
+**separately** and never cross-contaminate **regardless of call order**; the
+peer-less path is **v2.4-byte-identical by construction**. (`peers=None` and
+`peers=[…]` produce distinct keys; the ticker set is the right granularity because
+each ticker's `info` is itself session-cached/stable.) This also closes a **latent
+v2.4 bug**: the EV value already differed `growth_matched` vs `sector_fallback`
+between peer-bearing and peer-less calls under ONE shared entry, so v2.4 was already
+first-writer-dependent for the EV value — Option A fixes that too.
+
+**Test (the gap the review named — only fresh peer-first was tested).**
+`anchor_peer_match` **44 → 49** (§10): the order-independence test drives the REAL
+cached `compute_app_fair_value` in BOTH orders — (1) Trading-Desk-first (no peers)
+then Equity (peers) → the later Equity call gets the correct peer-gated `low` →
+analyst-only; (2) Equity-first (peers) then Trading-Desk (no peers) → the later
+Trading-Desk call gets the v2.4 peer-agnostic result (quality `""`, EV blended, NOT
+inheriting `low`) — plus a signature order-independence / `None`-vs-`[…]` check.
+**Discrimination confirmed:** reverting only the call-site `peer_sig` argument
+(reproducing the `bb150da` key) makes **exactly checks 10.2 + 10.4 FAIL** (the later
+caller inherits the first writer's cached result) — i.e. the test catches precisely
+this bug. Canaries (router 117 / stopbleed 65 / 6c_b 47 / entry_v4 92 — all
+peer-less) byte-stable. Full canonical sweep GREEN; full `test_reliability_*`
+**GREEN=66 / RED=13** (13 pre-existing orthogonal reds). `macro_regime.py` untouched;
+`git diff --check` clean (LF). Commit `4feb9de`.
 
 > **v2.5 closes the Anchor Intelligence v2 series.** Round 1 = single producer +
 > structured analyst pool + epoch; v2.3 = append-only historical archive + migration

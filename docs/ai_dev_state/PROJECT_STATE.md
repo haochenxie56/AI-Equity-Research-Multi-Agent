@@ -51,18 +51,33 @@ principle) and the rejection is documented so it is not revisited.
 - **Acceptance (real Equity-page peer path):** SNOW → `high` (qualified ⊆ cloud
   basket; all-software CRM excluded; EV/S blended); KTOS → `low` → EV/EBITDA excluded
   (discriminating) → analyst-only $30 (reconcilable — its correct shape).
-- **Tests.** New `scripts/test_reliability_anchor_peer_match.py` **44/44** (numeric
+- **Tests.** New `scripts/test_reliability_anchor_peer_match.py` **49/49** (numeric
   dims, basket single-source, override, qualification/threshold/no-padding/
   determinism/order-invariance, REAL `_assemble_fair_value(peers=…)` path +
   `compute_app_fair_value` plumbing proof, byte-stable `peers=None`, token integrity,
-  card bind-or-exclude). `valuation_diagnosis` **50 → 54**. Canonical sweep GREEN
+  card bind-or-exclude, **§10 B1 cache-order-independence both orders**).
+  `valuation_diagnosis` **50 → 54**. Canonical sweep GREEN
   (entry_v4 92, trading_desk 126, 6c_b 47, 7A 115, 7B 193, router 117, stopbleed 65,
-  render_order 50, archive 77, backfill 61, valuation_diagnosis 54, peer_match 44).
+  render_order 50, archive 77, backfill 61, valuation_diagnosis 54, peer_match 49).
   Full `test_reliability_*` **GREEN=66 / RED=13** (13 pre-existing orthogonal reds
   unchanged). `macro_regime.py` untouched; i18n additive; `git diff --check` clean.
+- **Fix round (REQUEST CHANGES — B1, P1: cache-order dependence).** `_peers` was
+  excluded from the `compute_app_fair_value` cache key but it drives
+  `peer_match_quality` + the EV-anchor exclusion → first-writer-dependent (the
+  round-1 epoch-mixing class). STEP 0 determination: peer matching affects BOTH the
+  inclusion AND the EV anchor's numeric value (qualified-set median multiples drive
+  `_compute_ev_s`/`_compute_ev_ebitda`) → **Option A**: `_peers_signature(peers)`
+  (sorted/deduped tickers, or `""`) enters the key as the non-underscore `peer_sig`
+  param. Peer-bearing (Equity) and peer-less (Trading Desk / ranking / fixtures)
+  computations cache SEPARATELY regardless of call order; peer-less stays
+  v2.4-byte-identical. Also closes a latent v2.4 bug (EV value already differed
+  growth_matched vs sector_fallback under one shared entry). Test §10 both orders,
+  discrimination confirmed (reverting the call-site `peer_sig` arg → exactly 10.2+10.4
+  FAIL). `peer_match` 44 → 49.
 - **Commits** (branch `phase-anchor-intel-v2-5`, off `ef8cb28`): `8521f15` (STEP 0
   matrix), `e93164e` (lib matcher + blend exclusion), `1466630` (card surface +
-  suite). **Not pushed — awaiting review APPROVE before merge to `main` (`--no-ff`).**
+  suite), `4feb9de` (**B1 cache-key fix**). **Not pushed — awaiting re-review APPROVE
+  before merge to `main` (`--no-ff`).**
 
 ## Anchor Intelligence v2.4 — Valuation Diagnosis Card + F4 Archive Sharding — CLOSED (APPROVED @ 18dfcf2, merged to main)
 
