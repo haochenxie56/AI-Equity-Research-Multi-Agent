@@ -1,14 +1,15 @@
 # AI Investment Agent — Project State
 
 **Last updated**: 2026-06-09 (**Anchor Intelligence v2.5 — multi-dimensional peer
-profile + honest `peer_match_quality` degrade — implemented, awaiting review** on
-branch `phase-anchor-intel-v2-5` (off `main` @ `ef8cb28`). **v2.5 is the FINAL v2
-round — it closes the Anchor Intelligence v2 series.** See the v2.5 section
+profile + honest `peer_match_quality` degrade — CLOSED, APPROVED @ `6f9c1ec`, merged
+to `main` via `--no-ff`** off branch `phase-anchor-intel-v2-5` (off `main` @
+`ef8cb28`). **v2.5 is the FINAL v2 round — it closes the Anchor Intelligence v2
+series, which is now COMPLETE.** See the v2.5 section
 immediately below; v2.4 (CLOSED, APPROVED @ `18dfcf2`) follows, then v2.3, Round 1,
 Valuation Refactor v1, Phase 7B, Valuation Stop-the-Bleed, and Phase 7A. Prior
 status blob preserved verbatim afterward.)
 
-## Anchor Intelligence v2.5 — Multi-Dimensional Peer Profile + Honest `peer_match_quality` — IMPLEMENTED (awaiting review); CLOSES the v2 series
+## Anchor Intelligence v2.5 — Multi-Dimensional Peer Profile + Honest `peer_match_quality` — CLOSED (APPROVED @ 6f9c1ec, merged to main); CLOSES the v2 series
 
 v2.5 fixes the documented v1 peer mis-match (v1 falls back to a raw GICS/sector peer
 set when growth/size matches < 4, peering SNOW to all "Software—Application" and KTOS
@@ -76,8 +77,9 @@ principle) and the rejection is documented so it is not revisited.
   FAIL). `peer_match` 44 → 49.
 - **Commits** (branch `phase-anchor-intel-v2-5`, off `ef8cb28`): `8521f15` (STEP 0
   matrix), `e93164e` (lib matcher + blend exclusion), `1466630` (card surface +
-  suite), `4feb9de` (**B1 cache-key fix**). **Not pushed — awaiting re-review APPROVE
-  before merge to `main` (`--no-ff`).**
+  suite), `4feb9de` (**B1 cache-key fix**). **Re-review APPROVED at `6f9c1ec`; merged
+  to `main` via a `--no-ff` merge commit — v2.5 CLOSED, and with it the Anchor
+  Intelligence v2 series is COMPLETE.**
 
 ## Anchor Intelligence v2.4 — Valuation Diagnosis Card + F4 Archive Sharding — CLOSED (APPROVED @ 18dfcf2, merged to main)
 

@@ -5,7 +5,7 @@
 > history preserved verbatim). This file keeps only the active phase. The
 > long-form running status remains in `docs/ai_dev_state/PROJECT_STATE.md`.
 
-## Anchor Intelligence v2.5 — Multi-Dimensional Peer Profile + Honest `peer_match_quality` (IMPLEMENTED — awaiting review; FINAL v2 round, closes the v2 series)
+## Anchor Intelligence v2.5 — Multi-Dimensional Peer Profile + Honest `peer_match_quality` (CLOSED — APPROVED @ 6f9c1ec, merged to main; FINAL v2 round, closes the v2 series)
 
 Branch `phase-anchor-intel-v2-5` off `main` @ `ef8cb28`. Access-path-first (STEP 0
 matrix committed at `8521f15` BEFORE any code). **Deterministic, no runtime LLM;
@@ -48,9 +48,9 @@ Morningstar) evaluated + REJECTED (black-box/paid — documented, not to be revi
   §10 both-orders test; discrimination confirmed (revert the arg → 10.2+10.4 FAIL).
   `peer_match` 44 → 49.
 - **Commits:** `8521f15` (STEP 0), `e93164e` (lib matcher + blend), `1466630` (card +
-  suite), `4feb9de` (**B1 cache-key fix**). **Not pushed — awaiting re-review APPROVE
-  before merge to `main` (`--no-ff`).** With v2.5 the Anchor Intelligence v2 series is
-  COMPLETE.
+  suite), `4feb9de` (**B1 cache-key fix**). **Re-review APPROVED at `6f9c1ec`; merged
+  to `main` via a `--no-ff` merge commit — v2.5 CLOSED.** With v2.5 the Anchor
+  Intelligence v2 series is COMPLETE.
 
 ## Anchor Intelligence v2.4 — Valuation Diagnosis Card + F4 Archive Sharding (CLOSED — APPROVED @ 18dfcf2, merged to main)
 

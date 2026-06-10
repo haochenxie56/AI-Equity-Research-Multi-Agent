@@ -28,12 +28,13 @@ the G1 filing-lag look-ahead defence and the G2 same-date seam guard; suite
 **APPROVED at `c57e56e`** and merged now. **Round v2.4 is now CLOSED** (valuation
 diagnosis card + F4 archive sharding; APPROVED at `18dfcf2`, merged into `main` via a
 `--no-ff` merge commit). **Round v2.5 — multi-dimensional peer profile + honest
-`peer_match_quality` degrade — is the FINAL v2 round; implemented on branch
+`peer_match_quality` degrade — is the FINAL v2 round; delivered on branch
 `phase-anchor-intel-v2-5` (off `main` @ `ef8cb28`). The B1 fix round (peer signature
 in the cache key — kills the cache-order dependence) is applied at `4feb9de`; new
 suite `scripts/test_reliability_anchor_peer_match.py` 49/49 (incl. the §10
-both-orders cache test), canonical sweep green, awaiting re-review.** See "Round
-v2.5" below. With v2.5 the v2 series is complete.
+both-orders cache test), canonical sweep green. Reviewed and **APPROVED at `6f9c1ec`,
+merged into `main` via a `--no-ff` merge commit — v2.5 CLOSED.** See "Round
+v2.5" below. With v2.5 the Anchor Intelligence v2 series is COMPLETE.
 
 ## Goal
 
