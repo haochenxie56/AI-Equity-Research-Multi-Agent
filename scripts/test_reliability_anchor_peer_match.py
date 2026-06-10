@@ -355,6 +355,52 @@ check("9.5 peer_match is render-time only — NOT in the snapshot anchor-block k
       "(bind-or-exclude satisfied by explicit exclusion)",
       "peer_match" not in _snap, detail=str(_orr.ANCHOR_SNAPSHOT_KEYS))
 
+# ===========================================================================
+# 10. B1 fix — peer_match_quality is NOT cache-order dependent (BOTH orders)
+# ===========================================================================
+# The review B1 defect: _peers was excluded from the st.cache_data key, but it
+# determines peer_match_quality + the EV-anchor exclusion — so the cached result was
+# FIRST-WRITER-dependent (the same class as the round-1 epoch-mixing bug). The fix
+# adds an order-independent peer-set signature to the key, so the peer-bearing
+# (Equity) and peer-less (Trading Desk) computations of the SAME ticker cache
+# SEPARATELY. Driven through the REAL cached compute_app_fair_value (not the pure
+# assembler). DISCRIMINATING: against bb150da (peer_sig absent) checks 10.2 + 10.4
+# FAIL (the second caller inherits the first writer's cached result).
+check("10.0 peer-set signature is order-independent + distinguishes None vs [...]",
+      eqv._peers_signature(_KTOS_PEERS) == eqv._peers_signature(list(reversed(_KTOS_PEERS)))
+      != "" and eqv._peers_signature(None) == "" and eqv._peers_signature([]) == "",
+      detail=eqv._peers_signature(_KTOS_PEERS))
+
+# Order 1 — Trading-Desk FIRST (no peers) then Equity (peers).
+eqv._compute_cached.clear()
+with mock.patch.object(eqv, "_fetch_raw", return_value=dict(_KTOS_RAW)):
+    _td_first = eqv.compute_app_fair_value("KTOS", 28.0)                  # no peers
+    _eq_after = eqv.compute_app_fair_value("KTOS", 28.0, peers=_KTOS_PEERS)
+check("10.1 TD-first: the peer-less call is v2.4 peer-agnostic (quality '', EV blended)",
+      _td_first.peer_match_quality == ""
+      and any("EV/EBITDA" in m for m in _td_first.methods_used),
+      detail=f"{_td_first.peer_match_quality}/{_td_first.methods_used}")
+check("10.2 TD-first: the LATER Equity call still gets the correct peer-gated low "
+      "(NOT the cached peer-agnostic result) — DISCRIMINATING vs bb150da",
+      _eq_after.peer_match_quality == "low"
+      and not any("EV/EBITDA" in m for m in _eq_after.methods_used),
+      detail=f"{_eq_after.peer_match_quality}/{_eq_after.methods_used}")
+
+# Order 2 — Equity FIRST (peers) then Trading Desk (no peers).
+eqv._compute_cached.clear()
+with mock.patch.object(eqv, "_fetch_raw", return_value=dict(_KTOS_RAW)):
+    _eq_first = eqv.compute_app_fair_value("KTOS", 28.0, peers=_KTOS_PEERS)
+    _td_after = eqv.compute_app_fair_value("KTOS", 28.0)                  # no peers
+check("10.3 Equity-first: the peer-bearing call is peer-gated low (EV excluded)",
+      _eq_first.peer_match_quality == "low"
+      and not any("EV/EBITDA" in m for m in _eq_first.methods_used),
+      detail=f"{_eq_first.peer_match_quality}/{_eq_first.methods_used}")
+check("10.4 Equity-first: the LATER Trading-Desk call gets v2.4 peer-agnostic "
+      "(quality '', EV blended; does NOT inherit 'low') — DISCRIMINATING vs bb150da",
+      _td_after.peer_match_quality == ""
+      and any("EV/EBITDA" in m for m in _td_after.methods_used),
+      detail=f"{_td_after.peer_match_quality}/{_td_after.methods_used}")
+
 
 # ===========================================================================
 print("\n".join(_failures))

@@ -1597,30 +1597,59 @@ def _assemble_fair_value(ticker: str, current_price: float,
     )
 
 
+def _peers_signature(peers: Optional[list]) -> str:
+    """Deterministic, order-independent signature of a peer set (Anchor Intel v2.5).
+
+    Returns the SORTED, deduplicated peer ticker list joined by commas, or ``""``
+    when ``peers`` is None/empty or carries no usable tickers. This is the cache-key
+    discriminator that keeps the peer-bearing (Equity) and peer-less (Trading Desk /
+    ranking / refresh / fixtures) computations in SEPARATE cache entries — see B1 in
+    ``docs/reliability_anchor_intel_v2.md`` "Round v2.5". The peer-set *identity* (its
+    ticker set) is what determines ``peer_match_quality`` AND the matched-peer EV
+    multiples; each ticker's ``info`` is itself session-cached/stable, so the ticker
+    set is the right granularity (the full field values are neither needed nor stable
+    enough to key on). Sorted → order-independent; ``None`` vs ``[…]`` → distinct keys.
+    """
+    if not peers:
+        return ""
+    tks = sorted({str(p.get("ticker") or "").upper().strip()
+                  for p in peers if isinstance(p, dict) and p.get("ticker")})
+    return ",".join(t for t in tks if t)
+
+
 def _compute_cached(ticker: str, current_price: float,
-                    dcf_override: Optional[float] = None, *,
+                    dcf_override: Optional[float] = None,
+                    peer_sig: str = "", *,
                     _peers: Optional[list] = None,
                     _cyclical_history_fetcher=None) -> AppFairValue:
     """THE single cached fair-value producer (fail-closed). Wrapped by ``st.cache_data``.
 
     **Anchor Intel v2 r2 (F1 — true single cached producer):** both page call
     sites — ``pages/4_Equity.py`` AND ``order_advisor._gather_technicals`` (the
-    Trading-Desk page path) — reach the band through THIS one function, so the
-    Equity page and the Trading Desk share ONE cache entry, ONE
-    :class:`AppFairValue` instance and ONE ``computed_at`` epoch per
-    ``(ticker, current_price, dcf_override)``.
+    Trading-Desk page path) — reach the band through THIS one function.
 
     ``dcf_override`` (per-share, > 0) replaces the internal Gordon-growth DCF —
     used by the Equity page "Update Valuation" action to feed a user-adjusted DCF
     intrinsic value from the Financials tab.
 
-    ``_peers`` and ``_cyclical_history_fetcher`` are **underscore-prefixed on
-    purpose**: ``st.cache_data`` excludes leading-underscore parameters from the
-    hash key, so the cache key stays ``(ticker, current_price, dcf_override)``
-    even though both page call sites now pass the cyclical band fetcher.
-    **First-writer-wins:** whichever page computes a given key first populates the
-    shared entry, and because BOTH page call sites pass the fetcher that entry is
-    always band-capable; the other surface then reads the identical instance.
+    **Anchor Intel v2.5 (B1 — peer signature in the cache key):** ``peer_sig`` is a
+    deterministic, order-independent signature of the peer SET
+    (:func:`_peers_signature`) and is a NON-underscore parameter ON PURPOSE — so
+    ``st.cache_data`` INCLUDES it in the hash key, which becomes
+    ``(ticker, current_price, dcf_override, peer_sig)``. Peer matching affects BOTH
+    the inclusion AND the numeric value of the EV anchors (the qualified-set median
+    multiples drive ``_compute_ev_s`` / ``_compute_ev_ebitda``), so the peer-bearing
+    (Equity, ``peer_sig != ""``) and peer-less (Trading Desk / ranking / refresh /
+    fixtures, ``peer_sig == ""``) computations MUST cache separately — otherwise the
+    cached result would be first-writer-dependent (the review B1 defect; the same
+    class as the round-1 epoch-mixing bug). The actual ``_peers`` LIST stays
+    underscore-prefixed (excluded from the key) because the list object itself is not
+    hashable/stable — ``peer_sig`` is its stable key proxy.
+
+    ``_cyclical_history_fetcher`` is underscore-prefixed (excluded): both page call
+    sites pass it, so the band-capability of a shared entry never diverges
+    (first-writer-wins is safe for it — unlike peers, which Trading Desk legitimately
+    omits, hence the explicit key discriminator).
     """
     raw = _fetch_raw(ticker)
     return _assemble_fair_value(
@@ -1634,19 +1663,24 @@ def compute_app_fair_value(ticker: str, current_price: float, *,
                            cyclical_history_fetcher=None) -> AppFairValue:
     """Compute the :class:`AppFairValue` for ``ticker`` (yfinance only; fail-closed).
 
-    Cached TTL=3600 keyed on ``(ticker, current_price, dcf_override)``. When
-    ``dcf_override`` (a per-share intrinsic value, > 0) is supplied it replaces the
-    internal DCF (e.g. a user-adjusted DCF from the Financials tab).
+    Cached TTL=3600 keyed on ``(ticker, current_price, dcf_override, peer_sig)``,
+    where ``peer_sig`` is the order-independent peer-set signature
+    (:func:`_peers_signature`). When ``dcf_override`` (a per-share intrinsic value,
+    > 0) is supplied it replaces the internal DCF (e.g. a user-adjusted DCF from the
+    Financials tab).
 
-    **Anchor Intel v2 r2 (F1):** ALL calls now flow through the single cached
-    worker :func:`_compute_cached`. ``peers`` (already-fetched peer ``info`` dicts
-    from the Equity page peer table) and ``cyclical_history_fetcher`` (the page-path
-    PB/PS-band fetcher) are forwarded as the worker's underscore-prefixed
-    parameters, so they are EXCLUDED from the cache key — the Equity page and the
-    Trading-Desk page path therefore share one cache entry / one instance / one
-    epoch per ticker (first-writer-wins; both page sites pass the fetcher, so the
-    shared entry is always band-capable). The ranking / Cockpit refresh paths do
-    NOT call this function — they consume ``lib.anchor_cache`` and so stay
+    **Anchor Intel v2 r2 (F1) + v2.5 (B1):** ALL calls flow through the single cached
+    worker :func:`_compute_cached`. ``cyclical_history_fetcher`` is forwarded
+    underscore-prefixed (EXCLUDED from the key — both page sites pass it, so the
+    shared entry is always band-capable; first-writer-wins is safe for it). ``peers``
+    is also forwarded underscore-prefixed (the list is not a stable hash input), BUT
+    its **order-independent signature** ``peer_sig`` IS in the key — because peer
+    matching affects both the inclusion AND the numeric value of the EV anchors, the
+    peer-bearing Equity path (``peer_sig != ""``) and the peer-less Trading-Desk /
+    ranking / refresh / fixture paths (``peer_sig == ""``) cache SEPARATELY and never
+    cross-contaminate REGARDLESS of call order (the v2.5 B1 fix; the peer-less path
+    stays v2.4-byte-identical by construction). The ranking / Cockpit refresh paths
+    do NOT call this function — they consume ``lib.anchor_cache`` and stay
     network-free. On ANY failure a well-formed ``data_source="fixture"`` result
     anchored on ``current_price`` is returned — this function never raises.
     """
@@ -1661,7 +1695,7 @@ def compute_app_fair_value(ticker: str, current_price: float, *,
             ov = None
     try:
         fv = _compute_cached(
-            t, round(cp, 4), ov, _peers=peers,
+            t, round(cp, 4), ov, _peers_signature(peers), _peers=peers,
             _cyclical_history_fetcher=cyclical_history_fetcher)
     except Exception:  # noqa: BLE001 — fully fail-closed
         return build_app_fair_value(
