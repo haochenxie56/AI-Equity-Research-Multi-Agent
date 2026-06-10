@@ -25,8 +25,10 @@ at `9f6c37e`** and merged into `main` at `97c8f1f`. The **historical backfill** 
 recomputable anchors only, the analyst anchor never fabricated for a past date, with
 the G1 filing-lag look-ahead defence and the G2 same-date seam guard; suite
 `scripts/test_reliability_anchor_backfill.py` **60/60** — was reviewed and
-**APPROVED at `c57e56e`** and merged now. **Rounds v2.4–v2.5 remain pending**
-(future scope, not started — to be specified when each round opens).
+**APPROVED at `c57e56e`** and merged now. **Round v2.4 is now CLOSED** (valuation
+diagnosis card + F4 archive sharding; APPROVED at `18dfcf2`, merged into `main` via a
+`--no-ff` merge commit). **Round v2.5 remains pending** (future scope, not started —
+to be specified when it opens).
 
 ## Goal
 
@@ -656,7 +658,7 @@ guard.
 - **B4 — read cost:** O(total archive bytes) → **O(one ticker's records)** for every
   hot-path read (Matrix B "AFTER" column).
 
-### Results (implemented — awaiting review)
+### Results (CLOSED — APPROVED @ 18dfcf2, merged to main)
 
 - **New module** `lib/valuation_diagnosis.py` (pure, deterministic, no I/O):
   `build_valuation_diagnosis` + `classify_valuation_role` + the visible

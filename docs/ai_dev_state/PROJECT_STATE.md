@@ -1,13 +1,13 @@
 # AI Investment Agent — Project State
 
-**Last updated**: 2026-06-09 (**Anchor Intelligence v2.4 — implemented, awaiting
-review** on `phase-anchor-intel-v2-4` off `990ed90`: valuation diagnosis card +
+**Last updated**: 2026-06-09 (**Anchor Intelligence v2.4 — CLOSED (APPROVED @
+`18dfcf2`, merged to `main` via `--no-ff`)**: valuation diagnosis card +
 F4 archive sharding — see the v2.4 section immediately below. The v2.3 section
 (fully CLOSED — historization + backfill) follows, then Round 1, Valuation Refactor
 v1, Phase 7B, Valuation Stop-the-Bleed, and Phase 7A. Prior status blob preserved
 verbatim afterward.)
 
-## Anchor Intelligence v2.4 — Valuation Diagnosis Card + F4 Archive Sharding — implemented, awaiting review
+## Anchor Intelligence v2.4 — Valuation Diagnosis Card + F4 Archive Sharding — CLOSED (APPROVED @ 18dfcf2, merged to main)
 
 v2.4 ships two access-path-first features (STEP 0 matrices committed at `b5277b8`
 BEFORE any code, per the round-1 lesson). **All deterministic; no LLM invents a
@@ -54,13 +54,15 @@ path.** Phase doc `docs/reliability_anchor_intel_v2.md`.
   LONE `i/crlf` file of 308 at the base) normalized to LF, so `git diff --check` is
   clean and no CRLF file remains.
 
-Commits on branch (review-gated, NOT merged): `b5277b8` (STEP 0 matrix) · `307797f`
+Commits on branch (review-APPROVED @ `18dfcf2`, merged to `main` via `--no-ff`):
+`b5277b8` (STEP 0 matrix) · `307797f`
 (sharding) · `0358848` (card module + threading) · `8d751c1` (i18n + render + LF) ·
 `92b67ad` (i18n-coverage test) · `3c7680a` (docs-sync) · **fix round (REQUEST
-CHANGES):** `d9417eb` (F-A1 sourced consistency, no recomputed outlier) · `00e7d06`
-(F-B2 canonical dedup key + F-B3 semantic-fidelity migration contract) · fix-round
-docs-sync (this). `valuation_diagnosis` 46→50, `anchor_archive` 71→77; sweep
-GREEN=65/RED=13 unchanged.
+CHANGES, then APPROVED):** `d9417eb` (F-A1 sourced consistency, no recomputed outlier) · `00e7d06`
+(F-B2 canonical dedup key + F-B3 semantic-fidelity migration contract) · `d04fa49`
+(fix-round docs-sync) · `18dfcf2` (discriminating alias-dedup test).
+`valuation_diagnosis` 46→50, `anchor_archive` 71→77; sweep
+GREEN=65/RED=13 unchanged. **Next active phase: v2.5 — pending, not started.**
 
 ## Anchor Intelligence v2.3 — Anchor Historization + Historical Backfill — fully CLOSED
 

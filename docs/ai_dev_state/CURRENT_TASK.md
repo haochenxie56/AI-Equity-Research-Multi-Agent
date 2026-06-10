@@ -5,7 +5,7 @@
 > history preserved verbatim). This file keeps only the active phase. The
 > long-form running status remains in `docs/ai_dev_state/PROJECT_STATE.md`.
 
-## Anchor Intelligence v2.4 — Valuation Diagnosis Card + F4 Archive Sharding (implemented — AWAITING REVIEW)
+## Anchor Intelligence v2.4 — Valuation Diagnosis Card + F4 Archive Sharding (CLOSED — APPROVED @ 18dfcf2, merged to main)
 
 Branch `phase-anchor-intel-v2-4` off `990ed90`. Access-path-first (STEP 0 matrices
 committed at `b5277b8` before any code). **Deterministic; no LLM invents a number;
@@ -36,8 +36,9 @@ doc `docs/reliability_anchor_intel_v2.md`.
   when ambiguous) · F-B2 dedup key on the canonical resolved shard path (alias forms
   can't bypass dedup) · F-B3 migration guarantee narrowed to SEMANTIC fidelity
   (field-level + count test, not byte-equality). `valuation_diagnosis` 46→50,
-  `anchor_archive` 71→77. **Awaiting re-review; not merged.** Next: relay reviewer
-  APPROVE → merge `--no-ff` to `main`.
+  `anchor_archive` 71→77. **Re-review APPROVED at `18dfcf2`; merged to `main` via a
+  `--no-ff` merge commit — v2.4 CLOSED.** Next active phase: **v2.5** (multi-dim peer
+  profile + honest `peer_match_quality` degrade) — pending, not started.
 
 ## Anchor Intelligence v2.3 — Anchor Historization + Historical Backfill (fully CLOSED)
 
