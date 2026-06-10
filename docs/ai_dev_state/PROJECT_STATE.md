@@ -1,13 +1,80 @@
 # AI Investment Agent — Project State
 
-**Last updated**: 2026-06-09 (**Anchor Intelligence v2.5 — multi-dimensional peer
-profile + honest `peer_match_quality` degrade — CLOSED, APPROVED @ `6f9c1ec`, merged
-to `main` via `--no-ff`** off branch `phase-anchor-intel-v2-5` (off `main` @
-`ef8cb28`). **v2.5 is the FINAL v2 round — it closes the Anchor Intelligence v2
-series, which is now COMPLETE.** See the v2.5 section
-immediately below; v2.4 (CLOSED, APPROVED @ `18dfcf2`) follows, then v2.3, Round 1,
+**Last updated**: 2026-06-10 (**UI Cleanup Batch — Segment 1: Market-Internals
+Fragility plain-language + i18n pass — Codex-approved, committed DIRECT to `main`
+(not a `--no-ff` branch merge), folded with the previously-approved README principle
+correction.** See the segment-1 section immediately below. Prior closure: **Anchor
+Intelligence v2.5 — multi-dimensional peer profile + honest `peer_match_quality`
+degrade — CLOSED, APPROVED @ `6f9c1ec`, merged to `main` via `--no-ff`** off branch
+`phase-anchor-intel-v2-5` (off `main` @ `ef8cb28`). **v2.5 is the FINAL v2 round — it
+closes the Anchor Intelligence v2 series, which is now COMPLETE.** See the v2.5 section
+below; v2.4 (CLOSED, APPROVED @ `18dfcf2`) follows, then v2.3, Round 1,
 Valuation Refactor v1, Phase 7B, Valuation Stop-the-Bleed, and Phase 7A. Prior
 status blob preserved verbatim afterward.)
+
+## UI Cleanup Batch — Segment 1: Market-Internals Fragility — Plain-Language + i18n Pass — CLOSED (Codex-approved, committed direct to `main` 2026-06-10)
+
+A **display-and-i18n-only** readability pass over the **市场内部结构 / Market-Internals
+Fragility** component across its two render surfaces — the Cockpit banner
+(`pages/7_Investment_Cockpit.py`) and the Macro Dashboard "Market Internals (workbench)"
+section (`pages/8_Macro_Dashboard.py`), all strings in `ui_utils.py` — folded with the
+previously-approved README core-principle correction. **No computation, threshold,
+snapshot field, or `macro_regime.py` change; only string values and render formatting.**
+Committed directly to the main worktree, NOT a `--no-ff` branch merge. Phase doc:
+`docs/reliability_phase_7b_rotation_internals.md` ("Plain-Language + i18n Readability
+Pass" section).
+
+- **Scope (exactly 5 files):** `ui_utils.py`, `pages/7_Investment_Cockpit.py`,
+  `pages/8_Macro_Dashboard.py`,
+  `scripts/test_reliability_phase_7b_rotation_internals.py`, `README.md`.
+- **A — table headers** (`mi_component`→Signal/信号项, `mi_value`→Reading/读数,
+  `mi_triggered`→Triggered?/是否触发, `mi_degrade`→Data note/数据说明; the 数据说明 column
+  is retained, only the header wording changed).
+- **B — row labels:** new `mi_c_breadth20`/`mi_c_breadth50` (`>20-day MA %` /
+  `20日均线以上占比`, `>50-day MA %` / `50日均线以上占比`); `mi_c_slope` → Breadth trend
+  (slope) / 广度趋势（斜率）.
+- **C — value rendering (programmer literals → human-readable):** weak-bounce bool →
+  Yes/No · 是/否 (None still → n/a); breadth fraction → percentage (`50%`); good-news-sold
+  renders **compact `num/den`** in the space-tight Cockpit banner
+  (`cockpit_frag_gns_banner`) and the **full phrase** in the Dashboard table
+  (`cockpit_frag_gns_full`: `{num} of {den} post-beat names sold off` /
+  `{den} 次财报中 {num} 次遭抛售`); offense/defense enum gains ZH words
+  (进攻/防御/均衡 · 强/中等/轻微) via the display-layer `ui_utils.frag_od_value` — **EN
+  values equal the raw `rotation.py` tokens, so the EN surface is byte-identical and the
+  tokens are untouched.**
+- **D — legends/footnotes reworded, discipline semantics preserved verbatim in meaning:**
+  `cockpit_frag_lvl_explain` (elevated = alert only / thresholds NOT tightened; high =
+  SHORT-horizon entry thresholds tighten, MID/LONG unaffected) [TIGHTEN-ONLY];
+  `cockpit_hub_internals_note` (tighten-only, regime label unchanged) [TIGHTEN-ONLY];
+  `mi_note` (tighten-only AND research-only / not-advice) [TIGHTEN-ONLY][REVIEW-ONLY].
+- **E — degrade tokens (降级词汇表) preserved as stable audit anchors:** raw tokens
+  (`finnhub_unavailable`, `earnings_source_absent`, `no_reports_in_window`,
+  `partial_frame_coverage`, `implausible_count`, `(skipped=N)`) NEVER altered;
+  `ui_utils.frag_reason_gloss` appends a ZH parenthetical gloss, EN renders the bare
+  token.
+- **F — provenance:** `mi_source` label gains a ZH reading-note; the **value stays raw**
+  (`rolling`/`snapshot`, the `data_vintage` date) [AUDIT-PROVENANCE].
+- **Exclusions honored:** `mi_c_vol` (vol_shrink / 龙头量能萎缩) label AND bool value left
+  UNTOUCHED (pending caliber ruling); EN level badges `normal`/`elevated`/`high`
+  unchanged (parity-pinned); the regime line + `horizon_bias` values are out of scope
+  and untouched.
+- **Tests.** Parity helpers in `test_reliability_phase_7b_rotation_internals.py` synced
+  (compact banner, full-phrase cell, `_pct_cell`/`_bool_cell`, relabeled breadth
+  `ROW_TRIGGERS`); 14.12 + 16.10 expected banner strings updated for the new wording
+  (NOT weakened — they still assert level + numbers and now also assert `"evaluated"` is
+  absent from the banner). **New discriminating guards 19.1–19.10** go RED if (iii) an
+  EN level badge word changes, (D) a tighten-only / review-only clause is dropped
+  (checked EN *and* ZH), or (E) a degrade token's raw text is altered/dropped by the
+  gloss; plus (C) offense/defense localizes in ZH and stays raw in EN. Suite
+  **211/211 GREEN**; Codex review verified the discriminating mutation probes. Unrelated
+  pre-existing reds in 5o (`url_pathname` AppTest harness error) and 5n
+  (`cockpit_trade_col_*` trading-desk chrome) were confirmed pre-existing by re-running
+  both suites at `HEAD` in an isolated worktree (identical failures, none in this diff).
+- **README principle correction (previously approved, folded into this commit):** the
+  core-principle wording shifted from "数字交给代码，语言交给 LLM" to a judgment-under-
+  evidence framing ("数字交给代码，判断在证据约束下可由 LLM 建议"), with the EN tagline and
+  the Phase 9 roadmap row (human-in-the-loop **Judgment Console**) updated to match. The
+  numeric-firewall and review-only invariants are unchanged.
 
 ## Anchor Intelligence v2.5 — Multi-Dimensional Peer Profile + Honest `peer_match_quality` — CLOSED (APPROVED @ 6f9c1ec, merged to main); CLOSES the v2 series
 

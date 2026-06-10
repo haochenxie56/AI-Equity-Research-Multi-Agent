@@ -5,6 +5,51 @@
 > history preserved verbatim). This file keeps only the active phase. The
 > long-form running status remains in `docs/ai_dev_state/PROJECT_STATE.md`.
 
+## UI Cleanup Batch — Segment 1: Market-Internals Fragility plain-language + i18n pass (CLOSED — Codex-approved, committed direct to `main` 2026-06-10)
+
+A **display-and-i18n-only** readability pass over the **市场内部结构 / Market-Internals
+Fragility** component across its two render surfaces (Cockpit banner +
+Macro Dashboard "Market Internals" workbench), folded together with the
+previously-approved README principle correction. **No computation, threshold,
+snapshot field, or `macro_regime.py` change** — strings + render formatting only.
+**Direct commit to the main worktree (not a `--no-ff` branch merge).** Phase doc:
+`docs/reliability_phase_7b_rotation_internals.md` ("Plain-Language + i18n Readability
+Pass" section).
+
+- **Scope (5 files):** `ui_utils.py`, `pages/7_Investment_Cockpit.py`,
+  `pages/8_Macro_Dashboard.py`,
+  `scripts/test_reliability_phase_7b_rotation_internals.py`, `README.md`.
+- **Headers** (`mi_component`→Signal/信号项, `mi_value`→Reading/读数,
+  `mi_triggered`→Triggered?/是否触发, `mi_degrade`→Data note/数据说明; column retained).
+  **Labels:** new `mi_c_breadth20`/`mi_c_breadth50` (`>20-day MA %` / `20日均线以上占比`
+  …); `mi_c_slope`→Breadth trend (slope) / 广度趋势（斜率）.
+- **Value rendering:** weak-bounce bool→Yes/No · 是/否; breadth float→`50%`;
+  good-news-sold = **compact `num/den` banner** + **full phrase** in the table
+  (`1 of 12 post-beat names sold off` / `12 次财报中 1 次遭抛售`); offense/defense gains
+  ZH words via `frag_od_value` — **EN values equal the raw `rotation.py` tokens
+  (byte-identical surface), tokens untouched.**
+- **Discipline semantics preserved (reworded only):** `cockpit_frag_lvl_explain`
+  (elevated = alert-only/no tighten; high = SHORT-horizon tighten, mid/long unaffected)
+  [TIGHTEN-ONLY]; `cockpit_hub_internals_note` (tighten-only, regime unchanged)
+  [TIGHTEN-ONLY]; `mi_note` (tighten-only + research-only/not-advice)
+  [TIGHTEN-ONLY][REVIEW-ONLY]. **Degrade tokens (降级词汇表) unchanged** — `frag_reason_gloss`
+  appends a ZH gloss, EN keeps the bare audit token. `mi_source` label gets a ZH note;
+  the **value stays raw** [AUDIT-PROVENANCE].
+- **Exclusions honored:** `mi_c_vol` (vol_shrink) label AND value untouched (pending
+  caliber ruling); EN level badges `normal/elevated/high` unchanged (parity-pinned);
+  regime line + `horizon_bias` values untouched.
+- **Tests.** Parity helpers synced; 14.12 + 16.10 expected strings updated for the new
+  wording (not weakened). **New discriminating guards 19.1–19.10** go RED on an EN
+  badge change (iii), a dropped tighten-only/review-only clause (D, EN+ZH), or an
+  altered/dropped degrade token (E); + offense/defense ZH-localizes / EN-raw.
+  `phase_7b` **211/211 GREEN**; Codex review verified the mutation probes. Pre-existing
+  unrelated reds in 5o (`url_pathname` AppTest) and 5n (`cockpit_trade_col_*`) confirmed
+  pre-existing at `HEAD` in an isolated worktree.
+- **README correction (previously approved, same commit):** "数字交给代码，语言交给 LLM"
+  → judgment-under-evidence framing ("数字交给代码，判断在证据约束下可由 LLM 建议"); EN
+  tagline + Phase 9 roadmap (human-in-the-loop **Judgment Console**) updated to match.
+  Numeric-firewall + review-only invariants unchanged.
+
 ## Anchor Intelligence v2.5 — Multi-Dimensional Peer Profile + Honest `peer_match_quality` (CLOSED — APPROVED @ 6f9c1ec, merged to main; FINAL v2 round, closes the v2 series)
 
 Branch `phase-anchor-intel-v2-5` off `main` @ `ef8cb28`. Access-path-first (STEP 0

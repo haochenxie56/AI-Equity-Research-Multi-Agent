@@ -14,9 +14,9 @@
 
 ---
 
-**EN** · A personal investment operating system for US equities, evolved from a multi-agent research workflow into a full decision-support stack: opportunity ranking, dual-track signal engine, market-internals fragility monitoring, type-routed valuation with a structured analyst-anchor pool and an append-only anchor history, entry strategy, and thesis monitoring — all surfaced through an Investment Cockpit. Deterministic code computes every number; Claude handles language and reasoning. **Review-only by design: the system never places orders.**
+**EN** · A personal investment operating system for US equities, evolved from a multi-agent research workflow into a full decision-support stack: opportunity ranking, dual-track signal engine, market-internals fragility monitoring, type-routed valuation with a structured analyst-anchor pool and an append-only anchor history, entry strategy, and thesis monitoring — all surfaced through an Investment Cockpit. Deterministic code computes every number; Claude makes evidence-bound, human-confirmed judgment calls on top. **Review-only by design: the system never places orders.**
 
-**中** · 一个面向美股的个人投资操作系统。由最初的多 Agent 研究工作流，演进为完整的决策支持栈：机会排序、双轨信号引擎、市场内部结构（脆弱度）监控、公司分型估值（结构化分析师锚池 + 只追加估值锚历史）、入场策略与持仓 thesis 监控，统一汇聚于「投研中枢 / Investment Cockpit」。**所有数字由确定性代码计算，LLM 只负责语言与推理；系统设计上仅供审阅（review-only），永不下单。**
+**中** · 一个面向美股的个人投资操作系统。由最初的多 Agent 研究工作流，演进为完整的决策支持栈：机会排序、双轨信号引擎、市场内部结构（脆弱度）监控、公司分型估值（结构化分析师锚池 + 只追加估值锚历史）、入场策略与持仓 thesis 监控，统一汇聚于「投研中枢 / Investment Cockpit」。**所有数字由确定性代码计算，LLM 在证据约束下做判断建议、由人确认；系统设计上仅供审阅（review-only），永不下单。**
 
 > ⚠️ **风险提示 / Disclaimer** · 本系统输出内容仅供学习与研究参考，不构成任何投资建议。All outputs are for research and educational purposes only and do not constitute investment advice.
 
@@ -28,7 +28,7 @@
 
 | 原则 | 含义 |
 |---|---|
-| **数字交给代码，语言交给 LLM** | 所有评分、估值、信号、阈值判断均为确定性 Python；LLM 不做数值推理，只做结构化分析与叙事 |
+| **数字交给代码，判断在证据约束下可由 LLM 建议** | 所有评分/估值/信号/阈值/技术指标/市场数据为确定性 Python（数值防火墙）；LLM 不做**不可追溯的数值判断**，但**可在证据约束下做判断建议**（valuation_role 升降、thesis 是否受削、处境综合），每条建议须引用证据、无证据标 unknown，并经显式人类确认（默认人工主控、可覆写、来源留痕） |
 | **Review-only** | `approved_for_execution` 永远为 `False`；无券商接入；输出是研究队列，不是买入清单 |
 | **Tighten-only（只收紧）** | 脆弱度层只收紧短线入场门槛、只做注释；永不翻转宏观 regime、永不放松任何门槛 |
 | **单一数据 vintage** | 一次刷新内基准/标的/滚动序列同源同龄；跨源由 `data_vintage` / `vintage_mismatch` / `rs_stale` 守卫，静默过期结构性不可能 |
@@ -301,7 +301,7 @@ investment-agents/
 | Thesis Ingestion MVP | 计划 | 人选稿、机器结构化：访谈/研报 → 带可证伪条件的 thesis 卡片 |
 | Phase 7C / 7D | 计划 | 主题受益层级与跨层比较 → 反馈环（推荐质量复盘） |
 | Phase 8 — Evidence Infrastructure | 计划 | 证据包 + 反向 DCF + 对抗式估值辩论 + 宏观 LLM 事件/归因 + IPO/流动性日历；首个「章节 agent」在此验证 |
-| Phase 9 — Agent Synthesis Layer | 远期 | 章节 agent + orchestrator 综合层（agent 吃结构化判断、不碰原始数字；orchestrator 做冲突仲裁、不出操作指令） |
+| Phase 9 — Agent Synthesis Layer | 远期 | 先做人在环 **Judgment Console**（判断收口页：LLM 在证据约束下给建议、人确认/覆写、来源留痕）→ 验证判断质量后逐步提高自动化；终态 = 章节 agent + orchestrator（agent 吃结构化判断、不碰原始数字；orchestrator 做冲突仲裁、不出操作指令） |
 | 另类数据接入 | 远期 | 期权流/暗池作为**新增正交组件**叠加进脆弱度复合（非替换）；以快照对照验证领先性/误报率改善 |
 
 ---
@@ -324,6 +324,6 @@ Markets involve risk and past performance is not indicative of future results. P
 
 Made with ☕ · Powered by [Claude](https://www.anthropic.com/) · Built for US Markets 🇺🇸
 
-*Numbers by deterministic code · Language by LLM · Review-only by design*
+*Numbers by deterministic code · Evidence-bound judgment by LLM, confirmed by human · Review-only by design*
 
 </div>

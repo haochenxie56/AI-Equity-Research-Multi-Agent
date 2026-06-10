@@ -840,9 +840,11 @@ try:
                            "breadth_above_sma20": 0.55, "good_news_sold": 0,
                            "earnings_evaluated": 5})
     # B1: distribution count renders as a full sentence (never "3/25"). B2:
-    # good-news-sold=0 still renders (not suppressed) WITH its evaluated denominator.
-    check("14.12 good_news_sold=0 renders as '0/5 evaluated' (not suppressed)",
-          "good-news-sold: 0/5 evaluated" in _blob0
+    # good-news-sold=0 still renders (not suppressed) WITH its evaluated denominator —
+    # plain-language pass: the banner uses the compact "0/5" form (no "evaluated").
+    check("14.12 good_news_sold=0 renders as compact '0/5' (not suppressed)",
+          "good-news-sold: 0/5" in _blob0
+          and "evaluated" not in _blob0  # compact banner dropped the word
           and "3 distribution days in 25 sessions" in _blob0, _blob0[:200])
     _blobN = _render_frag({"fragility_level": "normal", "distribution_days_spy": None,
                            "breadth_above_sma20": None, "good_news_sold": None})
@@ -1024,9 +1026,11 @@ try:
     _a4.session_state["cockpit_fragility"] = _flat  # the flat snapshot
     _a4.run()
     _b4 = " ".join(str(getattr(_m, "value", "")) for _m in _a4.markdown)
+    # Plain-language pass: the banner gns is now the compact "3/6" (the "evaluated"
+    # word moved to the Macro workbench full phrase). Still asserts level + numbers.
     check("16.10 non-normal banner shows level AND non-null component numbers",
           "high" in _b4 and "8 distribution days in 25 sessions" in _b4
-          and "good-news-sold: 3/6 evaluated" in _b4, _b4[:240])
+          and "good-news-sold: 3/6" in _b4 and "evaluated" not in _b4, _b4[:240])
 except Exception as _e:  # noqa: BLE001
     check("16.10 banner one-source render-smoke ran", False, f"AppTest: {_e}")
 
@@ -1451,25 +1455,40 @@ def _breadth_banner(m):
 
 
 def _gns_banner(m):
-    # B2: numerator/denominator with the evaluated label ("1/12 evaluated"),
-    # mirroring pages/7. None → the n/a marker (+ reason when present).
+    # Plain-language pass: the banner now uses the COMPACT "num/den" form (the
+    # "evaluated" word + the full phrase live in the Macro table). Mirrors pages/7.
+    # EN gloss for a degrade token is empty, so the reason renders as the bare token.
+    # EN mirror: the degrade gloss is EMPTY in EN, so the reason is the bare token
+    # (kept as a stable audit anchor) — no session_state lookup needed here.
     g, r = m.get("good_news_sold"), str(m.get("earnings_degrade_reason") or "")
     ev = m.get("earnings_evaluated")
-    lbl, evl = _EN["cockpit_frag_gns"], _EN["cockpit_frag_gns_eval"]
+    lbl = _EN["cockpit_frag_gns"]
     if g is not None:
-        return f"{lbl}: {g}/{ev} {evl}" + (f" ({r})" if r else "")
+        return f"{lbl}: {_EN['cockpit_frag_gns_banner'].format(num=g, den=ev)}" + (
+            f" ({r})" if r else "")
     return f"{lbl}: " + (f"{_NA} ({r})" if r else _NA)
 
 
 def _gns_cell(m):
-    """Mirror the Macro gns row value: 'g/ev' when evaluated, else n/a (B2)."""
+    """Mirror the Macro gns row value: the FULL phrase when evaluated, else n/a."""
     g = m.get("good_news_sold")
-    return _NA if g is None else f"{g}/{m.get('earnings_evaluated')}"
+    return _NA if g is None else _EN["cockpit_frag_gns_full"].format(
+        num=g, den=m.get("earnings_evaluated"))
 
 
 def _macro_cell(v):
     """Mirror pages/8 _row value formatting (0 renders as 0; float → 2dp; None → n/a)."""
     return _NA if v is None else (f"{v:.2f}" if isinstance(v, float) else str(v))
+
+
+def _pct_cell(v):
+    """Mirror pages/8 breadth value: fraction → percentage ('50%'); None → n/a."""
+    return _NA if v is None else f"{int(v * 100)}%"
+
+
+def _bool_cell(v):
+    """Mirror pages/8 weak-bounce value: bool → Yes/No; None → n/a."""
+    return _NA if v is None else (_EN["mi_yes"] if v else _EN["mi_no"])
 
 
 def _od_cell(m):
@@ -1490,11 +1509,11 @@ FIELD_RENDER = {
                                         ("cell", _macro_cell(m.get("distribution_days_spy")))],
     "distribution_days_qqq": lambda m: [("cell", _macro_cell(m.get("distribution_days_qqq")))],
     "breadth_above_sma20": lambda m: [("banner", _breadth_banner(m)),
-                                      ("cell", _macro_cell(m.get("breadth_above_sma20")))],
+                                      ("cell", _pct_cell(m.get("breadth_above_sma20")))],
     "breadth_above_sma20_prev": lambda m: [("banner", _breadth_banner(m))],
-    "breadth_above_sma50": lambda m: [("cell", _macro_cell(m.get("breadth_above_sma50")))],
+    "breadth_above_sma50": lambda m: [("cell", _pct_cell(m.get("breadth_above_sma50")))],
     "breadth_slope": lambda m: [("cell", _macro_cell(m.get("breadth_slope")))],
-    "weak_bounce": lambda m: [("cell", _macro_cell(m.get("weak_bounce")))],
+    "weak_bounce": lambda m: [("cell", _bool_cell(m.get("weak_bounce")))],
     "good_news_sold": lambda m: [("banner", _gns_banner(m)),
                                  ("cell", _gns_cell(m))],
     # B2: the evaluated denominator is now surfaced (banner "g/ev evaluated" +
@@ -1545,8 +1564,8 @@ EXCLUSIONS = {
 ROW_TRIGGERS = {
     _EN["cockpit_frag_dist"] + " SPY": ("distribution_days_elevated", "distribution_days_high"),
     _EN["cockpit_frag_dist"] + " QQQ": ("distribution_days_elevated", "distribution_days_high"),
-    _EN["cockpit_frag_breadth"] + " >SMA20": ("breadth_weak",),
-    _EN["cockpit_frag_breadth"] + " >SMA50": (),
+    _EN["mi_c_breadth20"]: ("breadth_weak",),
+    _EN["mi_c_breadth50"]: (),
     _EN["mi_c_slope"]: ("breadth_narrowing",),
     _EN["mi_c_weak_bounce"]: ("weak_bounce",),
     _EN["cockpit_frag_gns"]: ("good_news_sold_elevated", "good_news_sold_high"),
@@ -1720,6 +1739,74 @@ def _run_parity(earnings_cal_fn, lang="en"):
         R.cells = _internals_cells(R.table)
     return R
 
+
+# --- Plain-language pass: discipline-semantics & i18n guards (DISCRIMINATING). These
+# go RED if (iii) an EN level badge word is changed, (D) a tighten-only/review-only
+# clause is dropped from a legend/footnote, or (E) a degrade token's raw text is
+# altered/dropped by the ZH gloss. They assert the i18n string CONTRACT directly (no
+# AppTest), so they are independent of the live-render scenarios below.
+_ZH = _uiu.TRANSLATIONS["zh"]
+
+# (iii) EN level badge words are PINNED (parity test depends on the raw words).
+check("19.1 EN level badges unchanged (normal/elevated/high)",
+      _EN["cockpit_frag_lvl_normal"] == "normal"
+      and _EN["cockpit_frag_lvl_elevated"] == "elevated"
+      and _EN["cockpit_frag_lvl_high"] == "high",
+      f'{_EN["cockpit_frag_lvl_normal"]}/{_EN["cockpit_frag_lvl_elevated"]}/'
+      f'{_EN["cockpit_frag_lvl_high"]}')
+
+# (D) [TIGHTEN-ONLY] the 3-level legend must keep "alert only / not tightened" for
+# elevated AND "short-horizon entry thresholds tighten, mid/long unaffected" for high.
+_le, _lz = _EN["cockpit_frag_lvl_explain"], _ZH["cockpit_frag_lvl_explain"]
+check("19.2 [TIGHTEN-ONLY] level legend keeps elevated=alert-only & high=short-only (EN)",
+      "alert only" in _le and "not tightened" in _le
+      and "short-horizon entry thresholds tighten" in _le and "mid/long" in _le, _le)
+check("19.3 [TIGHTEN-ONLY] level legend keeps the same semantics (ZH)",
+      "不收紧门槛" in _lz and "短线入场门槛" in _lz and "仅收紧" in _lz
+      and "中长线不受影响" in _lz, _lz)
+
+# (D) [TIGHTEN-ONLY] internals note: tighten-only AND regime label unchanged.
+_ne, _nz = _EN["cockpit_hub_internals_note"], _ZH["cockpit_hub_internals_note"]
+check("19.4 [TIGHTEN-ONLY] internals note keeps tighten-only + regime-unchanged",
+      "tighten-only" in _ne and "regime label" in _ne
+      and "市场状态" in _nz and ("不会改变" in _nz or "不改变" in _nz), f"{_ne} || {_nz}")
+
+# (D) [TIGHTEN-ONLY][REVIEW-ONLY] mi_note: BOTH the tighten-only clause AND the
+# research-only / not-advice clause must survive.
+_me, _mz = _EN["mi_note"], _ZH["mi_note"]
+check("19.5 [TIGHTEN-ONLY][REVIEW-ONLY] mi_note keeps tighten-only + not-advice (EN)",
+      "tighten-only" in _me and "never loosen" in _me
+      and "research-only" in _me and "not investment advice" in _me, _me)
+check("19.6 [TIGHTEN-ONLY][REVIEW-ONLY] mi_note keeps both clauses (ZH)",
+      "收紧" in _mz and "绝不放松" in _mz and "不构成投资建议" in _mz, _mz)
+
+# (E) [DEGRADE-VOCAB] degrade tokens: ZH gloss APPENDS without altering the raw token;
+# EN renders the bare token. Exercise frag_reason_gloss under each forced locale.
+_orig_t = _uiu.t
+try:
+    _uiu.t = lambda k: _ZH.get(k, k)  # force ZH
+    for _tok in sorted(_EARN_REASONS):
+        _out = _uiu.frag_reason_gloss(_tok)
+        check(f"19.7[{_tok}] ZH gloss keeps raw token + adds a parenthetical",
+              _tok in _out and _out != _tok and "（" in _out and "）" in _out, _out)
+    _uiu.t = lambda k: _EN.get(k, k)  # force EN
+    for _tok in sorted(_EARN_REASONS):
+        check(f"19.8[{_tok}] EN renders the bare audit token (no gloss)",
+              _uiu.frag_reason_gloss(_tok) == _tok, _uiu.frag_reason_gloss(_tok))
+    # (C) offense/defense enum: ZH localizes, EN stays byte-identical to the raw tokens.
+    _uiu.t = lambda k: _ZH.get(k, k)
+    check("19.9 offense/defense localizes in ZH",
+          _uiu.frag_od_value("defense", "moderate") == "防御 中等"
+          and _uiu.frag_od_value("offense", "strong") == "进攻 强"
+          and _uiu.frag_od_value("balanced", "mild") == "均衡 轻微",
+          _uiu.frag_od_value("defense", "moderate"))
+    _uiu.t = lambda k: _EN.get(k, k)
+    check("19.10 offense/defense EN == raw tokens (unchanged) + empty-dir → '—'",
+          _uiu.frag_od_value("defense", "moderate") == "defense moderate"
+          and _uiu.frag_od_value("", "") == "—",
+          _uiu.frag_od_value("defense", "moderate"))
+finally:
+    _uiu.t = _orig_t
 
 # --- Structural completeness: every snapshot field is classified (loud on a new one).
 _unclassified = _SNAP_KEYS - set(FIELD_RENDER) - set(EXCLUSIONS)

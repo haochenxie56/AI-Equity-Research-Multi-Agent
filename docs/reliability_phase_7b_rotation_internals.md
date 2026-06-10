@@ -684,3 +684,67 @@ single-condition no-fire, 12.4d/12.4e/12.4f threshold boundaries).
   metric ships on mechanical correctness; the 0.90 / 1.10 thresholds are the starting
   calibration and were NOT tuned to force a signal** — the backfill is the evidence
   base for any future threshold adjustment.
+
+---
+
+## Plain-Language + i18n Readability Pass (UI Cleanup Batch — Segment 1, committed direct to `main`, Codex-approved, 2026-06-10)
+
+A **display-and-i18n-only** readability pass over the **市场内部结构 / Market-Internals
+Fragility** component across its two render surfaces — the Cockpit banner
+(`pages/7_Investment_Cockpit.py`) and the Macro Dashboard "Market Internals (workbench)"
+section (`pages/8_Macro_Dashboard.py`) — with all strings in `ui_utils.py`. **No
+computation, threshold, snapshot field, or `macro_regime.py` change** — only string
+values and render formatting. Committed directly to the main worktree (not a `--no-ff`
+branch merge).
+
+- **Table headers** (`mi_component`→Signal/信号项, `mi_value`→Reading/读数,
+  `mi_triggered`→Triggered?/是否触发, `mi_degrade`→Data note/数据说明). The 数据说明
+  column is RETAINED — only the header wording changed.
+- **Row labels:** new `mi_c_breadth20`/`mi_c_breadth50` (`>20-day MA %` /
+  `20日均线以上占比`, `>50-day MA %` / `50日均线以上占比`); `mi_c_slope` → Breadth trend
+  (slope) / 广度趋势（斜率）.
+- **Value rendering (programmer literals → human-readable):** weak-bounce bool →
+  Yes/No · 是/否 (None still → n/a); breadth fraction → percentage (`50%`); good-news-sold
+  renders as the **compact `num/den`** form in the space-tight Cockpit banner
+  (`cockpit_frag_gns_banner`) and the **full phrase** in the Dashboard table
+  (`cockpit_frag_gns_full`: `{num} of {den} post-beat names sold off` /
+  `{den} 次财报中 {num} 次遭抛售`); offense/defense enum gains ZH words
+  (进攻/防御/均衡 · 强/中等/轻微) via the display-layer helper `ui_utils.frag_od_value` —
+  **EN values equal the raw `rotation.py` tokens, so the EN surface is byte-identical and
+  the tokens themselves are untouched.**
+- **Legends/footnotes reworded, discipline semantics preserved verbatim in meaning:**
+  `cockpit_frag_lvl_explain` keeps *elevated = alert only / thresholds NOT tightened* and
+  *high = SHORT-horizon entry thresholds tighten, MID/LONG unaffected* [TIGHTEN-ONLY];
+  `cockpit_hub_internals_note` keeps tighten-only + regime-label-unchanged [TIGHTEN-ONLY];
+  `mi_note` keeps BOTH the tighten-only clause AND the research-only / not-advice clause
+  [TIGHTEN-ONLY][REVIEW-ONLY].
+- **Degrade tokens (降级词汇表) preserved as stable audit anchors:** the raw tokens
+  (`finnhub_unavailable`, `earnings_source_absent`, `no_reports_in_window`,
+  `partial_frame_coverage`, `implausible_count`, and the `(skipped=N)` suffix) are
+  NEVER altered; `ui_utils.frag_reason_gloss` appends a ZH parenthetical gloss while EN
+  renders the bare token.
+- **Provenance:** the `mi_source` label gains a short ZH reading-note; the **value stays
+  raw** (`rolling`/`snapshot`, the `data_vintage` date) [AUDIT-PROVENANCE].
+- **Exclusions honored:** `mi_c_vol` (vol_shrink / 龙头量能萎缩) label AND its bool value
+  left UNTOUCHED pending a separate caliber ruling; EN level badges
+  `normal`/`elevated`/`high` unchanged (parity-pinned); the regime line and
+  `horizon_bias` values are out of scope and untouched.
+
+**Tests.** The parity helpers in `test_reliability_phase_7b_rotation_internals.py` were
+synced to the new render (compact banner, full-phrase cell, `_pct_cell`/`_bool_cell`,
+relabeled breadth `ROW_TRIGGERS`); the 14.12 + 16.10 expected banner strings were
+updated for the changed wording (not weakened — they still assert level + numbers and
+now also assert `"evaluated"` is absent from the banner). **New discriminating guards
+19.1–19.10** go RED if (iii) an EN level badge word changes, (D) a tighten-only /
+review-only clause is dropped (checked EN *and* ZH), or (E) a degrade token's raw text is
+altered/dropped by the gloss; plus (C) offense/defense localizes in ZH and stays raw in
+EN. Suite **211/211 GREEN**. Codex review verified the discriminating mutation probes.
+Unrelated pre-existing reds in 5o (`url_pathname` AppTest harness error) and 5n
+(`cockpit_trade_col_*` trading-desk chrome) were confirmed pre-existing by re-running
+both suites at `HEAD` in an isolated worktree (identical failures, none in this diff).
+
+**README principle correction (previously approved, folded into the same commit).** The
+core-principle wording shifted from "数字交给代码，语言交给 LLM" to a judgment-under-
+evidence framing ("数字交给代码，判断在证据约束下可由 LLM 建议"), with the EN tagline and
+the Phase 9 roadmap row (human-in-the-loop **Judgment Console**) updated to match. The
+numeric-firewall and review-only invariants are unchanged.

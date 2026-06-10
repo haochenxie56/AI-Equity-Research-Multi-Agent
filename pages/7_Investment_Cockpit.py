@@ -36,7 +36,7 @@ if str(_REPO_ROOT / "lib") not in sys.path:
 
 import streamlit as st
 
-from ui_utils import apply_theme, render_sidebar, load_info, t
+from ui_utils import apply_theme, render_sidebar, load_info, t, frag_reason_gloss
 # Phase 6C-B — single macro-regime session-state boundary (stores a plain dict;
 # reads via dict .get()). lib/macro_regime.py stays frozen.
 from lib.macro_state import (
@@ -550,11 +550,14 @@ else:
         # denominator (earnings_evaluated) comes from the SAME refresh that produced
         # the numerator (good_news_sold) — one _frag snapshot, one data vintage.
         _gev = _frag.get("earnings_evaluated")
+        # Banner space is tight → compact "num/den" form (ZH adds 次); the full phrase
+        # lives in the Macro workbench table. The degrade token keeps its raw text and
+        # gets a ZH gloss appended (EN renders the bare audit token).
         if _gns is not None:
-            _gns_txt = (f"{_gns}/{_gev} {t('cockpit_frag_gns_eval')}"
-                        + (f" ({_greason})" if _greason else ""))
+            _gns_txt = (t("cockpit_frag_gns_banner").format(num=_gns, den=_gev)
+                        + (f" ({frag_reason_gloss(_greason)})" if _greason else ""))
         else:
-            _gns_txt = f"{_na} ({_greason})" if _greason else _na
+            _gns_txt = (f"{_na} ({frag_reason_gloss(_greason)})" if _greason else _na)
         _bits.append(f"{t('cockpit_frag_gns')}: {_gns_txt}")
         st.markdown(
             f"{t('cockpit_hub_internals')}: "

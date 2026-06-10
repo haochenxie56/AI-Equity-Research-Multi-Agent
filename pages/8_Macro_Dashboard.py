@@ -82,7 +82,8 @@ from lib.macro_regime import classify_regime, MacroRegimeResult
 from lib.macro_state import save_regime_to_state  # Phase 6C-B regime boundary
 
 # Shared UI utilities — theme, sidebar (language toggle + global nav), t().
-from ui_utils import apply_theme, render_sidebar, t, apply_layout, apply_legend
+from ui_utils import (apply_theme, render_sidebar, t, apply_layout, apply_legend,
+                      frag_reason_gloss, frag_od_value)
 
 
 # ---------------------------------------------------------------------------
@@ -1534,32 +1535,44 @@ def _render_market_internals() -> None:
                 t("mi_triggered"): "✅" if fired else "—",
                 t("mi_degrade"): reason}
 
-    # B2: good-news-sold renders as numerator/denominator ("1/12") — the evaluated
-    # sample denominator from the SAME refresh (single vintage). None → n/a row.
+    def _pct(v):
+        # Breadth reads as a fraction; render it as a percentage ("50%"). None → n/a.
+        return None if v is None else f"{int(v * 100)}%"
+
+    def _yesno(v):
+        # Bool reading → human-readable 是/否 (Yes/No). None → n/a (keep named-absence).
+        return None if v is None else (t("mi_yes") if v else t("mi_no"))
+
+    # B2: good-news-sold renders as a full phrase ("1 of 12 post-beat names sold off")
+    # from the SAME refresh's evaluated denominator (single vintage). None → n/a row.
     _gns_v = frag.get("good_news_sold")
-    _gns_cell = f"{_gns_v}/{frag.get('earnings_evaluated')}" if _gns_v is not None else None
+    _gns_cell = (t("cockpit_frag_gns_full").format(
+        num=_gns_v, den=frag.get("earnings_evaluated"))
+        if _gns_v is not None else None)
     rows = [
         _row(t("cockpit_frag_dist") + " SPY", frag.get("distribution_days_spy"),
              ("distribution_days_elevated", "distribution_days_high")),
         _row(t("cockpit_frag_dist") + " QQQ", frag.get("distribution_days_qqq"),
              ("distribution_days_elevated", "distribution_days_high")),
-        _row(t("cockpit_frag_breadth") + " >SMA20", frag.get("breadth_above_sma20"),
+        _row(t("mi_c_breadth20"), _pct(frag.get("breadth_above_sma20")),
              ("breadth_weak",)),
-        _row(t("cockpit_frag_breadth") + " >SMA50", frag.get("breadth_above_sma50"), ()),
+        _row(t("mi_c_breadth50"), _pct(frag.get("breadth_above_sma50")), ()),
         _row(t("mi_c_slope"), frag.get("breadth_slope"), ("breadth_narrowing",)),
-        _row(t("mi_c_weak_bounce"), frag.get("weak_bounce"), ("weak_bounce",)),
+        _row(t("mi_c_weak_bounce"), _yesno(frag.get("weak_bounce")), ("weak_bounce",)),
         _row(t("cockpit_frag_gns"), _gns_cell,
              ("good_news_sold_elevated", "good_news_sold_high"),
              # Show the reason whenever present — including partial_frame_coverage
-             # on a reported number (skipped > evaluated under the scan scope).
-             (earn_reason + (f" (skipped={frag.get('earnings_skipped')})"
-                             if frag.get("earnings_skipped") else "")
+             # on a reported number (skipped > evaluated under the scan scope). The raw
+             # token text is preserved; ZH gets a gloss appended (EN = bare token).
+             (frag_reason_gloss(earn_reason)
+              + (f" (skipped={frag.get('earnings_skipped')})"
+                 if frag.get("earnings_skipped") else "")
               ) if earn_reason else ""),
         _row(t("mi_c_vol"), frag.get("leading_theme_volume_shrinking"),
              ("leading_theme_volume_shrinking",)),
         _row(t("mi_c_od"),
-             f"{frag.get('offense_defense_direction', '') or '—'} "
-             f"{frag.get('offense_defense_magnitude', '') or ''}".strip(),
+             frag_od_value(frag.get("offense_defense_direction", ""),
+                           frag.get("offense_defense_magnitude", "")),
              ("offense_defense_defensive", "offense_defense_defensive_strong")),
     ]
     st.table(rows)

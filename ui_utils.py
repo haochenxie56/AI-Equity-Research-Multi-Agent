@@ -1115,7 +1115,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "cockpit_hub_theme_momentum":   "动量评分",
         # Phase 7B — fragility banner + theme stage / breadth (Cockpit)
         "cockpit_hub_internals":        "市场内部结构",
-        "cockpit_hub_internals_note":   "内部结构为收紧型预警，不改变市场状态判定",
+        "cockpit_hub_internals_note":   "内部结构只是“收紧型”预警，不会改变上方的市场状态判定。",
         "cockpit_hub_internals_unavail":"暂不可用",
         "cockpit_frag_dist":            "派发日",
         # B1: 完整句式，避免「5/25」被误读为日期。
@@ -1125,31 +1125,53 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "cockpit_frag_gns_unit":        " 例",
         # B2: 已评估样本分母的标签（「1/12 评估」）。
         "cockpit_frag_gns_eval":        "评估",
+        # 横幅空间紧凑，用精简的「分子/分母 次」；工作台表内用完整句式。
+        "cockpit_frag_gns_banner":      "{num}/{den} 次",
+        "cockpit_frag_gns_full":        "{den} 次财报中 {num} 次遭抛售",
         "cockpit_frag_gns_concept":     "利好遭抛 = 利好出尽式抛售 (sell-the-news)：财报利好后次日放量下跌的名单占比。",
         "cockpit_frag_na":              "无数据",
         # Fragility level badge names + one-line tighten-only explainer.
         "cockpit_frag_lvl_normal":      "正常",
         "cockpit_frag_lvl_elevated":    "警戒",
         "cockpit_frag_lvl_high":        "警报",
-        "cockpit_frag_lvl_explain":     "正常 = 无系统性恶化信号；警戒 = 多个恶化信号并存，仅提醒，不收紧门槛；警报 = 恶化信号广泛确认，短线入场门槛收紧（中长线不受影响）。",
+        "cockpit_frag_lvl_explain":     "正常 = 没有系统性转差信号；警戒 = 同时出现多个转差信号，但只是提醒，不收紧门槛；警报 = 转差信号被广泛确认，仅收紧短线入场门槛（中长线不受影响）。",
         # Phase 7B — Macro Dashboard "Market Internals" workbench block
         "mi_header":                    "市场内部结构（工作台）",
         "mi_not_loaded":                "请先在投资驾驶舱刷新以生成内部结构读数",
         "mi_go_cockpit":                "前往投资驾驶舱 →",
         "mi_level":                     "脆弱度等级",
-        "mi_source":                    "迟滞来源",
+        # 标签可加简短读注；数值保持原始 token（rolling / snapshot / 日期），不翻译。
+        "mi_source":                    "读数来源（rolling 滚动重算 / snapshot 快照）",
         "mi_vintage":                   "数据时点",
         "mi_vintage_mismatch":          "数据时点不一致（已降级为快照）",
         "mi_points":                    "得分",
-        "mi_component":                 "组件",
-        "mi_value":                     "数值",
-        "mi_triggered":                 "触发",
-        "mi_degrade":                   "降级原因",
-        "mi_c_slope":                   "广度斜率",
+        "mi_component":                 "信号项",
+        "mi_value":                     "读数",
+        "mi_triggered":                 "是否触发",
+        "mi_degrade":                   "数据说明",
+        "mi_c_breadth20":               "20日均线以上占比",
+        "mi_c_breadth50":               "50日均线以上占比",
+        "mi_c_slope":                   "广度趋势（斜率）",
         "mi_c_weak_bounce":             "弱反弹",
         "mi_c_vol":                     "龙头量能萎缩",
         "mi_c_od":                      "进攻/防御",
-        "mi_note":                      "内部结构为收紧型预警；仅供研究参考，不构成投资建议。",
+        # 是/否 — 把布尔读数渲染为人类可读（弱反弹等行）。
+        "mi_yes":                       "是",
+        "mi_no":                        "否",
+        # 进攻/防御枚举的中文显示（仅显示层翻译，rotation.py 的 token 不变）。
+        "mi_od_dir_offense":            "进攻",
+        "mi_od_dir_defense":            "防御",
+        "mi_od_dir_balanced":           "均衡",
+        "mi_od_mag_strong":             "强",
+        "mi_od_mag_moderate":           "中等",
+        "mi_od_mag_mild":               "轻微",
+        # 降级原因的中文读注：原始 token 文本保持不变，仅在括号内补充释义（审计锚点）。
+        "mi_dgloss_finnhub_unavailable":    "Finnhub 数据源不可用",
+        "mi_dgloss_earnings_source_absent": "无财报数据源",
+        "mi_dgloss_no_reports_in_window":   "窗口内无财报",
+        "mi_dgloss_partial_frame_coverage": "部分行情未缓存",
+        "mi_dgloss_implausible_count":      "计数异常已剔除",
+        "mi_note":                      "内部结构只是“收紧型”预警：信号转差时只收紧门槛，绝不放松；仅供研究参考，不构成投资建议。",
         "cockpit_hub_clock_suspect":    "系统时钟疑似异常（快照仍已写入）",
         "cockpit_hub_theme_3m_excess":  "3月超额 (vs QQQ)",
         "cockpit_hub_stage":            "轮动阶段",
@@ -2579,7 +2601,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "cockpit_hub_theme_momentum":   "Momentum score",
         # Phase 7B — fragility banner + theme stage / breadth (Cockpit)
         "cockpit_hub_internals":        "Internals",
-        "cockpit_hub_internals_note":   "Internals are a tighten-only early warning; the regime label is unchanged.",
+        "cockpit_hub_internals_note":   "Internals are a tighten-only early warning; they do not change the regime label above.",
         "cockpit_hub_internals_unavail":"unavailable",
         "cockpit_frag_dist":            "distribution days",
         # B1: full sentence for the banner so "5/25" is never misread as a date.
@@ -2589,31 +2611,55 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "cockpit_frag_gns_unit":        "",
         # B2: label for the evaluated-sample denominator ("1/12 evaluated").
         "cockpit_frag_gns_eval":        "evaluated",
+        # Banner space is tight → compact "num/den"; the workbench table uses the full phrase.
+        "cockpit_frag_gns_banner":      "{num}/{den}",
+        "cockpit_frag_gns_full":        "{num} of {den} post-beat names sold off",
         "cockpit_frag_gns_concept":     "good-news-sold = sell-the-news: share of post-beat names that sold off on the next session.",
         "cockpit_frag_na":              "n/a",
         # Fragility level badge names + one-line tighten-only explainer.
         "cockpit_frag_lvl_normal":      "normal",
         "cockpit_frag_lvl_elevated":    "elevated",
         "cockpit_frag_lvl_high":        "high",
-        "cockpit_frag_lvl_explain":     "normal = no systemic deterioration signals; elevated = several deterioration signals coexist — alert only, thresholds unchanged; high = deterioration broadly confirmed — short-horizon entry thresholds tighten (mid/long unaffected).",
+        "cockpit_frag_lvl_explain":     "normal = no signs of systemic deterioration; elevated = several deterioration signals at once, but this is an alert only — thresholds are not tightened; high = deterioration broadly confirmed — only short-horizon entry thresholds tighten (mid/long horizons unaffected).",
         # Phase 7B — Macro Dashboard "Market Internals" workbench block
         "mi_header":                    "Market Internals (workbench)",
         "mi_not_loaded":                "Refresh the Cockpit first to generate an internals reading",
         "mi_go_cockpit":                "Go to Investment Cockpit →",
         "mi_level":                     "Fragility level",
+        # Label may carry a short reading-note; the VALUE stays the raw token
+        # (rolling / snapshot / the date), never translated.
         "mi_source":                    "Hysteresis source",
         "mi_vintage":                   "Data vintage",
         "mi_vintage_mismatch":          "vintage mismatch (degraded to snapshot)",
         "mi_points":                    "Points",
-        "mi_component":                 "Component",
-        "mi_value":                     "Value",
-        "mi_triggered":                 "Triggered",
-        "mi_degrade":                   "Degrade reason",
-        "mi_c_slope":                   "Breadth slope",
+        "mi_component":                 "Signal",
+        "mi_value":                     "Reading",
+        "mi_triggered":                 "Triggered?",
+        "mi_degrade":                   "Data note",
+        "mi_c_breadth20":               ">20-day MA %",
+        "mi_c_breadth50":               ">50-day MA %",
+        "mi_c_slope":                   "Breadth trend (slope)",
         "mi_c_weak_bounce":             "Weak bounce",
         "mi_c_vol":                     "Leading-theme volume shrink",
         "mi_c_od":                      "Offense/defense",
-        "mi_note":                      "Internals are a tighten-only early warning; research-only, not investment advice.",
+        # Yes/No — render bool readings human-readable (weak-bounce etc.).
+        "mi_yes":                       "Yes",
+        "mi_no":                        "No",
+        # Offense/defense enum display. EN values EQUAL the raw rotation.py tokens
+        # (so the EN surface is unchanged); only ZH gets localized words.
+        "mi_od_dir_offense":            "offense",
+        "mi_od_dir_defense":            "defense",
+        "mi_od_dir_balanced":           "balanced",
+        "mi_od_mag_strong":             "strong",
+        "mi_od_mag_moderate":           "moderate",
+        "mi_od_mag_mild":               "mild",
+        # Degrade-reason glosses are EMPTY in EN → the bare audit token renders.
+        "mi_dgloss_finnhub_unavailable":    "",
+        "mi_dgloss_earnings_source_absent": "",
+        "mi_dgloss_no_reports_in_window":   "",
+        "mi_dgloss_partial_frame_coverage": "",
+        "mi_dgloss_implausible_count":      "",
+        "mi_note":                      "Internals are a tighten-only early warning — a worse signal only tightens thresholds, never loosens them; research-only, not investment advice.",
         "cockpit_hub_clock_suspect":    "System clock looks off (snapshot still written)",
         "cockpit_hub_theme_3m_excess":  "3M excess (vs QQQ)",
         "cockpit_hub_stage":            "Rotation stage",
@@ -3993,6 +4039,46 @@ def t(key: str) -> str:
     """Return the translated UI string for the current language (defaults to en)."""
     lang = st.session_state.get("language", "en")
     return TRANSLATIONS.get(lang, TRANSLATIONS["en"]).get(key, key)
+
+
+# --- Market-internals display helpers (plain-language layer; no computation) -------
+# These translate already-computed tokens at the RENDER layer only. EN keys equal the
+# raw tokens, so the EN surface is byte-for-byte unchanged; only ZH gains readability.
+
+_FRAG_REASON_GLOSS_KEY = {
+    "finnhub_unavailable":    "mi_dgloss_finnhub_unavailable",
+    "earnings_source_absent": "mi_dgloss_earnings_source_absent",
+    "no_reports_in_window":   "mi_dgloss_no_reports_in_window",
+    "partial_frame_coverage": "mi_dgloss_partial_frame_coverage",
+    "implausible_count":      "mi_dgloss_implausible_count",
+}
+
+
+def frag_reason_gloss(reason: str) -> str:
+    """Append a ZH gloss to a raw earnings degrade-reason token WITHOUT altering the
+    token text — the token stays a stable audit anchor (降级词汇表). EN renders the bare
+    token (empty gloss); unknown tokens pass through unchanged."""
+    if not reason:
+        return reason
+    key = _FRAG_REASON_GLOSS_KEY.get(reason)
+    gloss = t(key) if key else ""
+    return f"{reason}（{gloss}）" if gloss else reason
+
+
+_FRAG_OD_DIR_TOK = ("offense", "defense", "balanced")
+_FRAG_OD_MAG_TOK = ("strong", "moderate", "mild")
+
+
+def frag_od_value(direction: str, magnitude: str) -> str:
+    """Localize the offense/defense enum at the display layer (rotation.py tokens are
+    untouched). EN values equal the raw tokens, so EN render is unchanged; ZH renders
+    进攻/防御/均衡 + 强/中等/轻微. Mirrors the prior fallback: empty direction → '—',
+    empty magnitude → '' (so a blank reading still renders a '—' cell)."""
+    d = direction or ""
+    m = magnitude or ""
+    d_txt = (t(f"mi_od_dir_{d}") if d in _FRAG_OD_DIR_TOK else d) if d else "—"
+    m_txt = (t(f"mi_od_mag_{m}") if m in _FRAG_OD_MAG_TOK else m) if m else ""
+    return f"{d_txt} {m_txt}".strip()
 
 
 def render_valuation_diagnosis_card(diag) -> None:
