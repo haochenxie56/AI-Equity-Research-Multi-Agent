@@ -488,3 +488,317 @@ def match_growth_profile_peers(
         matched_count=len(growth_matched),
         fallback_count=len(sector_peers),
     )
+
+
+# ===========================================================================
+# Anchor Intelligence v2.5 — multi-dimensional peer profile + match quality
+# ===========================================================================
+#
+# v1's matcher (above) is sector × growth × size with a raw-sector FALLBACK when
+# < min_peers. That fallback peers a company to non-comparable names (SNOW to all
+# "Software—Application"; KTOS to traditional defense primes). v2.5 replaces the
+# fallback with an HONEST DEGRADE: extend the numeric dims (margin / profitability /
+# cyclicality), intersect with the curated theme_baskets membership (single source
+# of truth, shared with rotation) + a small human-reviewed peer_profiles override,
+# and when the QUALIFIED set is still < N do NOT pad — report
+# peer_match_quality="low" so the relative (peer-multiple) anchor is EXCLUDED
+# downstream. A peer multiple from non-comparable companies is worse than none.
+#
+# See docs/reliability_anchor_intel_v2.md "Round v2.5" (STEP 0 matrix + decisions).
+
+# Visible config block — peer numeric-dimension bands/thresholds (auditable). The
+# growth_band / size_band dims reuse CLASSIFIER_CONFIG; only the NEW dims' bands
+# live here.
+PEER_DIM_CONFIG: dict = {
+    # margin_band over operatingMargins (fallback profitMargins).
+    "margin_high": 0.25,   # >= -> "high"
+    "margin_mid": 0.10,    # >= -> "mid"
+    "margin_low": 0.0,     # >= -> "low"; below -> "negative"
+    # profitability_stage reuses the classifier's profitability thresholds so the
+    # two stay consistent (one definition of "profitable" across the system).
+    "profit_floor": CLASSIFIER_CONFIG["margin_floor"],         # >= -> profitable
+    "profit_near_zero": CLASSIFIER_CONFIG["margin_near_zero"],  # < -> unprofitable
+}
+
+# Minimum QUALIFIED comparable peers; below this -> peer_match_quality "low".
+MIN_QUALIFIED_PEERS = 4
+
+# peer_match_quality tokens.
+PEER_MATCH_HIGH = "high"
+PEER_MATCH_LOW = "low"
+PEER_MATCH_NOT_ASSESSED = ""   # peers not supplied (network-free / Trading-Desk path)
+# Reason token surfaced when the qualified set is < MIN_QUALIFIED_PEERS.
+REASON_INSUFFICIENT_PEERS = "insufficient_comparable_peers"
+
+# The five numeric dims a candidate must share with the target (band equality).
+PEER_NUMERIC_DIMS = (
+    "growth_band", "size_band", "margin_band",
+    "profitability_stage", "revenue_cyclicality",
+)
+
+# ---------------------------------------------------------------------------
+# Manual override layer (peer_profiles) — human-reviewed; LLM MAY draft.
+# ---------------------------------------------------------------------------
+# ``ticker -> {"business_model": (...), "theme_exposure": (...)}`` tag sets for the
+# corners theme_baskets do NOT cover. These tags participate in the tag-intersection
+# EXACTLY like a basket membership: a candidate is a "tag peer" of the target when
+# they share >= 1 tag (basket OR override). The override NEVER loosens the numeric
+# dims and NEVER invents a multiple — it only supplies the missing taxonomy tag.
+#
+# DATA-DRIVEN + MINIMAL seed (the CYCLICAL_TICKER_OVERRIDES discipline): only names
+# that (a) genuinely degrade under numeric-dims ∩ baskets AND (b) have an
+# identifiable real sub-peer set the baskets miss. A name that degrades with NO good
+# peer set is left OUT — it correctly STAYS peer_match_quality="low" (honest degrade,
+# not a gap to patch). Expand only as real mismatches surface; never preemptively.
+#
+# KTOS is in NO theme_basket (there is no defense/unmanned-systems basket); the
+# override documents its real peer tag. With no other defense-tech name in the
+# universe carrying the tag, KTOS still qualifies < N and STAYS "low" — which is the
+# CORRECT outcome (it should not be anchored to ill-fitting peer multiples).
+PEER_PROFILES: dict = {
+    "KTOS": {
+        "business_model": ("defense_tech",),
+        "theme_exposure": ("unmanned_systems", "defense_space"),
+    },
+}
+
+
+def margin_band(margin: Optional[float], config: dict = PEER_DIM_CONFIG) -> str:
+    """Return ``high`` / ``mid`` / ``low`` / ``negative`` (``unknown`` when None)."""
+    m = _num(margin)
+    if m is None:
+        return "unknown"
+    if m >= config["margin_high"]:
+        return "high"
+    if m >= config["margin_mid"]:
+        return "mid"
+    if m >= config["margin_low"]:
+        return "low"
+    return "negative"
+
+
+def profitability_stage(margin: Optional[float], config: dict = PEER_DIM_CONFIG) -> str:
+    """Return ``profitable`` / ``transitional`` / ``unprofitable`` (``unknown`` None).
+
+    Reuses the classifier's profitability thresholds (one definition system-wide):
+    ``margin >= profit_floor`` -> profitable; ``< profit_near_zero`` -> unprofitable;
+    in between -> transitional (approaching break-even)."""
+    m = _num(margin)
+    if m is None:
+        return "unknown"
+    if m >= config["profit_floor"]:
+        return "profitable"
+    if m < config["profit_near_zero"]:
+        return "unprofitable"
+    return "transitional"
+
+
+def is_cyclical(ticker: str = "", sector: Optional[str] = None,
+                industry: Optional[str] = None) -> bool:
+    """True when the name is a commodity / memory / industrial-cycle cyclical.
+
+    Reuses the SAME signals as :func:`classify_company`'s cyclical branch — the
+    ticker override, the cyclical sectors, and the cyclical industry hints — so the
+    cyclicality dim never diverges from the classifier. Pure; no I/O."""
+    t = (ticker or "").upper().strip()
+    sector_s = (sector or "").strip()
+    industry_l = (industry or "").lower().strip()
+    return (t in CYCLICAL_TICKER_OVERRIDES
+            or sector_s in CYCLICAL_SECTORS
+            or industry_has_hint(industry_l, CYCLICAL_INDUSTRY_HINTS))
+
+
+def revenue_cyclicality(ticker: str = "", sector: Optional[str] = None,
+                        industry: Optional[str] = None) -> str:
+    """Return ``cyclical`` or ``non_cyclical`` (never ``unknown`` — always decidable)."""
+    return "cyclical" if is_cyclical(ticker, sector, industry) else "non_cyclical"
+
+
+def _peer_get(p: dict, *names):
+    """First non-None value among ``names`` in dict ``p`` (camel/snake tolerant)."""
+    for nm in names:
+        if nm in p and p[nm] is not None:
+            return p[nm]
+    return None
+
+
+def numeric_dims(info: dict, *, ticker: str = "",
+                 config: dict = PEER_DIM_CONFIG,
+                 classifier_config: dict = CLASSIFIER_CONFIG) -> dict:
+    """Compute the five numeric peer dims from an already-fetched ``info`` dict.
+
+    Pure — reads only fields the Equity-page peer table already fetched
+    (``sector``/``industry``/``revenueGrowth``/``marketCap``/``operatingMargins``/
+    ``profitMargins``); NO new network. Camel-case (yfinance) and snake_case keys are
+    both accepted. The operating margin is preferred; profit margin is the fallback."""
+    tk = (ticker or str(info.get("ticker") or "")).upper().strip()
+    sector = str(info.get("sector") or "")
+    industry = str(info.get("industry") or "")
+    g = _peer_get(info, "revenue_growth", "revenueGrowth")
+    mc = _peer_get(info, "market_cap", "marketCap")
+    om = _peer_get(info, "operating_margin", "operatingMargins")
+    pmar = _peer_get(info, "profit_margin", "profitMargins")
+    margin = _num(om)
+    if margin is None:
+        margin = _num(pmar)
+    return {
+        "growth_band": growth_band(g, classifier_config),
+        "size_band": size_band(mc, classifier_config),
+        "margin_band": margin_band(margin, config),
+        "profitability_stage": profitability_stage(margin, config),
+        "revenue_cyclicality": revenue_cyclicality(tk, sector, industry),
+    }
+
+
+def _dims_compatible(a: dict, b: dict) -> bool:
+    """True when ALL five numeric dims are band-equal and neither side is unknown.
+
+    Band equality is the v1 pattern; an ``unknown`` on either side fails that dim
+    (we never match on absence). ``revenue_cyclicality`` is always decidable."""
+    for k in PEER_NUMERIC_DIMS:
+        av, bv = a.get(k), b.get(k)
+        if av in (None, "unknown") or bv in (None, "unknown") or av != bv:
+            return False
+    return True
+
+
+def basket_membership() -> dict:
+    """``{TICKER: frozenset(basket_keys)}`` from the curated theme_baskets (read-only).
+
+    Lazy + fail-closed: ``theme_baskets`` pulls yfinance / streamlit at import, so it
+    is imported HERE (not at module top) to keep ``valuation_router`` cheap to import
+    for standalone tests. On any failure returns ``{}`` (matching degrades to
+    override-only tags). Single source of truth — the SAME membership the rotation
+    pipeline uses; no second classification."""
+    try:  # pragma: no cover - exercised via the real page path
+        from lib.theme_baskets import THEME_BASKETS
+    except Exception:  # noqa: BLE001 - fail-closed
+        return {}
+    out: dict = {}
+    for key, cfg in THEME_BASKETS.items():
+        for tk in (cfg.get("constituents") or []):
+            out.setdefault(str(tk).upper().strip(), set()).add(key)
+    return {k: frozenset(v) for k, v in out.items()}
+
+
+def peer_tags_for(ticker: str, *, membership: Optional[dict] = None,
+                  profiles: dict = PEER_PROFILES) -> frozenset:
+    """All taxonomy tags for ``ticker`` = basket memberships ∪ override tags.
+
+    ``membership`` (``{TICKER: frozenset}``) is injectable for determinism tests;
+    defaults to the live :func:`basket_membership`. Override tags are the union of
+    the ``business_model`` and ``theme_exposure`` sets in ``profiles``."""
+    tk = (ticker or "").upper().strip()
+    mem = membership if membership is not None else basket_membership()
+    tags: set = set(mem.get(tk, frozenset()))
+    prof = profiles.get(tk) or {}
+    for grp in ("business_model", "theme_exposure"):
+        for tag in (prof.get(grp) or ()):  # type: ignore[union-attr]
+            tags.add(str(tag))
+    return frozenset(tags)
+
+
+@dataclass
+class PeerProfileMatch:
+    """Result of v2.5 multi-dimensional peer matching with honest match quality.
+
+    ``peer_match_quality``: ``high`` (>= MIN_QUALIFIED_PEERS qualified), ``low``
+    (fewer — the relative anchor should be EXCLUDED, NOT padded), or ``""`` (not
+    assessed — no candidates supplied). ``reason`` is
+    :data:`REASON_INSUFFICIENT_PEERS` when low. ``multiples`` is the median of each
+    requested field OVER THE QUALIFIED SET (``None`` per field when low / no usable
+    value) — never a sector-fallback median."""
+
+    qualified_peers: list = field(default_factory=list)   # qualifying candidate dicts
+    peer_match_quality: str = PEER_MATCH_NOT_ASSESSED
+    reason: str = ""
+    matched_count: int = 0
+    multiples: dict = field(default_factory=dict)          # {field: median|None}
+    target_dims: dict = field(default_factory=dict)        # audit
+    target_tags: list = field(default_factory=list)        # audit (sorted)
+
+
+def assess_peer_match(
+    target: dict,
+    candidates: list,
+    *,
+    multiple_fields: tuple = ("priceToSalesTrailing12Months", "enterpriseToEbitda"),
+    min_peers: int = MIN_QUALIFIED_PEERS,
+    membership: Optional[dict] = None,
+    profiles: dict = PEER_PROFILES,
+    config: dict = PEER_DIM_CONFIG,
+    classifier_config: dict = CLASSIFIER_CONFIG,
+) -> PeerProfileMatch:
+    """Multi-dimensional peer match + honest ``peer_match_quality`` (pure, v2.5).
+
+    A candidate QUALIFIES when it (1) is numerically compatible — shares ALL five
+    :data:`PEER_NUMERIC_DIMS` bands — AND (2) shares >= 1 taxonomy tag (theme basket
+    OR ``peer_profiles`` override) with the target. The target itself is excluded by
+    ticker. When ``len(qualified) >= min_peers`` -> ``high`` and the median of each
+    ``multiple_fields`` over the qualified set is reported; otherwise -> ``low`` +
+    :data:`REASON_INSUFFICIENT_PEERS` and the multiples are ``None`` (NO raw-sector
+    padding — the v1 fallback is deliberately not taken). Returns ``""`` quality when
+    there are no candidates at all (matching was not assessed).
+
+    ``candidates`` are the already-fetched Equity-page peer ``info`` dicts — NO new
+    network. ``membership`` / ``profiles`` / ``config`` are injectable for
+    determinism tests (fixed inputs -> fixed match)."""
+    tgt_ticker = str(target.get("ticker") or "").upper().strip()
+    tgt_dims = numeric_dims(target, ticker=tgt_ticker, config=config,
+                            classifier_config=classifier_config)
+    mem = membership if membership is not None else basket_membership()
+    tgt_tags = peer_tags_for(tgt_ticker, membership=mem, profiles=profiles)
+
+    if not candidates:
+        return PeerProfileMatch(
+            peer_match_quality=PEER_MATCH_NOT_ASSESSED,
+            target_dims=tgt_dims, target_tags=sorted(tgt_tags))
+
+    qualified: list = []
+    for p in candidates:
+        if not isinstance(p, dict):
+            continue
+        p_ticker = str(p.get("ticker") or "").upper().strip()
+        if p_ticker and tgt_ticker and p_ticker == tgt_ticker:
+            continue
+        p_dims = numeric_dims(p, ticker=p_ticker, config=config,
+                              classifier_config=classifier_config)
+        if not _dims_compatible(tgt_dims, p_dims):
+            continue
+        p_tags = peer_tags_for(p_ticker, membership=mem, profiles=profiles)
+        if not (tgt_tags and p_tags and (tgt_tags & p_tags)):
+            continue
+        qualified.append(p)
+
+    matched_count = len(qualified)
+    if matched_count >= min_peers:
+        quality, reason = PEER_MATCH_HIGH, ""
+        multiples = {f: _median(_finite_multiples(qualified, f)) for f in multiple_fields}
+    else:
+        quality, reason = PEER_MATCH_LOW, REASON_INSUFFICIENT_PEERS
+        multiples = {f: None for f in multiple_fields}
+
+    return PeerProfileMatch(
+        qualified_peers=qualified,
+        peer_match_quality=quality,
+        reason=reason,
+        matched_count=matched_count,
+        multiples={f: (round(v, 4) if isinstance(v, (int, float)) else None)
+                   for f, v in multiples.items()},
+        target_dims=tgt_dims,
+        target_tags=sorted(tgt_tags),
+    )
+
+
+def _finite_multiples(peers: list, field_name: str) -> list:
+    """Positive finite values of ``field_name`` across ``peers`` (camel/snake)."""
+    out: list = []
+    for p in peers:
+        v = _peer_get(p, field_name)
+        try:
+            vf = float(v)
+        except (TypeError, ValueError):
+            continue
+        if vf == vf and vf > 0:
+            out.append(vf)
+    return out

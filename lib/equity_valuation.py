@@ -213,11 +213,25 @@ CAVEAT_IMPLAUSIBLE_GROWTH_INPUT = "implausible_growth_input"
 # median STILL enters the blend (robust to outliers) — this token gates CONFIDENCE
 # only (capped at low), it does NOT exclude the anchor.
 CAVEAT_ANALYST_POOL_DISPERSED = "analyst_pool_dispersed"
+# Anchor Intelligence v2.5: the peer set qualified < MIN_QUALIFIED_PEERS under the
+# multi-dimensional matcher (numeric dims ∩ theme-basket/override tags), so the
+# peer-multiple anchors (EV/S, EV/EBITDA) were EXCLUDED rather than computed from
+# non-comparable companies. A peer multiple from ill-fitting peers is worse than no
+# peer anchor — the relative anchor is dropped, never padded with raw GICS peers.
+CAVEAT_PEER_MATCH_UNRELIABLE = "peer_match_unreliable"
+# Per-anchor exclusion flag mirroring lib.valuation_router.REASON_INSUFFICIENT_PEERS
+# (kept as a literal here to avoid importing the router at module load; the two MUST
+# stay equal — a router test asserts the token round-trips through excluded_anchors).
+REASON_INSUFFICIENT_PEERS = "insufficient_comparable_peers"
 VALUATION_CAVEATS: tuple = (
     CAVEAT_CYCLICAL_BAND_UNAVAILABLE, CAVEAT_SINGLE_ANCHOR_BLEND,
     CAVEAT_IMPLAUSIBLE_FORWARD_EPS, CAVEAT_ANCHOR_IMPLAUSIBLE_VS_PRICE,
     CAVEAT_IMPLAUSIBLE_GROWTH_INPUT, CAVEAT_ANALYST_POOL_DISPERSED,
+    CAVEAT_PEER_MATCH_UNRELIABLE,
 )
+# The peer-multiple anchors gated by peer_match_quality (Matrix B). relative_pe uses
+# a static sector-median-P/E map (not the matched peers) and is NOT gated here.
+PEER_MULTIPLE_ANCHOR_KEYS: frozenset = frozenset({"ev_s", "ev_ebitda"})
 
 # Anchor Intelligence v2 (U2) — pool-dispersion confidence gate. The structured
 # analyst pool carries the sell-side target distribution (median/mean/high/low/n).
@@ -341,6 +355,15 @@ class AppFairValue:
     ev_ebitda_value: Optional[float] = None
     pb_ps_value: Optional[float] = None
     peer_basis: str = ""
+    # --- Multi-dimensional peer match quality (Anchor Intelligence v2.5) ----
+    # peer_match_quality: "high" (>= MIN_QUALIFIED_PEERS comparable peers qualified
+    # under numeric dims ∩ theme-basket/override tags), "low" (fewer — the
+    # peer-multiple anchors EV/S+EV/EBITDA were EXCLUDED, not padded), or "" (not
+    # assessed: no peer set supplied, e.g. the network-free ranking / Trading-Desk
+    # path — behavior is byte-identical to v2.4). peer_match_reason carries
+    # "insufficient_comparable_peers" when low. The diagnosis card reads both.
+    peer_match_quality: str = ""
+    peer_match_reason: str = ""
     backlog_note: str = ""
     # caveats: real degradation tokens (see VALUATION_CAVEATS) — e.g.
     # "cyclical_band_unavailable" (history band could not be built) or
@@ -450,6 +473,8 @@ def build_app_fair_value(
     pb_ps_value: Optional[float] = None,
     pb_ps_basis: str = "",
     peer_basis: str = "",
+    peer_match_quality: str = "",
+    peer_match_reason: str = "",
     backlog_note: str = "",
     caveats: Optional[list] = None,
     sanity_exclude: Optional[set] = None,
@@ -535,6 +560,16 @@ def build_app_fair_value(
     if _pool_dispersed and CAVEAT_ANALYST_POOL_DISPERSED not in _caveats:
         _caveats.append(CAVEAT_ANALYST_POOL_DISPERSED)
     _sanity_keys = set(sanity_exclude or [])
+    # Anchor Intelligence v2.5 — peer-match degrade. When the multi-dimensional
+    # matcher qualified < MIN_QUALIFIED_PEERS comparable peers (peer_match_quality
+    # == "low"), the peer-multiple anchors (EV/S, EV/EBITDA — Matrix B) are EXCLUDED
+    # from the blend rather than computed from non-comparable companies. They are
+    # still COMPUTED and SHOWN (excluded_anchors, flag insufficient_comparable_peers)
+    # for transparency; only their INCLUSION changes. relative_pe is NOT gated (it
+    # uses the static sector-median-P/E map, not the matched peers). peers=None ->
+    # quality "" -> this block is inert -> byte-identical to v2.4.
+    _peer_low = (str(peer_match_quality or "") == "low")
+    _peer_excluded: list = []
     _price_mult = DATA_SANITY_CONFIG["anchor_max_x_price"]
     sanity_excluded: list = []
     eff_blend_keys: list = []
@@ -546,6 +581,13 @@ def build_app_fair_value(
         if k in _sanity_keys:
             sanity_excluded.append({"name": name, "value": round(v, 2),
                                     "basis": basis, "flag": "implausible"})
+            continue
+        if _peer_low and k in PEER_MULTIPLE_ANCHOR_KEYS:
+            _peer_excluded.append({"name": name, "value": round(v, 2),
+                                   "basis": basis,
+                                   "flag": REASON_INSUFFICIENT_PEERS})
+            if CAVEAT_PEER_MATCH_UNRELIABLE not in _caveats:
+                _caveats.append(CAVEAT_PEER_MATCH_UNRELIABLE)
             continue
         # X4 rule 2 (HIGH-SIDE ONLY — see DATA_SANITY_CONFIG): an anchor blown up
         # far ABOVE the market price is a unit/data defect; drop + caveat. Low-side
@@ -589,6 +631,9 @@ def build_app_fair_value(
                                  "basis": basis, "flag": flag})
     # Data-sanity exclusions (X4) appended after the menu's structural exclusions.
     excluded_anchors.extend(sanity_excluded)
+    # Peer-match degrade exclusions (v2.5) — the peer-multiple anchors dropped
+    # because the qualified peer set was too small. Shown for transparency.
+    excluded_anchors.extend(_peer_excluded)
 
     # A routing tag is shown only for a non-default routed type (the default
     # mature path keeps the legacy methodology wording byte-for-byte).
@@ -620,6 +665,8 @@ def build_app_fair_value(
         ev_ebitda_value=(round(ev_ebitda, 2) if ev_ebitda is not None else None),
         pb_ps_value=(round(pb_ps, 2) if pb_ps is not None else None),
         peer_basis=peer_basis,
+        peer_match_quality=peer_match_quality,
+        peer_match_reason=peer_match_reason,
         backlog_note=backlog_note,
         caveats=_caveats,
         analyst_pool=_pool_out,
@@ -1327,7 +1374,7 @@ def _assemble_fair_value(ticker: str, current_price: float,
     caveat. The dispersion gate still runs LAST inside :func:`build_app_fair_value`.
     """
     from lib.valuation_router import (
-        classify_company, select_method_menu, match_growth_profile_peers,
+        classify_company, select_method_menu, assess_peer_match,
     )
 
     # --- DCF (unchanged) ---------------------------------------------------
@@ -1429,27 +1476,42 @@ def _assemble_fair_value(ticker: str, current_price: float,
     needs_ev_ebitda = "ev_ebitda" in menu.get("blend", [])
     needs_pb_ps = "pb_ps_band" in menu.get("blend", [])
 
-    # Growth-matched peer multiples (Task 3) come from already-fetched peer info
-    # dicts. No new per-ticker network — peers is None on the cached path.
+    # Multi-dimensional peer multiples (Anchor Intel v2.5) come from already-fetched
+    # peer info dicts. No new per-ticker network — peers is None on the cached /
+    # ranking path, so the matcher is NOT invoked there (quality stays "" and the
+    # band is byte-identical to v2.4). When peers ARE supplied (Equity page), one
+    # assess_peer_match call yields BOTH the qualified-set medians AND an honest
+    # peer_match_quality: "high" -> the medians drive EV/S + EV/EBITDA; "low" ->
+    # the medians are withheld (None) and build_app_fair_value EXCLUDES those
+    # anchors rather than padding with raw GICS peers.
     peer_ps = None
     peer_ev_ebitda = None
+    peer_match_quality = ""
+    peer_match_reason = ""
     if peers and (needs_ev_s or needs_ev_ebitda):
         target_profile = {
             "ticker": ticker, "sector": raw.get("sector"),
+            "industry": raw.get("industry"),
             "revenue_growth": rev_growth_sane,  # X4 rule 3: sanitized for matching
             "market_cap": raw.get("market_cap"),
+            "operating_margin": raw.get("operating_margin"),
+            "profit_margin": raw.get("profit_margin"),
         }
+        _fields = []
         if needs_ev_s:
-            pm = match_growth_profile_peers(
-                target_profile, peers,
-                multiple_field="priceToSalesTrailing12Months")
-            peer_ps = pm.median_multiple
-            peer_basis = pm.peer_basis
+            _fields.append("priceToSalesTrailing12Months")
         if needs_ev_ebitda:
-            pm = match_growth_profile_peers(
-                target_profile, peers, multiple_field="enterpriseToEbitda")
-            peer_ev_ebitda = pm.median_multiple
-            peer_basis = pm.peer_basis
+            _fields.append("enterpriseToEbitda")
+        pm = assess_peer_match(target_profile, peers, multiple_fields=tuple(_fields))
+        peer_match_quality = pm.peer_match_quality
+        peer_match_reason = pm.reason
+        if pm.peer_match_quality == "high":
+            peer_ps = pm.multiples.get("priceToSalesTrailing12Months")
+            peer_ev_ebitda = pm.multiples.get("enterpriseToEbitda")
+            peer_basis = "growth_matched"
+        # "low" -> peer_ps / peer_ev_ebitda stay None; the EV anchors are still
+        # COMPUTED below (sector basis, shown) but EXCLUDED from the blend by
+        # build_app_fair_value via peer_match_quality. Not padded.
 
     if needs_ev_s:
         r40 = None
@@ -1526,6 +1588,8 @@ def _assemble_fair_value(ticker: str, current_price: float,
         pb_ps_value=pb_ps_value,
         pb_ps_basis=pb_ps_basis,
         peer_basis=peer_basis,
+        peer_match_quality=peer_match_quality,
+        peer_match_reason=peer_match_reason,
         backlog_note=backlog_note,
         caveats=caveats + sanity_caveats,
         sanity_exclude=sanity_exclude,
@@ -1533,30 +1597,59 @@ def _assemble_fair_value(ticker: str, current_price: float,
     )
 
 
+def _peers_signature(peers: Optional[list]) -> str:
+    """Deterministic, order-independent signature of a peer set (Anchor Intel v2.5).
+
+    Returns the SORTED, deduplicated peer ticker list joined by commas, or ``""``
+    when ``peers`` is None/empty or carries no usable tickers. This is the cache-key
+    discriminator that keeps the peer-bearing (Equity) and peer-less (Trading Desk /
+    ranking / refresh / fixtures) computations in SEPARATE cache entries — see B1 in
+    ``docs/reliability_anchor_intel_v2.md`` "Round v2.5". The peer-set *identity* (its
+    ticker set) is what determines ``peer_match_quality`` AND the matched-peer EV
+    multiples; each ticker's ``info`` is itself session-cached/stable, so the ticker
+    set is the right granularity (the full field values are neither needed nor stable
+    enough to key on). Sorted → order-independent; ``None`` vs ``[…]`` → distinct keys.
+    """
+    if not peers:
+        return ""
+    tks = sorted({str(p.get("ticker") or "").upper().strip()
+                  for p in peers if isinstance(p, dict) and p.get("ticker")})
+    return ",".join(t for t in tks if t)
+
+
 def _compute_cached(ticker: str, current_price: float,
-                    dcf_override: Optional[float] = None, *,
+                    dcf_override: Optional[float] = None,
+                    peer_sig: str = "", *,
                     _peers: Optional[list] = None,
                     _cyclical_history_fetcher=None) -> AppFairValue:
     """THE single cached fair-value producer (fail-closed). Wrapped by ``st.cache_data``.
 
     **Anchor Intel v2 r2 (F1 — true single cached producer):** both page call
     sites — ``pages/4_Equity.py`` AND ``order_advisor._gather_technicals`` (the
-    Trading-Desk page path) — reach the band through THIS one function, so the
-    Equity page and the Trading Desk share ONE cache entry, ONE
-    :class:`AppFairValue` instance and ONE ``computed_at`` epoch per
-    ``(ticker, current_price, dcf_override)``.
+    Trading-Desk page path) — reach the band through THIS one function.
 
     ``dcf_override`` (per-share, > 0) replaces the internal Gordon-growth DCF —
     used by the Equity page "Update Valuation" action to feed a user-adjusted DCF
     intrinsic value from the Financials tab.
 
-    ``_peers`` and ``_cyclical_history_fetcher`` are **underscore-prefixed on
-    purpose**: ``st.cache_data`` excludes leading-underscore parameters from the
-    hash key, so the cache key stays ``(ticker, current_price, dcf_override)``
-    even though both page call sites now pass the cyclical band fetcher.
-    **First-writer-wins:** whichever page computes a given key first populates the
-    shared entry, and because BOTH page call sites pass the fetcher that entry is
-    always band-capable; the other surface then reads the identical instance.
+    **Anchor Intel v2.5 (B1 — peer signature in the cache key):** ``peer_sig`` is a
+    deterministic, order-independent signature of the peer SET
+    (:func:`_peers_signature`) and is a NON-underscore parameter ON PURPOSE — so
+    ``st.cache_data`` INCLUDES it in the hash key, which becomes
+    ``(ticker, current_price, dcf_override, peer_sig)``. Peer matching affects BOTH
+    the inclusion AND the numeric value of the EV anchors (the qualified-set median
+    multiples drive ``_compute_ev_s`` / ``_compute_ev_ebitda``), so the peer-bearing
+    (Equity, ``peer_sig != ""``) and peer-less (Trading Desk / ranking / refresh /
+    fixtures, ``peer_sig == ""``) computations MUST cache separately — otherwise the
+    cached result would be first-writer-dependent (the review B1 defect; the same
+    class as the round-1 epoch-mixing bug). The actual ``_peers`` LIST stays
+    underscore-prefixed (excluded from the key) because the list object itself is not
+    hashable/stable — ``peer_sig`` is its stable key proxy.
+
+    ``_cyclical_history_fetcher`` is underscore-prefixed (excluded): both page call
+    sites pass it, so the band-capability of a shared entry never diverges
+    (first-writer-wins is safe for it — unlike peers, which Trading Desk legitimately
+    omits, hence the explicit key discriminator).
     """
     raw = _fetch_raw(ticker)
     return _assemble_fair_value(
@@ -1570,19 +1663,24 @@ def compute_app_fair_value(ticker: str, current_price: float, *,
                            cyclical_history_fetcher=None) -> AppFairValue:
     """Compute the :class:`AppFairValue` for ``ticker`` (yfinance only; fail-closed).
 
-    Cached TTL=3600 keyed on ``(ticker, current_price, dcf_override)``. When
-    ``dcf_override`` (a per-share intrinsic value, > 0) is supplied it replaces the
-    internal DCF (e.g. a user-adjusted DCF from the Financials tab).
+    Cached TTL=3600 keyed on ``(ticker, current_price, dcf_override, peer_sig)``,
+    where ``peer_sig`` is the order-independent peer-set signature
+    (:func:`_peers_signature`). When ``dcf_override`` (a per-share intrinsic value,
+    > 0) is supplied it replaces the internal DCF (e.g. a user-adjusted DCF from the
+    Financials tab).
 
-    **Anchor Intel v2 r2 (F1):** ALL calls now flow through the single cached
-    worker :func:`_compute_cached`. ``peers`` (already-fetched peer ``info`` dicts
-    from the Equity page peer table) and ``cyclical_history_fetcher`` (the page-path
-    PB/PS-band fetcher) are forwarded as the worker's underscore-prefixed
-    parameters, so they are EXCLUDED from the cache key — the Equity page and the
-    Trading-Desk page path therefore share one cache entry / one instance / one
-    epoch per ticker (first-writer-wins; both page sites pass the fetcher, so the
-    shared entry is always band-capable). The ranking / Cockpit refresh paths do
-    NOT call this function — they consume ``lib.anchor_cache`` and so stay
+    **Anchor Intel v2 r2 (F1) + v2.5 (B1):** ALL calls flow through the single cached
+    worker :func:`_compute_cached`. ``cyclical_history_fetcher`` is forwarded
+    underscore-prefixed (EXCLUDED from the key — both page sites pass it, so the
+    shared entry is always band-capable; first-writer-wins is safe for it). ``peers``
+    is also forwarded underscore-prefixed (the list is not a stable hash input), BUT
+    its **order-independent signature** ``peer_sig`` IS in the key — because peer
+    matching affects both the inclusion AND the numeric value of the EV anchors, the
+    peer-bearing Equity path (``peer_sig != ""``) and the peer-less Trading-Desk /
+    ranking / refresh / fixture paths (``peer_sig == ""``) cache SEPARATELY and never
+    cross-contaminate REGARDLESS of call order (the v2.5 B1 fix; the peer-less path
+    stays v2.4-byte-identical by construction). The ranking / Cockpit refresh paths
+    do NOT call this function — they consume ``lib.anchor_cache`` and stay
     network-free. On ANY failure a well-formed ``data_source="fixture"`` result
     anchored on ``current_price`` is returned — this function never raises.
     """
@@ -1597,7 +1695,7 @@ def compute_app_fair_value(ticker: str, current_price: float, *,
             ov = None
     try:
         fv = _compute_cached(
-            t, round(cp, 4), ov, _peers=peers,
+            t, round(cp, 4), ov, _peers_signature(peers), _peers=peers,
             _cyclical_history_fetcher=cyclical_history_fetcher)
     except Exception:  # noqa: BLE001 — fully fail-closed
         return build_app_fair_value(

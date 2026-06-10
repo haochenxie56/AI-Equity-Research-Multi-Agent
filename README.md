@@ -113,9 +113,10 @@
 
 本项目把个人项目按生产标准开发：**每个阶段 = 实现（Claude Code）→ 独立审查（Codex）→ 修复 → 单点复审 → 关闭**，全部审查记录沉淀于 `docs/`。
 
-- **78 个可靠性测试套件、数千条断言**（`scripts/test_reliability_*.py`）：机会排序、估值止血、估值分型路由、轮动与内部结构、交易台、入场策略、Cockpit 重建、渲染顺序、主题篮子、估值锚历史 / 历史回填、**估值诊断卡**等
+- **79 个可靠性测试套件、数千条断言**（`scripts/test_reliability_*.py`）：机会排序、估值止血、估值分型路由、轮动与内部结构、交易台、入场策略、Cockpit 重建、渲染顺序、主题篮子、估值锚历史 / 历史回填、**估值诊断卡**、**多维同业画像 / `peer_match_quality` 诚实降级**等
 - **决策层 canonical sweep（v2.3 收口 @ `84daa4a` 全绿）**：entry_v4 92 · 7A 115 · 7B 193 · 估值路由 104 · 估值止血 65 · Cockpit 重建 47 · 锚历史 60 · 历史回填 60 · 主题篮子 146 · 交易台 118 · 三周期评分 189 · 渲染顺序 50
 - **v2.4（已关闭 / `--no-ff` 合并 main，approved @ `18dfcf2`；含 REQUEST CHANGES 修复轮）新增 / 更新**：估值诊断卡 50（新）· 锚历史 77（分片）· 历史回填 61 · entry_v4 92；full `test_reliability_*` sweep **GREEN=65 / RED=13**（13 红为既有正交项，与本轮无关）
+- **v2.5（已关闭 / `--no-ff` 合并 main，approved @ `6f9c1ec`；v2 系列收官；含 B1 修复轮）新增 / 更新**：多维同业画像 `peer_match` 49（新，含 SNOW→高质量云同业、KTOS→低质量降级的真实路径验收 + **B1 缓存顺序无关性**双向测试）· 估值诊断卡 50→54；同业不足时显式降级（排除 EV/S+EV/EBITDA 同业倍数锚，绝不用原始 GICS 凑数），`peers=None` 时与 v2.4 逐字节一致；**B1 修复：同业集签名进入缓存键**（同业匹配同时影响 EV 锚的取舍与数值 → 同业版/无同业版分别缓存，消除首写者依赖，与轮回-1 epoch 混淆同类）；full `test_reliability_*` sweep **GREEN=66 / RED=13**（13 红为既有正交项，与本轮无关）
 - **不变量测试**：tighten-only（脆弱度强制 high 时 regime 对象逐字节不变）、宏观镜头永不改主题排名、排序路径零网络调用（结构化断言）、历史回填零网络 / 零归档写入（冷排序 DoD）、分析师锚在历史日期绝不杜撰
 - **Parity 测试**：驱动真实刷新函数，断言两个页面的渲染 token 与同次刷新写出的快照 `_meta` 完全一致，并以负向对照证明分歧必然被捕获
 - **校准回填工具**：`scripts/calibrate_fragility_backfill.py` 重算过去 30 交易日逐日脆弱度组件表（四道质量门），供阈值校准与盘感对照
@@ -249,7 +250,7 @@ investment-agents/
 │   ├── rotation.py                 # GICS 外环：轮动评分 + 攻守读数
 │   ├── theme_baskets.py            # AI 主题内环：超额动量/背离矩阵/广度
 │   ├── equity_valuation.py         # 多锚估值融合 + 分型方法菜单 + 锚一致性门控
-│   ├── valuation_router.py         # 公司分型分类器 + 方法菜单 + 增长画像同业匹配
+│   ├── valuation_router.py         # 公司分型分类器 + 方法菜单 + 多维同业画像匹配（数值维 ∩ 主题篮子/覆盖标签 + peer_match_quality 诚实降级）
 │   ├── valuation_anchor.py         # FairValueAnchor（forward 口径；已退役保留兼容）
 │   ├── anchor_cache.py             # 估值锚本地缓存（版本守卫/原子写）
 │   ├── anchor_archive.py           # 只追加估值锚历史（生产者 chokepoint / 按 ticker 分片 / 原子追加）
@@ -262,7 +263,7 @@ investment-agents/
 │   └── reliability/                # 可靠性基础设施（适配器层）
 │
 ├── scripts/
-│   ├── test_reliability_*.py       # 77 个可靠性测试套件（数千条断言）
+│   ├── test_reliability_*.py       # 79 个可靠性测试套件（数千条断言）
 │   ├── calibrate_fragility_backfill.py  # 30 日脆弱度校准回填工具
 │   ├── backfill_anchors.py         # 估值锚历史离线回填 CLI（可重算锚 + 披露滞后门控）
 │   ├── migrate_anchor_archive_to_shards.py  # 一次性离线：单文件归档 → 按 ticker 分片
@@ -295,7 +296,7 @@ investment-agents/
 | 脆弱度小项批次 + 杂务 | ✅ | 脆弱度 banner + 量缩（vol_shrink）组件（B1/B2/B3）+ 校准回填工具扩展；杂务：Development Discipline 文档 + `scripts/diag/` 忽略（approved @ b5c128a） |
 | Anchor Intelligence v2 | ✅ | **Round 1**：生产者统一 + 结构化分析师锚池 + epoch 戳（approved @ 9e53f04）。**v2.3**：只追加估值锚历史（U1）+ 单 vintage 快照锚区块（U2）+ 确定性迁移读出 + thesis 锚迁移 watch（U3，主体 approved @ 9f6c37e）+ **历史回填**（可重算锚 / 分析师绝不杜撰 / 披露滞后前视防护 / 同日接缝守卫，approved @ c57e56e，merged @ 84daa4a） |
 | Anchor Intelligence v2.4 | ✅ | **估值诊断卡**（公司分型 · 适用/已排除方法及原因 · 锚一致性聚合/离群 · 认可区间 · 确定性 `valuation_role` 映射 → 7A 三时间维度接口 · 价格越界/锚池下移等可证伪机械条件；反向 DCF 与叙事催化为 Phase-8 占位）渲染于个股研究 + 交易台；**F4 估值锚归档按 ticker 分片**（`data/anchor_archive/<TICKER>.jsonl`，读取 O(全量)→O(单票)，一次性离线迁移脚本）。纯确定性、零新增锚计算、任何路径零联网；50 项诊断断言，full sweep GREEN=65/RED=13；**复审通过，approved @ `18dfcf2`，已 `--no-ff` 合并 main** |
-| Anchor Intelligence v2.5 | 计划 | 多维同业画像 + `peer_match_quality` 诚实兜底（同业不足时显式降级，不假装可比） |
+| Anchor Intelligence v2.5（v2 系列收官） | ✅ | **多维同业画像**：在 v1 的行业 × 增长带 × 规模带上新增利润率/盈利阶段/收入周期性数值维（确定性，复用已抓取的 `info`）；**同业候选 = 数值维 ∩ 主题篮子成分（与轮动同一份策展名单，单一事实来源）∪ 人工复核的 `peer_profiles` 覆盖标签**（最小种子仅 KTOS——篮子未覆盖的国防科技角落；MSCI/Syntax/Morningstar 等付费黑箱分类已评估并拒绝）。**`peer_match_quality` 诚实降级**：合格同业 < 4 时置 `low` + `insufficient_comparable_peers`，**绝不用原始 GICS 凑数**，并将 EV/S+EV/EBITDA 同业倍数锚**排除**出融合（`relative_pe` 行业图谱锚不受影响）——非可比同业算出的倍数比没有同业锚更糟。诊断卡呈现同业质量。`peers=None`（排序/刷新/交易台）→ 不评估 → 与 v2.4 逐字节一致。SNOW→高质量云同业、KTOS→低质量降级至仅分析师锚的真实路径验收；`peer_match` 49 新套件、诊断卡 50→54、full sweep GREEN=66/RED=13。**B1 修复轮**：`_peers` 曾被排除出 `compute_app_fair_value` 缓存键，却决定 `peer_match_quality` 与 EV 锚取舍 → 首写者依赖（与轮回-1 epoch 混淆同类）；因同业匹配同时影响 EV 锚的取舍与**数值**，故采用 Option A——同业集签名 `peer_sig` 进入缓存键，同业版/无同业版分别缓存、调用顺序无关，无同业路径与 v2.4 逐字节一致（§10 双向测试，判别性已验证）。**复审通过，approved @ `6f9c1ec`，已 `--no-ff` 合并 main；本轮收官 Anchor Intelligence v2 系列** |
 | Thesis Ingestion MVP | 计划 | 人选稿、机器结构化：访谈/研报 → 带可证伪条件的 thesis 卡片 |
 | Phase 7C / 7D | 计划 | 主题受益层级与跨层比较 → 反馈环（推荐质量复盘） |
 | Phase 8 — Evidence Infrastructure | 计划 | 证据包 + 反向 DCF + 对抗式估值辩论 + 宏观 LLM 事件/归因 + IPO/流动性日历；首个「章节 agent」在此验证 |
