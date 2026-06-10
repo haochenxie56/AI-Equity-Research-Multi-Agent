@@ -5,6 +5,43 @@
 > history preserved verbatim). This file keeps only the active phase. The
 > long-form running status remains in `docs/ai_dev_state/PROJECT_STATE.md`.
 
+## Anchor Intelligence v2.5 — Multi-Dimensional Peer Profile + Honest `peer_match_quality` (IMPLEMENTED — awaiting review; FINAL v2 round, closes the v2 series)
+
+Branch `phase-anchor-intel-v2-5` off `main` @ `ef8cb28`. Access-path-first (STEP 0
+matrix committed at `8521f15` BEFORE any code). **Deterministic, no runtime LLM;
+numeric-dim reads reuse already-fetched page data — zero new fan-out; the
+network-free ranking/refresh path is structurally untouched.** Phase doc
+`docs/reliability_anchor_intel_v2.md` ("Round v2.5"). Paid taxonomies (MSCI / Syntax /
+Morningstar) evaluated + REJECTED (black-box/paid — documented, not to be revisited).
+
+- **A — numeric dims** (`lib/valuation_router.py`, `PEER_DIM_CONFIG`): add
+  `margin_band` / `profitability_stage` / `revenue_cyclicality` to v1's sector ×
+  growth × size, all from already-fetched `info`. `numeric_dims()` +
+  `_dims_compatible()` (band equality on all five; `unknown` never matches).
+- **B — basket tags (single source of truth):** `basket_membership()` reads
+  `theme_baskets` constituents read-only — the peer taxonomy shares ONE curated list
+  with rotation (no second classification).
+- **C — override** `PEER_PROFILES` (human-reviewed). Data-driven MINIMAL seed =
+  **KTOS only** (in no basket); SNOW covered by its basket + numeric dims (verified).
+- **D — honest degrade:** `assess_peer_match()` qualifies on numeric-compat AND a
+  shared basket/override tag; `≥ MIN_QUALIFIED_PEERS (4)` → `high`; fewer → `low` +
+  `insufficient_comparable_peers`, NO raw-GICS padding. `build_app_fair_value`
+  EXCLUDES EV/S+EV/EBITDA on `low` (flag + `peer_match_unreliable` caveat) — still
+  shown; `relative_pe` NOT gated. `AppFairValue` gains `peer_match_quality` /
+  `peer_match_reason`; the diagnosis card SOURCES + renders them. **EXCLUDE, never a
+  down-weight knob** (confirmed). `peers=None` → quality `""` → byte-identical to v2.4.
+- **Acceptance (real peer path):** SNOW → `high` (cloud peers, not all software);
+  KTOS → `low` → EV/EBITDA excluded (discriminating) → analyst-only $30.
+- **Tests.** New `test_reliability_anchor_peer_match.py` **44/44**;
+  `valuation_diagnosis` **50 → 54**. Canonical sweep GREEN (entry_v4 92,
+  trading_desk 126, 6c_b 47, 7A 115, 7B 193, router 117, stopbleed 65, render_order
+  50, archive 77, backfill 61, valuation_diagnosis 54, peer_match 44). Full
+  `test_reliability_*` **GREEN=66 / RED=13** (13 pre-existing orthogonal reds).
+  `macro_regime.py` untouched; i18n additive; `git diff --check` clean.
+- **Commits:** `8521f15` (STEP 0), `e93164e` (lib matcher + blend), `1466630` (card +
+  suite). **Not pushed — awaiting review APPROVE before merge to `main` (`--no-ff`).**
+  With v2.5 the Anchor Intelligence v2 series is COMPLETE.
+
 ## Anchor Intelligence v2.4 — Valuation Diagnosis Card + F4 Archive Sharding (CLOSED — APPROVED @ 18dfcf2, merged to main)
 
 Branch `phase-anchor-intel-v2-4` off `990ed90`. Access-path-first (STEP 0 matrices

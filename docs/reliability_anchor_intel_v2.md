@@ -27,8 +27,11 @@ the G1 filing-lag look-ahead defence and the G2 same-date seam guard; suite
 `scripts/test_reliability_anchor_backfill.py` **60/60** — was reviewed and
 **APPROVED at `c57e56e`** and merged now. **Round v2.4 is now CLOSED** (valuation
 diagnosis card + F4 archive sharding; APPROVED at `18dfcf2`, merged into `main` via a
-`--no-ff` merge commit). **Round v2.5 remains pending** (future scope, not started —
-to be specified when it opens).
+`--no-ff` merge commit). **Round v2.5 — multi-dimensional peer profile + honest
+`peer_match_quality` degrade — is the FINAL v2 round; implemented on branch
+`phase-anchor-intel-v2-5` (off `main` @ `ef8cb28`), new suite
+`scripts/test_reliability_anchor_peer_match.py` 44/44, canonical sweep green,
+awaiting review.** See "Round v2.5" below. With v2.5 the v2 series is complete.
 
 ## Goal
 
@@ -898,4 +901,72 @@ low quality only WEAKENS reliance on the relative anchor, never fabricates confi
   is unchanged (stopbleed/6c_b canaries — they pass no peers).
 - `macro_regime.py` frozen; i18n additive bilingual; LF clean.
 
-*(Implementation + results appended below as the round proceeds.)*
+### Implementation (delivered)
+
+- **`lib/valuation_router.py`** — the v2.5 matcher (v1's `match_growth_profile_peers`
+  kept byte-stable for its direct tests):
+  - Visible `PEER_DIM_CONFIG` + `margin_band` / `profitability_stage` /
+    `revenue_cyclicality` (the last reuses the classifier's cyclical signals so the
+    dim never diverges) + `numeric_dims()` (reads already-fetched info only) +
+    `_dims_compatible()` (band equality on all five dims; `unknown` never matches).
+  - `basket_membership()` reads `theme_baskets.THEME_BASKETS` constituents read-only
+    (lazy, fail-closed import) → `{TICKER: frozenset(baskets)}`; `peer_tags_for()` =
+    basket tags ∪ `PEER_PROFILES` override tags. **One curated membership list shared
+    with rotation** (verified: `MU ∈ hbm_memory`, `SNOW ∈ data_infrastructure`).
+  - `PEER_PROFILES` minimal seed = **`KTOS` only** (in no basket; tagged
+    `defense_tech` / `unmanned_systems` / `defense_space`). SNOW needs no override —
+    its `data_infrastructure` basket + numeric dims already yield cloud peers
+    (verified offline).
+  - `assess_peer_match()` (pure, injectable membership/profiles): qualifies a
+    candidate on numeric-compat **AND** a shared basket/override tag; `≥
+    MIN_QUALIFIED_PEERS (4)` → `high` + medians over the qualified set; fewer → `low`
+    + `insufficient_comparable_peers`, multiples `None` (**no raw-GICS padding**); no
+    candidates → `""` (not assessed).
+- **`lib/equity_valuation.py`** — `CAVEAT_PEER_MATCH_UNRELIABLE` (registered) +
+  `PEER_MULTIPLE_ANCHOR_KEYS = {ev_s, ev_ebitda}` + local
+  `REASON_INSUFFICIENT_PEERS` (mirrors the router token). `AppFairValue` gains
+  `peer_match_quality` / `peer_match_reason`. `build_app_fair_value` EXCLUDES the
+  peer-multiple anchors when quality is `low` (flag `insufficient_comparable_peers`,
+  moved to `excluded_anchors`, caveat) — still computed + shown, only inclusion
+  changes; `relative_pe` untouched. `_assemble_fair_value` calls `assess_peer_match`
+  ONCE when `peers` is supplied (high → medians drive EV anchors; low → withheld →
+  excluded downstream); `peers=None` → the matcher is never invoked → byte-identical.
+- **`lib/valuation_diagnosis.py` + `ui_utils.py`** — the card SOURCES
+  `peer_match_quality` / `peer_match_reason` (never recomputed) and renders a
+  bilingual peer-match line (low → ⚠️ + reason; high → confirmation; `""` → nothing).
+  Additive `valdiag_peer_match*` keys in both `TRANSLATIONS` blocks; the
+  rejected-method reason map gains `insufficient_comparable_peers`. No diagnosis
+  field enters any snapshot (render-time only — parity by explicit exclusion).
+
+### Results (CLOSED — v2.5 closes the v2 series)
+
+- **New suite** `scripts/test_reliability_anchor_peer_match.py` — **44/44**: numeric
+  dims (§1); basket single-source + override + minimal-seed assertion (§2);
+  `assess_peer_match` qualification / `≥N` high / `<N` low + **no padding** /
+  not-assessed / self-exclusion (§3); override-creates-a-tag-peer (§4); **REAL
+  Equity-page peer path** via `_assemble_fair_value(peers=…)` + a
+  `compute_app_fair_value` plumbing proof — **SNOW → high** (qualified ⊆ cloud
+  basket, CRM/all-software excluded, EV/S blended) and **KTOS → low** (EV/EBITDA
+  excluded with the peer flag — *discriminating*, fails if the exclusion is reverted
+  — → analyst-only $30, reconcilable) (§5); **byte-stable** `peers=None` path (§6);
+  determinism + order-invariance (§7); token/config integrity (§8); card
+  bind-or-exclude parity (§9).
+- **`scripts/test_reliability_valuation_diagnosis.py`** grew **50 → 54** (peer-match
+  i18n guard + bind/exclude parity §10).
+- **Canonical sweep GREEN:** entry_v4 92 · trading_desk 126 · cockpit_rebuild 47 ·
+  7A 115 · 7B 193 · router 117 · stopbleed 65 · render_order 50 · archive 77 ·
+  backfill 61 · valuation_diagnosis 54 · **peer_match 44**. Full
+  `test_reliability_*` sweep **GREEN=66 / RED=13** — the 13 are the documented
+  pre-existing orthogonal reds (5e–5s UI/AppTest planning, agent_evaluation,
+  6b_signal_layer); GREEN rose 65 → 66 from the new suite. None of this round's
+  files are in the red set.
+- `lib/macro_regime.py` untouched; i18n additive bilingual (`valdiag_peer_match*`);
+  `git diff --check` clean (no EOL churn — all touched files `i/lf`).
+- **Paid-taxonomy rejection** (MSCI Thematic / Syntax FIS / Morningstar) recorded
+  above so it is not revisited.
+
+> **v2.5 closes the Anchor Intelligence v2 series.** Round 1 = single producer +
+> structured analyst pool + epoch; v2.3 = append-only historical archive + migration
+> readout; backfill = recomputable history seed; v2.4 = valuation diagnosis card +
+> per-ticker archive sharding; **v2.5 = multi-dimensional peer profile + honest
+> `peer_match_quality` degrade.**

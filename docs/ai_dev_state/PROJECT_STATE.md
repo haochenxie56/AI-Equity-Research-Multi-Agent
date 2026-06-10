@@ -1,11 +1,68 @@
 # AI Investment Agent — Project State
 
-**Last updated**: 2026-06-09 (**Anchor Intelligence v2.4 — CLOSED (APPROVED @
-`18dfcf2`, merged to `main` via `--no-ff`)**: valuation diagnosis card +
-F4 archive sharding — see the v2.4 section immediately below. The v2.3 section
-(fully CLOSED — historization + backfill) follows, then Round 1, Valuation Refactor
-v1, Phase 7B, Valuation Stop-the-Bleed, and Phase 7A. Prior status blob preserved
-verbatim afterward.)
+**Last updated**: 2026-06-09 (**Anchor Intelligence v2.5 — multi-dimensional peer
+profile + honest `peer_match_quality` degrade — implemented, awaiting review** on
+branch `phase-anchor-intel-v2-5` (off `main` @ `ef8cb28`). **v2.5 is the FINAL v2
+round — it closes the Anchor Intelligence v2 series.** See the v2.5 section
+immediately below; v2.4 (CLOSED, APPROVED @ `18dfcf2`) follows, then v2.3, Round 1,
+Valuation Refactor v1, Phase 7B, Valuation Stop-the-Bleed, and Phase 7A. Prior
+status blob preserved verbatim afterward.)
+
+## Anchor Intelligence v2.5 — Multi-Dimensional Peer Profile + Honest `peer_match_quality` — IMPLEMENTED (awaiting review); CLOSES the v2 series
+
+v2.5 fixes the documented v1 peer mis-match (v1 falls back to a raw GICS/sector peer
+set when growth/size matches < 4, peering SNOW to all "Software—Application" and KTOS
+to traditional defense primes). **Access-path-first (STEP 0 matrix committed at
+`8521f15` BEFORE any code). Deterministic, no runtime LLM; numeric-dim reads reuse
+already-fetched page data — zero new fan-out; the network-free ranking/refresh path
+is structurally untouched.** Phase doc `docs/reliability_anchor_intel_v2.md` ("Round
+v2.5"). Paid taxonomies (MSCI Thematic / Syntax FIS / Morningstar) were evaluated and
+REJECTED (black-box, paid — conflicts with the deterministic/auditable/free-API
+principle) and the rejection is documented so it is not revisited.
+
+- **A — numeric dims** (`lib/valuation_router.py`, visible `PEER_DIM_CONFIG`): extend
+  v1's sector × growth × size with `margin_band` / `profitability_stage` /
+  `revenue_cyclicality` (the last reuses the classifier's cyclical signals), all from
+  already-fetched `info`. `numeric_dims()` + `_dims_compatible()` (band equality on
+  all five; `unknown` never matches).
+- **B — basket tags, single source of truth.** `basket_membership()` reads
+  `theme_baskets.THEME_BASKETS` constituents read-only → a ticker's tags = the baskets
+  it belongs to. The peer taxonomy and the rotation pipeline now share ONE curated
+  membership list (no second classification; eliminates "rotation says
+  MU∈hbm_memory but valuation peers MU to all semis").
+- **C — manual override** (`PEER_PROFILES`, human-reviewed; `CYCLICAL_TICKER_OVERRIDES`
+  pattern). DATA-DRIVEN MINIMAL seed = **`KTOS` only** (in no basket; tagged
+  defense-tech). SNOW needs no override (its `data_infrastructure` basket + numeric
+  dims already yield cloud peers — verified offline).
+- **D — honest degrade.** `assess_peer_match()` qualifies a candidate on
+  numeric-compat AND a shared basket/override tag; `≥ MIN_QUALIFIED_PEERS (4)` →
+  `peer_match_quality="high"` (medians drive EV/S+EV/EBITDA); fewer → `low` +
+  `insufficient_comparable_peers`, **NO raw-GICS padding**. `build_app_fair_value`
+  EXCLUDES the peer-multiple anchors (EV/S, EV/EBITDA) on `low` (flag
+  `insufficient_comparable_peers`, caveat `peer_match_unreliable`) — still computed +
+  shown, only inclusion changes; `relative_pe` (sector-map P/E) is NOT gated.
+  `AppFairValue` gains `peer_match_quality` / `peer_match_reason`; the diagnosis card
+  SOURCES + renders them bilingually (low → ⚠️; `""` not-assessed → nothing).
+  **Decision (confirmed):** EXCLUDE (never a down-weight knob — the system's
+  exclude+flag discipline; a weight factor is an invent-a-number hazard).
+- **Network-free guarantee:** the matcher is invoked ONLY when `peers` is supplied
+  (Equity page); `peers=None` (Trading Desk, ranking, refresh, every fixture not
+  passing peers) → quality `""` → blend byte-identical to v2.4.
+- **Acceptance (real Equity-page peer path):** SNOW → `high` (qualified ⊆ cloud
+  basket; all-software CRM excluded; EV/S blended); KTOS → `low` → EV/EBITDA excluded
+  (discriminating) → analyst-only $30 (reconcilable — its correct shape).
+- **Tests.** New `scripts/test_reliability_anchor_peer_match.py` **44/44** (numeric
+  dims, basket single-source, override, qualification/threshold/no-padding/
+  determinism/order-invariance, REAL `_assemble_fair_value(peers=…)` path +
+  `compute_app_fair_value` plumbing proof, byte-stable `peers=None`, token integrity,
+  card bind-or-exclude). `valuation_diagnosis` **50 → 54**. Canonical sweep GREEN
+  (entry_v4 92, trading_desk 126, 6c_b 47, 7A 115, 7B 193, router 117, stopbleed 65,
+  render_order 50, archive 77, backfill 61, valuation_diagnosis 54, peer_match 44).
+  Full `test_reliability_*` **GREEN=66 / RED=13** (13 pre-existing orthogonal reds
+  unchanged). `macro_regime.py` untouched; i18n additive; `git diff --check` clean.
+- **Commits** (branch `phase-anchor-intel-v2-5`, off `ef8cb28`): `8521f15` (STEP 0
+  matrix), `e93164e` (lib matcher + blend exclusion), `1466630` (card surface +
+  suite). **Not pushed — awaiting review APPROVE before merge to `main` (`--no-ff`).**
 
 ## Anchor Intelligence v2.4 — Valuation Diagnosis Card + F4 Archive Sharding — CLOSED (APPROVED @ 18dfcf2, merged to main)
 
