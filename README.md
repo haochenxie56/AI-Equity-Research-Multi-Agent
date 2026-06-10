@@ -35,6 +35,7 @@
 | **信号轨 / 审计轨分离** | 滚动重算（缓存行情的纯函数）回答「市场做了什么」并驱动迟滞；每日快照记录「系统当天说了什么」专司复盘审计 |
 | **Parity 验证纪律** | 测试驱动真实刷新路径，断言 UI 渲染与快照 `_meta` 逐字段一致；快照每个字段要么绑定 UI surface 要么显式排除并注明理由 |
 | **降级词汇表** | 每条数据不可用都有具体原因（`finnhub_unavailable` / `no_reports_in_window` / `partial_frame_coverage` / `implausible_count`…），监控组件永不静默消失 |
+| **排除而非降权 / Exclude not down-weight** | 锚不可信时整条排除并打标（`excluded_anchors` + caveat），绝不引入连续降权旋钮；同业不足→排除 EV/S+EV/EBITDA，绝不用原始 GICS 凑数 |
 | **绝不编造数字 / Never fabricate a number** | LLM 永不发明估值、技术指标、评分或市场数据；历史回填只重算「可计算锚」，分析师锚在历史日期绝不杜撰（`record_origin` + 分析师哨兵区分 live / backfill 行） |
 | **前视防护 / Filing-lag look-ahead defence** | 历史锚重算按披露滞后门控（`FILING_LAG_DAYS`：年报 75 天 / 季报 45 天，`period_end + lag ≤ as-of` 方可使用），宁可用更晚的数据，绝不读尚未公开的财报 |
 | **访问路径矩阵优先 / Access-path-matrix-first** | 统一一个生产者是「访问路径」问题，而非物理合并——先画 caller-contract 矩阵（页面=需区间+可联网；排序=零网络；刷新=不污染缓存）再动手 |
@@ -68,7 +69,7 @@
 - 🧊 **市场内部结构脆弱度层** — 派发日计数（IBD 式）、利好遭抛（财报 beat 次日遭抛）、广度水平与斜率、弱反弹、攻守轮动读数 → 复合等级「正常 / 警戒 / 警报」，交易日历迟滞防单日尖峰；30 天回填校准中，警报领先 2026-06 初回撤约两周
 - 🔄 **多窗口相对强弱** — 5D/10D/1M/3M/6M/12M 超额收益（vs SPY/QQQ，日期索引对齐），短/中/长周期各取所需窗口
 - ⚓ **公司分型估值 + 多锚融合** — 按公司类型路由方法菜单（成熟盈利 / 成长盈利 / 成长未盈利 / 项目型 / 周期型，各取 DCF · EV/S · EV/EBITDA · PB/PS 区间）；forward 口径相对锚 + 结构化分析师锚池（`{median, mean, high, low, n}` + 离散度门控）+ DCF；锚分歧 >3x 拒绝融合并诚实输出「估值锚不一致」而非假中值；数据合理性守卫剔除异常年度并标记；锚缓存使 Cockpit 长线状态可分化
-- 🗂️ **只追加估值锚历史** — 每个页面路径的 live 锚在单一生产者 chokepoint 落盘（`data/anchor_archive.jsonl`）；迁移读出按 30 交易日窗口刻画各序列方向 / 速度与跨序列一致性，thesis monitor 据此给出锚迁移 watch（只注释、永不自动卖出或改 thesis 状态）；离线回填以可重算锚 + 披露滞后门控为历史序列播种（分析师锚绝不杜撰）
+- 🗂️ **只追加估值锚历史** — 每个页面路径的 live 锚在单一生产者 chokepoint 按 ticker 分片、只追加落盘（`data/anchor_archive/<TICKER>.jsonl`，读取成本 O(单票)）；迁移读出按 30 交易日窗口刻画各序列方向 / 速度与跨序列一致性，thesis monitor 据此给出锚迁移 watch（只注释、永不自动卖出或改 thesis 状态）；离线回填以可重算锚 + 披露滞后门控为历史序列播种（分析师锚绝不杜撰）
 - 📒 **每日快照** — 全量候选 + 宏观/脆弱度 `_meta` + 单 vintage 锚区块 原子落盘（JSONL），审计轨 + 未来反馈环的数据地基
 - 🌐 **中英双语** / 🌙 **深色浅色主题** / ⚡ **Parquet 本地缓存** / 📄 **Markdown 报告导出**
 
