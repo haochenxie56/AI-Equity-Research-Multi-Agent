@@ -741,11 +741,161 @@ guard.
   additive (`valdiag_no_clear_outlier`); `git diff --check` clean (no EOL churn this
   round — `ui_utils.py` already LF).
 
-## Pending — round v2.5
+## Round v2.5 — multi-dimensional peer profile + honest `peer_match_quality` (FINAL v2 round)
 
-Not started. Scope to be specified when the round opens (multi-dimensional peer
-profile + honest `peer_match_quality` fallback). Round 1 establishes the
-single-producer / structured-pool / epoch foundation; v2.3 adds the append-only
-historical series + migration readout; the backfill round seeds that series with
-recomputable history; v2.4 adds the valuation diagnosis card + per-ticker archive
-sharding.
+> **Round-1 lesson applied first (STEP 0 before any code).** Peer matching is an
+> *access-path* problem, not a feature-bolt-on. Who already holds the per-ticker
+> `info`/financials the numeric dims need, and does reading them on a surface trigger
+> a fetch (it must not on any network-free path)? Where is peer matching INVOKED, and
+> does the new logic add fan-out (it must not)? How does the relative (peer-multiple)
+> anchor CONSUME the new `peer_match_quality` signal? The matrix below is committed
+> BEFORE the code.
+
+### The problem this closes
+
+v1's peer matcher (`lib/valuation_router.match_growth_profile_peers`) is sector ×
+growth-band × size-band, **falling back to a raw GICS/sector peer set when matches
+< 4** (`peer_basis="sector_fallback"`). This mismatches reality: SNOW's peers should
+be cloud-data-platform / high-growth consumption-software, not all
+"Software—Application"; KTOS should compare to defense-tech / unmanned-systems, not
+traditional defense primes. A peer multiple computed from non-comparable companies
+is **worse than no peer anchor**, so the honest answer for KTOS-class names is to
+*exclude* the peer-multiple anchor — not to pad to N with ill-fitting GICS peers.
+
+### Paid-taxonomy rejection (documented so it is NOT revisited)
+
+Paid sector/thematic taxonomies were evaluated and **REJECTED**:
+
+| taxonomy | why rejected |
+|---|---|
+| MSCI Thematic | institutional licensing cost; classification scores are an unauditable black box |
+| Syntax FIS (functional information system) | paid licence; proprietary, non-inspectable mapping |
+| Morningstar sector/style | paid; black-box style scores conflict with deterministic/auditable principle |
+
+All three conflict with the project's **deterministic, auditable, free-API**
+principle — an LLM/3rd-party black box that "scores" peer similarity cannot be
+evidence-backed or reproduced. v2.5 instead unifies on TWO already-owned, auditable
+sources: the **deterministic numeric dims** (computed from already-fetched `info`)
+and the **curated `theme_baskets` membership** (a human-curated, version-controlled
+list), plus a small human-reviewed `peer_profiles` override for the corners baskets
+miss. No new data source, no paid API, no runtime LLM.
+
+### STEP 0 — caller-contract matrix (audited against the real call sites)
+
+#### Matrix A — what the peer matcher READS, where it is INVOKED, network
+
+Every site that reaches peer matching was audited. No caller left unclassified.
+The numeric dims and the candidate `info` dicts are **already fetched** by the
+Equity-page peer table — the matcher reads them, it does **not** fetch.
+
+| caller (verified file:line) | reads from | live compute / fetch? | peer_match_quality assessed? |
+|---|---|---|---|
+| `pages/4_Equity.py:280-285` builds `peer_infos` (one `load_info` per peer, ALREADY fetched for the peer table) → `:667-669` / `:891-895` `compute_app_fair_value(..., peers=peer_infos)` | the peer-table `info` dicts (sector, industry, revenueGrowth, marketCap, P/S, EV/EBITDA, grossMargins, operatingMargins, profitMargins) + `theme_baskets` membership + `peer_profiles` config | the peer `info` was already fetched for the table; the matcher adds **ZERO** new per-ticker network | **YES** — `peers` supplied |
+| `lib/equity_valuation._assemble_fair_value:1436-1452` — the existing `match_growth_profile_peers` call site (one per multiple field) | `peers` arg + target `raw` (already in hand) | none — pure over args | YES iff `peers` is non-empty |
+| `pages/9_Trading_Desk.py` → `order_advisor._gather_technicals:1429` → `compute_app_fair_value(ticker, cp, cyclical_history_fetcher=…)` — **NO `peers` arg** | no peer set on this path | live `_fetch_raw` (gated `allow_fetch=True`), but **no peer fetch** | **NO** — `peers=None`; quality `""` (not assessed); card shows n/a |
+| `lib/opportunity_ranker.rank_opportunities` → `compute_price_levels(allow_fetch=False)` → `_gather_technicals` (no `peers`, no live compute) | `anchor_cache` hot cache only | **FORBIDDEN** (network-free) | **NO** — never reaches the matcher; byte-stable |
+
+**Derived invariant (THE network-free guarantee):** `peer_match_quality` is assessed
+**only when `peers` is supplied**, which is **only** the Equity page. `peers=None`
+(Trading Desk, ranking, refresh, every existing fixture that does not pass peers) →
+quality `""` → **no anchor exclusion, behavior byte-identical to v2.4**. This is why
+the ranking/refresh path is structurally untouched and the stopbleed/6c_b canaries
+(which do not pass peers) stay byte-stable.
+
+#### Matrix B — how the relative (peer-multiple) anchor CONSUMES `peer_match_quality`
+
+| anchor (menu key) | derived from the matched peer set? | gated by `peer_match_quality`? |
+|---|---|---|
+| `ev_s` (`_compute_ev_s`, consumes `peer_ps`) | **YES** — median P/S over matched peers | **YES** — excluded on `low` |
+| `ev_ebitda` (`_compute_ev_ebitda`, consumes `peer_ev_ebitda`) | **YES** — median EV/EBITDA over matched peers | **YES** — excluded on `low` |
+| `relative_pe` (`get_sector_median_pe(sector) × EPS`) | **NO** — a static sector-median-P/E map, not the matched peers | **NO** — governed by its own `peer_pe_basis` flag (independent mechanism). Gating it on peer-match quality is a category error (low peer match does not make the sector map wrong) |
+| `dcf` / `analyst` / `pb_ps_band` | NO | NO |
+
+So a `low` `peer_match_quality` excludes **only** `ev_s` + `ev_ebitda` — the anchors
+that literally consume the matched peer set. KTOS (`project_driven`, menu already
+excludes `relative_pe`+`dcf`) then falls to **analyst-only**, which is its
+reconcilable, correct valuation shape.
+
+### Design decisions (recorded — confirmed with the user)
+
+1. **EXCLUDE, never a continuous down-weight.** The v1/v2 system handles
+   untrustworthy anchors by *exclude + flag*, never a tunable weight knob — a
+   down-weight factor has no principled value and is an "invent-a-number" hazard.
+   "Worse than no peer anchor" literally means *no peer anchor* (exclude). Reuse the
+   existing `excluded_anchors` + caveat machinery; reason token
+   `insufficient_comparable_peers`.
+2. **Gate `ev_s`+`ev_ebitda` ONLY** (Matrix B) — surgical, not guilt-by-association.
+3. **Data-driven, minimal `peer_profiles` seed.** Do NOT hand-write tags for the
+   whole universe (redundant where numeric-dims ∩ baskets already work; 40 tags is
+   too many to review carefully). First run matching on pure numeric-dims ∩ baskets,
+   observe which tickers fall to `peer_match_quality=low`, and seed `peer_profiles`
+   ONLY for those that (a) genuinely degrade AND (b) have an identifiable real
+   sub-peer set baskets miss (KTOS defense-tech, SNOW cloud-data-platform are the
+   known cases). Tickers that fall low with NO good peer set correctly STAY low
+   (honest degrade — the right answer, not a gap to patch). Every entry is
+   human-reviewed before it lands (same pattern as `CYCLICAL_TICKER_OVERRIDES`).
+
+### A — numeric peer dimensions (deterministic; extend v1's 3 dims)
+
+Adds to v1's sector × growth-band × size-band three new dims, all computed
+deterministically from the already-fetched `info` (single visible config block
+`PEER_DIM_CONFIG` for the bands/thresholds):
+
+- **margin_band** — from `operatingMargins` (fallback `profitMargins`): `high` ≥ 0.25,
+  `mid` ≥ 0.10, `low` ≥ 0.0, `negative` < 0.0, `unknown` when absent.
+- **profitability_stage** — `profitable` (margin ≥ floor), `transitional`
+  (near-zero ≤ margin < floor), `unprofitable` (margin < near-zero), `unknown`.
+- **revenue_cyclicality** — `cyclical` when the target/candidate classifies cyclical
+  (reuse `CYCLICAL_SECTORS` / `CYCLICAL_INDUSTRY_HINTS` / `CYCLICAL_TICKER_OVERRIDES`),
+  else `non_cyclical`. (No new fan-out — derived from `sector`/`industry`/ticker.)
+
+A candidate is **numerically compatible** when it shares the target's `growth_band`,
+`size_band`, `margin_band`, `profitability_stage`, and `revenue_cyclicality` (band
+equality, the v1 pattern; `unknown` on either side fails that dim). Borderline
+handling consistent with v1 (a dim that is `unknown` does not match).
+
+### B — theme-basket-derived tags (free, auditable, single source of truth)
+
+A ticker's **theme tags = the `theme_baskets` it belongs to** (read-only of
+`THEME_BASKETS[*].constituents`; no change to rotation behavior). The peer candidate
+set = **(numeric-dim compatible) ∩ (shares ≥1 basket OR ≥1 override tag)**. This
+unifies the peer taxonomy with the rotation pipeline — one curated membership list,
+no second divergent classification (eliminates the "rotation says MU∈hbm_memory but
+valuation peers MU to all semis" inconsistency).
+
+### C — manual override layer (`peer_profiles` config)
+
+A visible `PEER_PROFILES` config: `ticker → {business_model, theme_exposure}` tag
+sets, for corners baskets don't cover (KTOS defense-tech). The override tags
+participate in the tag-intersection exactly like basket tags. Deterministic input —
+matching reads it, never invents tags at runtime. LLM MAY draft entries; every entry
+human-reviewed before landing (the `CYCLICAL_TICKER_OVERRIDES` pattern). Seed is
+data-driven + minimal (decision #3).
+
+### D — honest `peer_match_quality` degrade (the CORE principle)
+
+After numeric ∩ (basket ∪ override) matching, if the qualified peer set < `N`
+(`MIN_QUALIFIED_PEERS = 4`): `peer_match_quality="low"` + reason
+`insufficient_comparable_peers` — and **DO NOT pad with raw GICS peers to hit N**
+(the v1 `sector_fallback` is NOT taken when `peers` are supplied for the new path).
+Downstream, a `low` quality **EXCLUDES** `ev_s`+`ev_ebitda` from the blend (flagged
+`insufficient_comparable_peers`, moved to `excluded_anchors`, caveat
+`peer_match_unreliable`) — the values are still COMPUTED and shown for transparency,
+just not blended. ≥ N → `peer_match_quality="high"`, the matched-peer median
+multiples drive the EV anchors as before. `peers=None` → quality `""` (not assessed,
+v2.4 behavior). Surfaced on the diagnosis card (`peer_match_quality` +
+`peer_match_reason` are new `AppFairValue` fields the card reads). Tighten-only kin:
+low quality only WEAKENS reliance on the relative anchor, never fabricates confidence.
+
+### Invariants
+
+- Deterministic, no runtime LLM. Peer selection + match-quality are pure Python;
+  the LLM only drafts the offline `peer_profiles` config (human-reviewed).
+- Network-free ranking/refresh preserved; numeric-dim reads reuse already-fetched
+  page data; the matcher adds zero fan-out.
+- The relative anchor's existing math is unchanged; only its INCLUSION changes via
+  `peer_match_quality`. Default/existing-fixture behavior byte-stable where peer data
+  is unchanged (stopbleed/6c_b canaries — they pass no peers).
+- `macro_regime.py` frozen; i18n additive bilingual; LF clean.
+
+*(Implementation + results appended below as the round proceeds.)*
