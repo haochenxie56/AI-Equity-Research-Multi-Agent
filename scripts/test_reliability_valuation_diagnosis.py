@@ -405,6 +405,9 @@ _needed += [f"valdiag_consistency_{s}" for s in
 _needed += [f"valdiag_cond_{c}" for c in
             (vd.COND_PRICE_ABOVE_RANGE, vd.COND_PRICE_BELOW_RANGE,
              vd.COND_ANALYST_POOL_DETERIORATING)]
+# Anchor Intel v2.5 — the peer-match-quality card field's render tokens.
+_needed += ["valdiag_peer_match", "valdiag_peer_match_high", "valdiag_peer_match_low",
+            "valdiag_reason_insufficient_comparable_peers"]
 _missing_zh = [k for k in _needed if k not in _zh]
 _missing_en = [k for k in _needed if k not in _en]
 check("9.1 every diagnosis-card token has a zh translation key",
@@ -415,6 +418,27 @@ check("9.3 render helper + the role-reason flag key it reuses exist",
       hasattr(_ui, "render_valuation_diagnosis_card")
       and "cockpit_fv_flag_cycle_distorted" in _zh
       and "cockpit_fv_flag_cycle_distorted" in _en)
+
+
+# ===========================================================================
+# 10. Anchor Intel v2.5 — peer_match_quality card field (bind-or-exclude parity)
+# ===========================================================================
+# A "low" AppFairValue stand-in -> the diagnosis SOURCES the field (not recomputed);
+# the render binds it; and it is EXCLUDED from the snapshot (render-time only).
+_pm_fv = _fv(peer_match_quality="low", peer_match_reason="insufficient_comparable_peers")
+_pm_diag = vd.build_valuation_diagnosis(_pm_fv)
+check("10.1 diagnosis sources peer_match_quality + reason from AppFairValue (no recompute)",
+      _pm_diag.peer_match_quality == "low"
+      and _pm_diag.peer_match_reason == "insufficient_comparable_peers")
+check("10.2 not-assessed fv ('') -> diagnosis carries '' (network-free / no peers)",
+      vd.build_valuation_diagnosis(_fv()).peer_match_quality == "")
+_ui_src = open(os.path.join(_REPO_ROOT, "ui_utils.py"), encoding="utf-8").read()
+check("10.3 render BINDS the peer_match field (both high + low branches)",
+      "peer_match_quality" in _ui_src
+      and "valdiag_peer_match_low" in _ui_src and "valdiag_peer_match_high" in _ui_src)
+check("10.4 peer_match is EXCLUDED from the snapshot anchor-block keys (parity)",
+      "peer_match" not in " ".join(orr.ANCHOR_SNAPSHOT_KEYS).lower(),
+      detail=str(orr.ANCHOR_SNAPSHOT_KEYS))
 
 
 # ===========================================================================

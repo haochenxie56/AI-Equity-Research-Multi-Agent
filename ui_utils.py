@@ -1274,6 +1274,10 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "valdiag_outlier":              "离群锚",
         "valdiag_no_clear_outlier":     "无明确离群锚",
         "valdiag_clustered":            "聚合锚",
+        "valdiag_peer_match":           "对标质量",
+        "valdiag_peer_match_high":      "可比对标充分",
+        "valdiag_peer_match_low":       "可比对标不足 — 已排除对标倍数锚",
+        "valdiag_reason_insufficient_comparable_peers": "可比对标不足",
         "valdiag_endorsed_range":       "认可区间",
         "valdiag_range_irreconcilable": "区间暂不给出（各锚分歧过大，分别列示）",
         "valdiag_range_unavailable":    "区间不可用",
@@ -2734,6 +2738,10 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "valdiag_outlier":              "Outlier",
         "valdiag_no_clear_outlier":     "no clear outlier",
         "valdiag_clustered":            "Clustered",
+        "valdiag_peer_match":           "Peer match",
+        "valdiag_peer_match_high":      "comparable peers sufficient",
+        "valdiag_peer_match_low":       "insufficient comparable peers — peer multiple excluded",
+        "valdiag_reason_insufficient_comparable_peers": "insufficient comparable peers",
         "valdiag_endorsed_range":       "Endorsed range",
         "valdiag_range_irreconcilable": "Range withheld (anchors disagree — shown separately)",
         "valdiag_range_unavailable":    "Range unavailable",
@@ -4032,6 +4040,12 @@ def render_valuation_diagnosis_card(diag) -> None:
         elif _outlier:
             _ac_line += f"  ·  {t('valdiag_outlier')}: {_outlier.upper()}"
         st.caption(_ac_line)
+        # ── Peer match quality (v2.5) — only when assessed (peers supplied) ──────
+        _pmq = str(getattr(diag, "peer_match_quality", "") or "")
+        if _pmq == "low":
+            st.caption(f"⚠️ {t('valdiag_peer_match')}: {t('valdiag_peer_match_low')}")
+        elif _pmq == "high":
+            st.caption(f"{t('valdiag_peer_match')}: {t('valdiag_peer_match_high')}")
         # ── What would change this (mechanical, falsifiable) ────────────────────
         _mech = list(getattr(getattr(diag, "what_would_change", None), "mechanical", []) or [])
         if _mech:
@@ -4056,6 +4070,8 @@ def render_valuation_diagnosis_card(diag) -> None:
                     "cycle_distorted": t("cockpit_fv_flag_cycle_distorted"),
                     "dcf_unavailable": t("valdiag_reason_dcf_unavailable"),
                     "excluded_anchor": t("valdiag_reason_excluded_anchor"),
+                    "insufficient_comparable_peers":
+                        t("valdiag_reason_insufficient_comparable_peers"),
                 }.get(_reason, _reason or t("valdiag_reason_excluded_anchor"))
                 _detail = getattr(_r, "detail", "") or ""
                 _val = getattr(_r, "value", None)

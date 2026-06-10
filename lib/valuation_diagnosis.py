@@ -159,6 +159,13 @@ class ValuationDiagnosis:
     confidence: str = "low"
     upside_pct: float = 0.0
     valuation_role: str = VALUATION_ROLE_INFORMATIONAL
+    # Anchor Intelligence v2.5 — multi-dimensional peer match quality. Sourced
+    # (never recomputed) from AppFairValue: "high" / "low" / "" (not assessed, e.g.
+    # the network-free path supplied no peers). On "low" the peer-multiple anchors
+    # were EXCLUDED from the blend (the rejected_methods list shows them with reason
+    # insufficient_comparable_peers) — the card surfaces WHY.
+    peer_match_quality: str = ""
+    peer_match_reason: str = ""
     what_would_change: WhatWouldChange = field(default_factory=WhatWouldChange)
     reverse_dcf: ReverseDCFSlot = field(default_factory=ReverseDCFSlot)
     caveats: list = field(default_factory=list)
@@ -380,6 +387,8 @@ def build_valuation_diagnosis(fv, *, migration: Optional[dict] = None,
         confidence=confidence,
         upside_pct=upside,
         valuation_role=role,
+        peer_match_quality=str(_g(fv, "peer_match_quality", "") or ""),
+        peer_match_reason=str(_g(fv, "peer_match_reason", "") or ""),
         what_would_change=WhatWouldChange(
             mechanical=_mechanical_conditions(endorsed, current_price, migration),
             narrative_catalysts=[], narrative_pending=True),
