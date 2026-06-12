@@ -218,6 +218,29 @@ def _run_refresh() -> None:
         pass
     prog.progress(50, text=t("cockpit_hub_stage_signals"))
 
+    # Item 1 (batch seg 2) — bulk earnings-calendar fetch, HOISTED EARLY (before the
+    # Step-3 Track B per-ticker Finnhub fan-out). On a cold cache the Track B burst
+    # (full universe, 8 workers) would otherwise exhaust Finnhub's free 60 req/min
+    # budget and 429 this single bulk call. Fire it ONCE here and REPLAY the result
+    # (or re-raise the original failure) into compute_market_fragility's
+    # earnings_calendar_fn at Step 4 — exactly one network call per refresh, no second
+    # call site. The Step-4 Round-4 scan-universe reaction computation is unchanged: we
+    # replay the raw calendar REPORTS through earnings_calendar_fn (NOT a precomputed
+    # earnings_reactions list, which would bypass the _reaction_records / earnings_skipped
+    # path). Fail-closed: an early failure never aborts the refresh; the captured error is
+    # re-raised at Step 4 so the degrade path is byte-identical to the old in-line call.
+    from datetime import timedelta as _timedelta
+    _earn_today = datetime.now().strftime("%Y-%m-%d")
+    _earn_from = (datetime.now() - _timedelta(days=20)).strftime("%Y-%m-%d")
+    _earn_reports = None
+    _earn_fetch_exc = None
+    try:
+        from lib.signal_engine import fetch_earnings_reactions_calendar as _earn_cal
+
+        _earn_reports = _earn_cal(_earn_from, _earn_today)
+    except Exception as _earn_exc:  # noqa: BLE001 — fail-closed; re-raised at Step 4
+        _earn_fetch_exc = _earn_exc
+
     # Step 3 — signal candidates (writes cockpit_all_signals + cockpit_triple_signals)
     _candidates = []
     try:
@@ -273,11 +296,9 @@ def _run_refresh() -> None:
         _fragility = None
         _frag_level = "normal"
         try:
-            from datetime import timedelta as _timedelta
             from lib import cache_manager as _cmgr
             from lib import market_internals as _mi
             from lib.opportunity_ranker import SNAPSHOT_DIR as _snap_dir
-            from lib.signal_engine import fetch_earnings_reactions_calendar as _earn_cal
             from ui_utils import load_ohlcv as _load_ohlcv
 
             # Single data vintage (fix round): the fragility frame loader is the
@@ -296,11 +317,18 @@ def _run_refresh() -> None:
             # tickers without a cached frame are skipped+counted (partial coverage).
             _scan_uni = st.session_state.get("cockpit_scan_universe") or _tickers
             _earn_ohlcv = lambda tk: _cmgr.load(tk, "ohlcv_1y_1d")  # noqa: E731
-            # Item 2 — earnings-reaction: ONE bulk Finnhub earnings-calendar call
-            # (skippable/degradable); reaction read from cache-resident frames.
-            _today = datetime.now().strftime("%Y-%m-%d")
-            _from = (datetime.now() - _timedelta(days=20)).strftime("%Y-%m-%d")
-            _earn_cal_fn = lambda: _earn_cal(_from, _today)  # noqa: E731
+            # Item 2 — earnings-reaction: the ONE bulk Finnhub earnings-calendar call
+            # was already fired EARLY (above Step 3, before the Track B fan-out). Reuse
+            # its date window and REPLAY the prefetched reports — no second network call.
+            # If the early fetch raised, re-raise the SAME error here so the bulk-call-
+            # failed branch in compute_market_fragility records the identical degrade
+            # reason as the old in-line call did. Reaction frames are still read cache-only.
+            _today = _earn_today
+            if _earn_fetch_exc is not None:
+                def _earn_cal_fn():
+                    raise _earn_fetch_exc
+            else:
+                _earn_cal_fn = lambda: _earn_reports  # noqa: E731 — replay (no network)
             _fragility = _mi.compute_market_fragility(
                 universe=_tickers, frame_loader=_ohlcv,
                 benchmark_loader=_ohlcv,

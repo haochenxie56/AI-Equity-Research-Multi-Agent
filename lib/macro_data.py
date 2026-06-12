@@ -886,3 +886,100 @@ def fetch_all_macro() -> MacroDataResult:
         timestamp=_now_iso(),
         data_coverage=coverage,
     )
+
+
+# ---------------------------------------------------------------------------
+# Money-market liquidity (FRED) — DISPLAY-ONLY, fetched ON DEMAND.
+#
+# Deliberately SEPARATE from MacroDataResult / fetch_all_macro: this group is
+# rendered only on the Macro Dashboard Liquidity tab and is NEVER written to the
+# daily snapshot _meta by design. classify_regime + write_daily_snapshot consume
+# MacroDataResult, which does NOT include this group; the daily snapshot persists
+# only the regime string + the fragility fields. Mirrors the existing fetch_<group>
+# pattern: a data_source-tagged dataclass, @st.cache_data, fail-closed to a fixture,
+# reusing _fred_observations' own retry/backoff (no new throttling, no new key).
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class LiquidityResult:
+    """Money-market plumbing levels from FRED (display-only):
+
+    * ``sofr``     — SOFR secured overnight financing rate (%).
+    * ``on_rrp``   — overnight reverse-repo volume, RRPONTSYD ($B).
+    * ``tga``      — Treasury General Account balance, WTREGEN ($B).
+    * ``reserves`` — aggregate bank reserves, WRESBAL ($B).
+
+    Carries ``data_source`` ("live"/"fixture") + ``as_of`` like every other macro
+    group. NOT part of :class:`MacroDataResult` — it is fetched on demand from the
+    Macro Dashboard and never persisted to the snapshot _meta.
+    """
+
+    sofr: Optional[float]
+    on_rrp: Optional[float]
+    tga: Optional[float]
+    reserves: Optional[float]
+    data_source: str
+    as_of: Optional[str] = None
+    # Per-series recent history (oldest->newest): {"sofr": [{"date","value"}], ...}.
+    history: dict = field(default_factory=dict)
+
+
+def _liquidity_fixture() -> LiquidityResult:
+    return LiquidityResult(
+        sofr=5.31, on_rrp=420.0, tga=750.0, reserves=3250.0,
+        data_source=_FIXTURE, as_of=None,
+        history={
+            "sofr": _fx_hist([5.33, 5.32, 5.31, 5.31, 5.30, 5.31]),
+            "on_rrp": _fx_hist([520.0, 500.0, 470.0, 450.0, 430.0, 420.0]),
+            "tga": _fx_hist([700.0, 720.0, 740.0, 760.0, 745.0, 750.0]),
+            "reserves": _fx_hist([3400.0, 3350.0, 3300.0, 3280.0, 3260.0, 3250.0]),
+        },
+    )
+
+
+_LIQUIDITY_SERIES = (("sofr", "SOFR"), ("on_rrp", "RRPONTSYD"),
+                     ("tga", "WTREGEN"), ("reserves", "WRESBAL"))
+
+
+@st.cache_data(ttl=_CACHE_TTL, show_spinner=False)
+def fetch_liquidity() -> LiquidityResult:
+    """Fetch money-market liquidity levels from FRED: SOFR (overnight financing
+    rate), ON RRP volume (RRPONTSYD), the Treasury General Account (WTREGEN), and
+    aggregate bank reserves (WRESBAL).
+
+    DISPLAY-ONLY; fetched on demand from the Macro Dashboard Liquidity tab; never
+    written to the snapshot _meta by design (deliberately NOT part of
+    fetch_all_macro() / MacroDataResult, so classify_regime and write_daily_snapshot
+    never consume it). Fail-closed: returns a fixture LiquidityResult if FRED is
+    unavailable. Reuses _fred_observations' own retry/backoff — no new throttling.
+    """
+    try:
+        latest: dict = {}
+        history: dict = {}
+        as_of = None
+        any_live = False
+        for _key, _sid in _LIQUIDITY_SERIES:
+            try:
+                obs = _fred_observations(_sid, limit=140)
+            except Exception:  # noqa: BLE001 — isolate one series' failure
+                obs = []
+            if obs:
+                any_live = True
+                _d, _v = obs[0]
+                latest[_key] = round(_v, 2)
+                if as_of is None or str(_d) > str(as_of):
+                    as_of = _d
+                history[_key] = _history_from_desc(obs, n=6, stride=21, ndigits=2)
+            else:
+                latest[_key] = None
+                history[_key] = []
+        if not any_live:
+            return _liquidity_fixture()
+        return LiquidityResult(
+            sofr=latest["sofr"], on_rrp=latest["on_rrp"],
+            tga=latest["tga"], reserves=latest["reserves"],
+            data_source=_LIVE, as_of=as_of, history=history,
+        )
+    except Exception:  # noqa: BLE001 — fail-closed to fixture
+        return _liquidity_fixture()

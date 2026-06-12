@@ -374,3 +374,41 @@ Page Navigation Cleanup** (e.g. consolidating Financial / PriceVolume entry
 points now that the Cockpit and Macro Dashboard are the product-facing
 surfaces). Phase 5O deliberately does **not** perform that sidebar cleanup;
 Phase 5P has **not** started.
+
+---
+
+## FRED liquidity fetchers — display-only, snapshot-excluded (Batch Segment 2 — ITEM 2, committed direct to `main`, Codex-approved, 2026-06-12)
+
+Adds deterministic FRED money-market liquidity fetchers and surfaces them on the Macro
+Dashboard Liquidity tab. **Display-only; deliberately NOT written to the daily snapshot.**
+Mirrors the existing `lib/macro_data.py` pattern exactly — no new infrastructure, no new
+dependency, no new key.
+
+- **`lib/macro_data.py`** — new `LiquidityResult` dataclass (`sofr` / `on_rrp` / `tga` /
+  `reserves` + `data_source` ("live"/"fixture") / `as_of` / per-series `history`),
+  `_liquidity_fixture()`, and `@st.cache_data(ttl=_CACHE_TTL=900)` `fetch_liquidity()`
+  pulling **SOFR / RRPONTSYD / WTREGEN / WRESBAL** via the existing `_fred_observations`
+  helper (its own 429 retry/backoff; per-series failure isolation; fail-closed to the
+  fixture). Reuses the existing `FRED_API_KEY` (`dotenv` + `os.getenv`) — no new key
+  plumbing, no `fredapi`.
+- **Snapshot / regime isolation (load-bearing).** `fetch_liquidity` is **NOT** part of
+  `fetch_all_macro()` / `MacroDataResult`, so `classify_regime` and `write_daily_snapshot`
+  never consume it (the snapshot `_meta` persists only the regime string + the fragility
+  fields). It is fetched **on demand** from the pages/8 render path only. Source comments
+  at both the fetcher and the render call site record "display-only; fetched on demand;
+  never written to snapshot _meta by design."
+- **`pages/8_Macro_Dashboard.py`** — the existing `_render_live_liquidity` tab now ADDS a
+  money-market-liquidity group (four `_bignum`s + `_render_live_group_header` showing the
+  live/fixture `data_source`); the existing rates content is unchanged. Bilingual labels
+  via `t()` — five new keys (`macro_live_grp_liquidity`, `macro_live_sofr` / `_on_rrp` /
+  `_tga` / `_reserves`) added to BOTH locale tables in `ui_utils.py`.
+- **Tests (`test_reliability_phase_5o_macro_dashboard.py` §L, +9 checks).**
+  **L.1/L.1b/L.2/L.3** fail-closed (forced fetch exception and no-key → a fixture tagged
+  `data_source="fixture"`, never raising, never "live"); **L.4/L.5/L.6/L.7** the
+  SNAPSHOT-EXCLUSION guard (`MacroDataResult` fields disjoint from the liquidity series;
+  `fetch_all_macro` does not call `fetch_liquidity`; `write_daily_snapshot` source carries
+  no liquidity field; a REAL `write_daily_snapshot` `_meta` excludes all liquidity series);
+  **L.8** reuses `_fred_observations` (no `fredapi` / `Fred(`). Discriminating power proven
+  by reverted mutations: tagging the fixture `live` → L.1/L.1b/L.2/L.3 RED; adding a `sofr`
+  field to `MacroDataResult` → L.4 RED. Suite 729→738 passed (the 3 reds are pre-existing
+  `url_pathname` AppTest-harness errors, identical to HEAD).

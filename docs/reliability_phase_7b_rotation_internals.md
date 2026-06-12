@@ -748,3 +748,49 @@ core-principle wording shifted from "数字交给代码，语言交给 LLM" to a
 evidence framing ("数字交给代码，判断在证据约束下可由 LLM 建议"), with the EN tagline and
 the Phase 9 roadmap row (human-in-the-loop **Judgment Console**) updated to match. The
 numeric-firewall and review-only invariants are unchanged.
+
+---
+
+## Bulk earnings-calendar fetch hoisted before the Track B fan-out (Batch Segment 2 — ITEM 1, committed direct to `main`, Codex-approved, 2026-06-12)
+
+A **timing/wiring-only** change to the Cockpit refresh (`pages/7_Investment_Cockpit.py`
+`_run_refresh`). No logic, threshold, or computation change.
+
+**Problem.** The single bulk Finnhub earnings-calendar call
+(`fetch_earnings_reactions_calendar`, uncached, one call per refresh) ran LAST (Step 4,
+inside the fragility block). On a **cold cache** the Step-3 Track B fan-out
+(`generate_candidates → run_track_b`, the FULL scan universe × ~2 per-ticker Finnhub
+calls at 8 workers) exhausted Finnhub's free 60 req/min budget BEFORE the bulk call,
+which then 429'd and degraded to `finnhub_unavailable`.
+
+**Fix.** The bulk call is **hoisted to fire ONCE, before Step 3** (ahead of the Track B
+burst). Its result is **replayed** into `compute_market_fragility` via `earnings_calendar_fn`
+(a closure returning the prefetched raw REPORTS). **Not** via the `earnings_reactions=`
+parameter — that path bypasses the Round-4 scan-universe reaction pipeline
+(`_reaction_records` → `_earnings_components_asof` → `earnings_skipped` /
+`partial_frame_coverage`) and expects `next_session_return` records the raw calendar
+lacks, so it would change the computation. The replay keeps the Step-4 computation
+**byte-for-byte identical** — exactly one network call per refresh, no second call site.
+
+**Degrade preserved.** On an early-fetch failure the captured exception is **re-raised**
+at Step 4, so `compute_market_fragility` records the identical `finnhub_unavailable`
+degrade (`good_news_sold=None`, `earnings_evaluated=0`) as the old in-line call — the
+refresh never crashes (fail-closed). Re-raising the captured exception (rather than a new
+`RuntimeError("finnhub_unavailable")`) also keeps pages/7 free of the lowercase `finnhub`
+vendor token that the 5H/5N source guardrails forbid.
+
+**Ranking path unaffected.** The bulk call is reached **only** from the page/refresh path;
+`lib/opportunity_ranker.py` references none of `fetch_earnings_reactions_calendar` /
+`compute_market_fragility` / `earnings_calendar_fn` (asserted structurally), so the
+zero-network ranking contract is structurally intact.
+
+**Tests (`test_reliability_phase_7b_rotation_internals.py` §20, 211→219).** Drives the
+REAL `_run_refresh` via AppTest with the network mocked, recording call ORDER into one
+list: **20.2** the bulk fetcher fires EXACTLY ONCE; **20.3** it fires BEFORE the Track B
+fan-out; **20.4** the replay still drives the real reaction computation (SCANX evaluated,
+no degrade); **20.5–20.7** an early failure does not crash and degrades to
+`finnhub_unavailable` (evaluated 0); **20.8** structural zero-network guard on the ranking
+path. Discriminating power proven by reverted mutations: a duplicate call →
+`['earnings','earnings','track_b']` (20.2 RED); a deferred/late fetch →
+`['track_b','earnings']` (20.3 + 20.6 RED). signal_engine.py untouched (the order spy
+patches from the test).

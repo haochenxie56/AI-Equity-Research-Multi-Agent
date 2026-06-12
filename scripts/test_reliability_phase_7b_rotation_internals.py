@@ -1966,6 +1966,132 @@ except Exception as _e:  # noqa: BLE001 — AppTest unavailable counts as a fail
 
 
 # ---------------------------------------------------------------------------
+# §20 — Item 1 (batch seg 2): the single bulk earnings-calendar fetch is HOISTED
+# EARLY (before the Track B fan-out) and fires EXACTLY ONCE per refresh. Drives the
+# REAL _run_refresh via AppTest with the network mocked, recording call ORDER into one
+# list ('earnings' per bulk-fetch invocation, 'track_b' when generate_candidates — which
+# CONTAINS run_track_b — is invoked). Order+count are asserted, so the tests are
+# discriminating (a structural grep could not tell early-vs-late or one-vs-two calls).
+# ---------------------------------------------------------------------------
+try:
+    import streamlit as _stp20
+    _stp20.page_link = lambda *a, **k: None
+    from streamlit.testing.v1 import AppTest as _AT20
+    import lib.candidate_generator as _cg20
+
+    def _run_order_capture(earnings_cal_fn):
+        """Drive ONE real refresh; return (order, R). ``order`` records 'earnings' each
+        time the bulk calendar fetcher is invoked and 'track_b' when generate_candidates
+        is invoked — one list captures both COUNT and ORDER across the refresh. The
+        earnings spy wraps ``earnings_cal_fn`` (which may return reports OR raise)."""
+        order: list = []
+
+        def _earn_spy(*a, **k):
+            order.append("earnings")
+            return earnings_cal_fn(*a, **k)
+
+        def _gen_spy(*a, **k):
+            order.append("track_b")               # generate_candidates ⊇ run_track_b
+            _cg20._publish_scan_universe(list(_SCAN))   # real publish (as _fake_generate)
+            return [SimpleNamespace(ticker=tk) for tk in _TOPN]
+
+        R = SimpleNamespace(meta={}, exc="")
+        _tmp = _P(_tf.mkdtemp())
+        with _parity_patches(_tmp, _earn_spy):
+            # Layer the order-recording generate_candidates ON TOP of _parity_patches'
+            # _fake_generate (the last patch.object on the attr wins while active).
+            with _mock.patch.object(_cg20, "generate_candidates", _gen_spy):
+                _a = _AT20.from_file(
+                    os.path.join(_REPO_ROOT, "pages/7_Investment_Cockpit.py"),
+                    default_timeout=120)
+                _a.session_state["language"] = "en"
+                _a.session_state["macro_regime_result"] = {
+                    "regime": "transition", "confidence": "low",
+                    "horizon_bias": {"short": "cautious"}, "key_signals": [],
+                    "opportunity_posture": "", "data_coverage": 1.0, "signals": []}
+                _a.run()
+                _btn = next((_b for _b in _a.button
+                             if getattr(_b, "key", "") == "cockpit_refresh_all"), None)
+                if _btn is None:
+                    R.exc = "refresh button not found"
+                    return order, R
+                _btn.click().run()
+                R.exc = str(list(_a.exception)) if _a.exception else ""
+                _files = sorted(_tmp.glob("opportunities_*.jsonl"))
+                if _files:
+                    R.meta = _json.loads(
+                        _files[-1].read_text(encoding="utf-8").splitlines()[0])
+        return order, R
+
+    # --- Scenario S: a real bulk fetch returns a report → ONE call, BEFORE Track B.
+    _ok_cal = lambda *a, **k: [{"ticker": "SCANX", "report_date": _report_date(),
+                               "direction": "beat"}]  # noqa: E731
+    _ord_ok, _R_ok = _run_order_capture(_ok_cal)
+    check("20.1 refresh raised no exception (hoisted-fetch path)", _R_ok.exc == "",
+          _R_ok.exc[:200])
+    # (i) EXACTLY ONE bulk earnings-calendar network call across the refresh.
+    #     RED if a second call site remains (early + Step-4 both fire → count == 2).
+    check("20.2 bulk earnings-calendar fetcher invoked EXACTLY ONCE per refresh",
+          _ord_ok.count("earnings") == 1, f"order={_ord_ok}")
+    # (ii) the bulk fetch precedes the Track B fan-out (generate_candidates).
+    #     RED if the fetch is not hoisted (a Step-4 in-line call records 'track_b' first).
+    check("20.3 bulk earnings-calendar fetch happens BEFORE the Track B fan-out",
+          "earnings" in _ord_ok and "track_b" in _ord_ok
+          and _ord_ok.index("earnings") < _ord_ok.index("track_b"),
+          f"order={_ord_ok}")
+    # Spot-confirm the hoisted REPLAY still feeds the Round-4 computation: SCANX (a scan
+    # ticker with a cache-resident sold frame) is evaluated → a real reading, no degrade.
+    # RED if the replay dropped the reports or changed the earnings computation path.
+    check("20.4 hoisted replay still drives the real reaction computation "
+          "(SCANX evaluated, no degrade)",
+          _R_ok.meta.get("good_news_sold") is not None
+          and _R_ok.meta.get("earnings_evaluated", 0) >= 1
+          and _R_ok.meta.get("earnings_degrade_reason", "") == "",
+          f"gns={_R_ok.meta.get('good_news_sold')} "
+          f"ev={_R_ok.meta.get('earnings_evaluated')} "
+          f"reason={_R_ok.meta.get('earnings_degrade_reason')}")
+
+    # --- Scenario F: the EARLY bulk fetch RAISES → no crash; SAME degrade as the old
+    # in-line Step-4 failure (finnhub_unavailable, evaluated 0, gns None).
+    def _raise_cal(*a, **k):
+        raise RuntimeError("finnhub_no_key")
+    _ord_f, _R_f = _run_order_capture(_raise_cal)
+    check("20.5 early fetch failure does NOT crash the refresh", _R_f.exc == "",
+          _R_f.exc[:200])
+    # The fetch was still ATTEMPTED once, BEFORE Track B (the hoist holds on the failure
+    # path too) — and only once (the Step-4 replay re-raises, it never re-calls network).
+    check("20.6 failed bulk fetch still attempted exactly once, before Track B",
+          _ord_f.count("earnings") == 1 and "track_b" in _ord_f
+          and _ord_f.index("earnings") < _ord_f.index("track_b"), f"order={_ord_f}")
+    # (iii) identical degrade semantics to the pre-change Step-4 failure.
+    #     RED if the early failure degraded differently (crashed, different reason, or a
+    #     non-zero evaluated count).
+    check("20.7 early fetch failure degrades to finnhub_unavailable (evaluated 0)",
+          _R_f.meta.get("earnings_degrade_reason") == "finnhub_unavailable"
+          and _R_f.meta.get("good_news_sold") is None
+          and _R_f.meta.get("earnings_evaluated", 0) == 0,
+          f"reason={_R_f.meta.get('earnings_degrade_reason')} "
+          f"gns={_R_f.meta.get('good_news_sold')} "
+          f"ev={_R_f.meta.get('earnings_evaluated')}")
+except Exception as _e:  # noqa: BLE001 — AppTest unavailable counts as a failure
+    import traceback as _tb20
+    check("20.1 hoisted-fetch order/count harness ran", False,
+          f"{_e} :: {_tb20.format_exc()[-400:]}")
+
+
+# §20b — ranking path zero-network (structural): the ranking path
+# (lib/opportunity_ranker.py) must NOT reach the bulk calendar fetch or fragility at
+# all. RED if someone wires the calendar/fragility into the ranker.
+_ORR_SRC = inspect.getsource(orr)
+check("20.8 ranking path never references the bulk calendar fetch / "
+      "compute_market_fragility (zero-network for this call)",
+      "fetch_earnings_reactions_calendar" not in _ORR_SRC
+      and "compute_market_fragility" not in _ORR_SRC
+      and "earnings_calendar_fn" not in _ORR_SRC,
+      "opportunity_ranker unexpectedly references the calendar/fragility path")
+
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 print("\n".join(_failures))

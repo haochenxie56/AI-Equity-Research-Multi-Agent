@@ -826,6 +826,20 @@ def _render_live_liquidity(data, regime) -> None:
     _domain_status_line("macro_live_domain_rates", _status_rates(rates))
     _domain_status_line("macro_live_domain_inflation", _status_inflation(rates))
     _domain_status_line("macro_live_domain_liquidity", _status_liquidity(data.dollar, data.credit))
+    # FRED money-market liquidity (SOFR / ON RRP / TGA / bank reserves) — display-only;
+    # fetched ON DEMAND here; never written to the snapshot _meta by design (this group
+    # is deliberately NOT part of fetch_all_macro / MacroDataResult, so classify_regime
+    # and write_daily_snapshot never see it — the snapshot persists only the regime
+    # string + fragility fields).
+    from lib.macro_data import fetch_liquidity
+
+    _liq = fetch_liquidity()
+    _render_live_group_header(t("macro_live_grp_liquidity"), _liq.data_source)
+    _lqc = st.columns(4)
+    _bignum(_lqc[0], t("macro_live_sofr"), _liq.sofr)
+    _bignum(_lqc[1], t("macro_live_on_rrp"), _liq.on_rrp)
+    _bignum(_lqc[2], t("macro_live_tga"), _liq.tga)
+    _bignum(_lqc[3], t("macro_live_reserves"), _liq.reserves)
     _render_filtered_signals(
         regime, {"curve_inverted", "curve_steep", "dollar_strong", "dollar_weak"}
     )

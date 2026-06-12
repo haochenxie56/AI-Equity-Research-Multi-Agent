@@ -1,9 +1,14 @@
 # AI Investment Agent — Project State
 
-**Last updated**: 2026-06-10 (**UI Cleanup Batch — Segment 1: Market-Internals
-Fragility plain-language + i18n pass — Codex-approved, committed DIRECT to `main`
-(not a `--no-ff` branch merge), folded with the previously-approved README principle
-correction.** See the segment-1 section immediately below. Prior closure: **Anchor
+**Last updated**: 2026-06-12 (**Batch Segment 2 — ITEM 1 (bulk earnings-calendar
+fetch hoisted before the Track B fan-out, cold-cache 429 fix) + ITEM 2 (FRED liquidity
+fetchers: SOFR / ON RRP / TGA / bank reserves, display-only, deliberately excluded from
+the snapshot _meta and `fetch_all_macro`/`MacroDataResult`) — Codex-approved, committed
+DIRECT to `main` (not a `--no-ff` branch merge).** See the segment-2 section immediately
+below. Prior closure: **UI Cleanup Batch — Segment 1: Market-Internals Fragility
+plain-language + i18n pass — Codex-approved, committed DIRECT to `main` (not a `--no-ff`
+branch merge), folded with the previously-approved README principle correction.** See the
+segment-1 section below. Prior closure: **Anchor
 Intelligence v2.5 — multi-dimensional peer profile + honest `peer_match_quality`
 degrade — CLOSED, APPROVED @ `6f9c1ec`, merged to `main` via `--no-ff`** off branch
 `phase-anchor-intel-v2-5` (off `main` @ `ef8cb28`). **v2.5 is the FINAL v2 round — it
@@ -11,6 +16,84 @@ closes the Anchor Intelligence v2 series, which is now COMPLETE.** See the v2.5 
 below; v2.4 (CLOSED, APPROVED @ `18dfcf2`) follows, then v2.3, Round 1,
 Valuation Refactor v1, Phase 7B, Valuation Stop-the-Bleed, and Phase 7A. Prior
 status blob preserved verbatim afterward.)
+
+## Batch Segment 2 — ITEM 1 (earnings-calendar fetch hoist) + ITEM 2 (FRED liquidity fetchers) — CLOSED (Codex-approved, committed direct to `main` 2026-06-12)
+
+Two independent **data-layer** changes shipped together as ONE closing commit, direct to
+the main worktree (not a `--no-ff` branch merge). Both Codex-approved with discriminating
+mutation probes. Phase docs: `docs/reliability_phase_7b_rotation_internals.md` (ITEM 1),
+`docs/reliability_phase_5o_macro_dashboard_v01.md` (ITEM 2).
+
+### ITEM 1 — bulk earnings-calendar fetch hoisted before the Track B fan-out (cold-cache 429 fix)
+
+**Timing/wiring only — no logic, threshold, or computation change.** The single uncached
+bulk Finnhub `fetch_earnings_reactions_calendar` call (one per refresh) ran LAST (Step 4 of
+`pages/7_Investment_Cockpit.py::_run_refresh`, inside the fragility block). On a **cold
+cache** the Step-3 Track B fan-out (`generate_candidates → run_track_b`, the FULL scan
+universe × ~2 per-ticker Finnhub calls at 8 workers) exhausted Finnhub's free 60 req/min
+budget BEFORE the bulk call, which then 429'd → `finnhub_unavailable`.
+
+- **Fix:** the bulk call is **hoisted to fire ONCE, before Step 3**; its raw REPORTS are
+  **replayed** into `compute_market_fragility` via `earnings_calendar_fn` (a closure
+  returning the prefetched list). **Not** via `earnings_reactions=` — that path bypasses
+  the Round-4 scan-universe pipeline (`_reaction_records` → `_earnings_components_asof` →
+  `earnings_skipped` / `partial_frame_coverage`) and expects `next_session_return` records
+  the raw calendar lacks, so it would change the computation. The replay keeps Step-4
+  **byte-for-byte identical**; exactly one network call; no second call site.
+- **Degrade preserved:** on early-fetch failure the **captured exception is re-raised** at
+  Step 4 → identical `finnhub_unavailable` degrade (`good_news_sold=None`,
+  `earnings_evaluated=0`); the refresh never crashes (fail-closed). Re-raising the captured
+  exception (vs a fresh `RuntimeError`) also keeps pages/7 free of the lowercase `finnhub`
+  vendor token the 5H/5N source guardrails forbid.
+- **Ranking path unaffected:** `lib/opportunity_ranker.py` references none of
+  `fetch_earnings_reactions_calendar` / `compute_market_fragility` / `earnings_calendar_fn`
+  (structural guard) — the zero-network ranking contract is intact.
+- **Tests** (`test_reliability_phase_7b_rotation_internals.py` §20, **211→219**): drives the
+  REAL `_run_refresh` via AppTest recording call ORDER — 20.2 fetcher fires EXACTLY ONCE;
+  20.3 BEFORE the Track B fan-out; 20.4 replay still drives the real reaction computation;
+  20.5–20.7 an early failure does not crash and degrades to `finnhub_unavailable`; 20.8
+  ranking zero-network. Mutations proven (reverted): duplicate call →
+  `['earnings','earnings','track_b']` (20.2 RED); deferred/late fetch →
+  `['track_b','earnings']` (20.3 + 20.6 RED). `signal_engine.py` untouched (the order spy
+  patches from the test).
+
+### ITEM 2 — FRED liquidity fetchers (SOFR / ON RRP / TGA / bank reserves), display-only, snapshot-excluded
+
+Adds deterministic FRED money-market liquidity fetchers, surfaced on the Macro Dashboard
+Liquidity tab. **Display-only; deliberately NOT written to the daily snapshot.** Mirrors
+the existing `lib/macro_data.py` pattern — no new infrastructure, dependency, or key.
+
+- **`lib/macro_data.py`:** new `LiquidityResult` dataclass (`sofr` / `on_rrp` / `tga` /
+  `reserves` + `data_source` ("live"/"fixture") / `as_of` / per-series `history`),
+  `_liquidity_fixture()`, and `@st.cache_data(ttl=_CACHE_TTL=900)` `fetch_liquidity()`
+  pulling **SOFR / RRPONTSYD / WTREGEN / WRESBAL** via the existing `_fred_observations`
+  helper (its own 429 retry/backoff; per-series failure isolation; fail-closed to fixture).
+  Reuses the existing `FRED_API_KEY` (`dotenv` + `os.getenv`) — no new key, no `fredapi`.
+- **Snapshot / regime isolation (load-bearing):** `fetch_liquidity` is **NOT** part of
+  `fetch_all_macro()` / `MacroDataResult`, so `classify_regime` and `write_daily_snapshot`
+  never consume it (the snapshot `_meta` persists only the regime string + the fragility
+  fields). Fetched **on demand** from the pages/8 render path only; source comments at the
+  fetcher AND the render call site record the deliberate exclusion.
+- **`pages/8_Macro_Dashboard.py`:** the existing `_render_live_liquidity` tab ADDS a
+  money-market-liquidity group (four `_bignum`s + `_render_live_group_header` showing the
+  live/fixture `data_source`); existing rates content unchanged. Five bilingual `t()` keys
+  (`macro_live_grp_liquidity`, `macro_live_sofr` / `_on_rrp` / `_tga` / `_reserves`) added
+  to BOTH locale tables in `ui_utils.py`.
+- **Tests** (`test_reliability_phase_5o_macro_dashboard.py` §L, **+9**): L.1/L.1b/L.2/L.3
+  fail-closed (forced exception + no-key → fixture, never raises/"live"); L.4–L.7 the
+  SNAPSHOT-EXCLUSION guard (`MacroDataResult` fields disjoint from the series;
+  `fetch_all_macro` doesn't call `fetch_liquidity`; `write_daily_snapshot` source carries no
+  liquidity field; a REAL `write_daily_snapshot` `_meta` excludes all liquidity series);
+  L.8 no-`fredapi`. Mutations proven (reverted): fixture tagged `live` → L.1/L.1b/L.2/L.3
+  RED; `sofr` added to `MacroDataResult` → L.4 RED.
+
+### Verification
+
+`phase_7b` **219/219**; `phase_5o` **738/3** (the 3 reds are pre-existing `url_pathname`
+AppTest-harness errors, identical to HEAD); 5H **179/24** and 5N **545/104** — identical to
+HEAD baseline, **zero new failures** from the shared `ui_utils.py` / `pages/8` edits.
+`README.md` NOT re-touched (the segment-1 principle correction shipped @ `f99ed2f`). No
+`macro_regime.py` / `opportunity_ranker.py` / snapshot-assembly changes.
 
 ## UI Cleanup Batch — Segment 1: Market-Internals Fragility — Plain-Language + i18n Pass — CLOSED (Codex-approved, committed direct to `main` 2026-06-10)
 

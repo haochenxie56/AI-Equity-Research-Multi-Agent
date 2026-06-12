@@ -1130,6 +1130,104 @@ except Exception as e:  # noqa: BLE001
 
 
 # ---------------------------------------------------------------------------
+# Section L — ITEM 2 (batch seg 2): FRED liquidity fetchers — fail-closed behavior
+# + the load-bearing SNAPSHOT-EXCLUSION guard (display-only; never persisted).
+# ---------------------------------------------------------------------------
+try:
+    import dataclasses as _dcL
+    import inspect as _inspL
+    import json as _jsonL
+    import tempfile as _tfL
+    from pathlib import Path as _PathL
+    import lib.macro_data as _mdL
+    import lib.opportunity_ranker as _orrL
+
+    # (i) fail-closed: a forced fetch exception → fixture, no raise, not "live".
+    #     MUTATION: remove fetch_liquidity's try/except (let _fred_observations raise)
+    #     → L.1 RED (the call raises instead of returning a fixture).
+    _orig_obs = _mdL._fred_observations
+    try:
+        _mdL.fetch_liquidity.clear()
+
+        def _boom_obs(*a, **k):
+            raise RuntimeError("forced-fred-failure")
+
+        _mdL._fred_observations = _boom_obs
+        _liq_exc = _mdL.fetch_liquidity()
+        check("L.1 fetch_liquidity fail-closes to a fixture on fetch exception (no raise)",
+              getattr(_liq_exc, "data_source", None) == "fixture")
+        check("L.1b the failed-fetch result is NOT tagged live",
+              getattr(_liq_exc, "data_source", None) != "live")
+    finally:
+        _mdL._fred_observations = _orig_obs
+        _mdL.fetch_liquidity.clear()
+
+    # (i) no-key path: FRED_API_KEY absent → _fred_observations returns [] → fixture.
+    _orig_key = _mdL.FRED_API_KEY
+    try:
+        _mdL.fetch_liquidity.clear()
+        _mdL.FRED_API_KEY = ""
+        _liq_nokey = _mdL.fetch_liquidity()
+        check("L.2 fetch_liquidity fail-closes to a fixture when no FRED key is set",
+              _liq_nokey.data_source == "fixture")
+    finally:
+        _mdL.FRED_API_KEY = _orig_key
+        _mdL.fetch_liquidity.clear()
+
+    # The fixture carries all four series + the data_source/as_of contract.
+    _fx = _mdL._liquidity_fixture()
+    check("L.3 liquidity fixture exposes the four series + the fixture tag",
+          _fx.data_source == "fixture" and _fx.as_of is None
+          and all(getattr(_fx, _k) is not None
+                  for _k in ("sofr", "on_rrp", "tga", "reserves")))
+
+    # (ii) SNAPSHOT EXCLUSION — the load-bearing guard. Liquidity must stay OFF the
+    # snapshot/regime path. MUTATION (any one): add a `liquidity`/`sofr` field to
+    # MacroDataResult, OR call fetch_liquidity inside fetch_all_macro, OR write a
+    # liquidity field into write_daily_snapshot's _meta → the matching check goes RED.
+    _LIQ_FIELDS = {"sofr", "on_rrp", "tga", "reserves", "liquidity"}
+    _mdr_fields = {_f.name for _f in _dcL.fields(_mdL.MacroDataResult)}
+    check("L.4 MacroDataResult excludes every liquidity field (off the snapshot/regime path)",
+          _mdr_fields.isdisjoint(_LIQ_FIELDS), f"fields={sorted(_mdr_fields)}")
+
+    _FAM_SRC = _inspL.getsource(_mdL.fetch_all_macro)
+    check("L.5 fetch_all_macro does NOT call fetch_liquidity (display-only stays on demand)",
+          "fetch_liquidity" not in _FAM_SRC and "LiquidityResult" not in _FAM_SRC,
+          "fetch_all_macro references the liquidity group")
+
+    _WDS_SRC = _inspL.getsource(_orrL.write_daily_snapshot)
+    check("L.6 write_daily_snapshot source references no liquidity field",
+          all(_tok not in _WDS_SRC for _tok in
+              ("fetch_liquidity", "LiquidityResult", "on_rrp", "RRPONTSYD")),
+          "write_daily_snapshot references liquidity")
+
+    # Drive the REAL write_daily_snapshot and assert the persisted _meta header carries
+    # NONE of the liquidity series (even though the Dashboard fetches them for display).
+    _tmpL = _PathL(_tfL.mkdtemp())
+    _fragL = {"fragility_level": "normal", "good_news_sold": 0, "earnings_evaluated": 3}
+    _pathL = _orrL.write_daily_snapshot([], macro_regime="risk_on", fragility=_fragL,
+                                        date_str="2026-06-10", base_dir=_tmpL)
+    _metaL = (_jsonL.loads(_PathL(_pathL).read_text(encoding="utf-8").splitlines()[0])
+              if _pathL else {})
+    _metaL_blob = _jsonL.dumps(_metaL)
+    check("L.7 the persisted snapshot _meta excludes ALL liquidity series (never persisted)",
+          bool(_metaL) and all(_k not in _metaL for _k in _LIQ_FIELDS)
+          and "RRPONTSYD" not in _metaL_blob and "on_rrp" not in _metaL_blob,
+          f"meta_keys={sorted(_metaL)}")
+
+    # (iii) no fredapi / new client — fetch_liquidity reuses _fred_observations.
+    _FL_SRC = _inspL.getsource(_mdL.fetch_liquidity)
+    check("L.8 fetch_liquidity uses _fred_observations (no fredapi / new client)",
+          "_fred_observations" in _FL_SRC
+          and "fredapi" not in _FL_SRC and "Fred(" not in _FL_SRC)
+except Exception as _eL:  # noqa: BLE001
+    FAIL += 1
+    import traceback as _tbL
+    _failures.append(f"FAIL  L.x liquidity fetcher / snapshot-exclusion check: "
+                     f"{_eL} :: {_tbL.format_exc()[-300:]}")
+
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 
