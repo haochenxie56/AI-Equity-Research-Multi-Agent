@@ -8,7 +8,7 @@ and browsed here. Two modes: **Library** (browse / manage cards) and **Ingest**
 ISOLATION: this page touches ONLY ``lib.thesis_ingestion`` + ``ui_utils``. It
 imports nothing from the scoring / ranking / snapshot / anchor systems, and
 nothing in those systems imports it. No paid API; no broker / order / execution
-path; ``approved_for_execution`` never appears.
+path; no execution-authorization flag is ever set.
 """
 
 from __future__ import annotations
