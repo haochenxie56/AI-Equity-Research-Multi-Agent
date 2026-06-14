@@ -316,8 +316,21 @@ def _normalise_scenarios(raw_scenarios, card_themes_fallback=None) -> list[dict]
             continue
         norm = dict(sc)
         norm["schema_version"] = SCHEMA_VERSION_SCENARIO
-        # Invariants — never trusted from the model.
+        # Invariants — never trusted from the model. Overwrite, but warn first so
+        # a misbehaving LLM is observable rather than silently corrected.
+        if norm.get("current_evidence_status") != "unknown":
+            _log.warning(
+                "LLM returned current_evidence_status=%r on scenario %r — "
+                "overriding to 'unknown'",
+                norm.get("current_evidence_status"),
+                norm.get("scenario_id", "?"),
+            )
         norm["current_evidence_status"] = "unknown"
+        if norm.get("evidence_refs"):
+            _log.warning(
+                "LLM returned non-empty evidence_refs on scenario %r — clearing to []",
+                norm.get("scenario_id", "?"),
+            )
         norm["evidence_refs"] = []
         # Structural defaults for list fields.
         for key in (
@@ -396,9 +409,6 @@ def extract_card(
     # ── numeric_claims / unspecified_numerics: content as the author stated ──
     numeric_claims = [nc for nc in (parsed.get("numeric_claims") or []) if isinstance(nc, dict)]
     unspecified = [un for un in (parsed.get("unspecified_numerics") or []) if isinstance(un, dict)]
-    # Defensive: strip any 'value' key that leaked into unspecified_numerics.
-    for un in unspecified:
-        un.pop("value", None)
 
     assumptions = [str(a) for a in (parsed.get("assumptions") or []) if str(a).strip()]
     scenarios = _normalise_scenarios(parsed.get("scenarios"))
