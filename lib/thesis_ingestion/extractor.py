@@ -341,7 +341,7 @@ def _normalise_scenarios(raw_scenarios, card_themes_fallback=None) -> list[dict]
             )
         norm["current_evidence_status"] = "unknown"
         ev = norm.get("evidence_refs")
-        if ev is not None and ev != []:
+        if ev != []:
             _log.warning(
                 "LLM returned non-empty or non-list evidence_refs on scenario %r — "
                 "clearing to []",
