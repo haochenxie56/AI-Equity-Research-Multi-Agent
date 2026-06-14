@@ -36,6 +36,7 @@ from datetime import datetime
 # imports as the top-level module ``docx``; python-pptx as ``pptx``.
 import docx
 import pdfplumber
+from dotenv import load_dotenv
 from pptx import Presentation
 
 from .schema import (
@@ -104,6 +105,12 @@ def get_llm_client():
     Mirrors ``lib.llm_orchestrator._get_client`` so the page does not need to
     duplicate key resolution.
     """
+    # The thesis feature is import-isolated, so unlike the Cockpit path it does
+    # not transitively trigger another module's load_dotenv(). Load it explicitly
+    # here (idempotent — only sets vars not already present) so a direct visit to
+    # the Thesis Library page still picks up ANTHROPIC_API_KEY from .env.
+    load_dotenv()
+
     import anthropic
 
     api_key = None
