@@ -156,12 +156,22 @@ def _open_folder(folder: str) -> None:
     except Exception:  # noqa: BLE001
         pass
     try:
-        if sys.platform.startswith("win"):
-            os.startfile(folder)  # type: ignore[attr-defined]
-        else:
-            import subprocess
+        import shutil
+        import subprocess
 
+        if sys.platform == "win32":
+            os.startfile(folder)  # type: ignore[attr-defined]
+        elif shutil.which("explorer.exe"):
+            # WSL environment — open via Windows Explorer (always present in WSL2).
+            subprocess.Popen(["explorer.exe", folder])
+        elif shutil.which("xdg-open"):
+            # Native Linux desktop environment.
             subprocess.Popen(["xdg-open", folder])
+        else:
+            st.info(
+                f"无法自动打开文件夹，请手动访问：{folder}\n"
+                f"WSL 路径对应 Windows 路径：\\\\wsl.localhost\\Ubuntu{folder}"
+            )
     except Exception as exc:  # noqa: BLE001
         st.warning(_tx(f"Could not open folder: {exc}", f"无法打开文件夹：{exc}"))
 
