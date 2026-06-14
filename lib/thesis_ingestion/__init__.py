@@ -20,8 +20,8 @@ Submodules:
 
 from __future__ import annotations
 
-from . import schema, store, validator  # noqa: F401  (re-export submodules)
+from . import extractor, schema, store, validator  # noqa: F401  (re-export submodules)
 
-# ``extractor`` is imported lazily (it is only needed on the ingest path and
-# pulls the Anthropic client) — access via ``lib.thesis_ingestion.extractor``.
-__all__ = ["schema", "store", "validator"]
+# ``extractor`` pulls the Anthropic client lazily (only on the ingest path), so
+# importing it here is cheap and adds no heavy dependency at package load.
+__all__ = ["schema", "store", "validator", "extractor"]
