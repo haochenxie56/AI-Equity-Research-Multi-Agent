@@ -32,6 +32,12 @@ openpyxl>=3.1   # Excel export (optional, used by report_writer)
 # ── Report & template ─────────────────────────────────────────────────────────
 jinja2>=3.1     # HTML report templating (optional)
 
+# ── Document ingestion (Thesis Library — pdf/docx/pptx text extraction) ────────
+python-docx>=1.1.0   # .docx reading
+pdfplumber>=0.11.0   # .pdf text extraction
+python-pptx>=1.0.0   # .pptx slide text extraction
+# openpyxl (above) also covers .xlsx if needed
+
 # ── Environment & config ──────────────────────────────────────────────────────
 python-dotenv>=1.0  # loads .env → POLYGON_API_KEY / ANTHROPIC_API_KEY
 

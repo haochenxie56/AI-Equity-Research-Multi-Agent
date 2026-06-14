@@ -24,6 +24,10 @@ if str(_REPO_ROOT) not in sys.path:
 if str(_REPO_ROOT / "lib") not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT / "lib"))
 
+# Default backup folder: a sibling of the project root, e.g. for
+# /home/u/projects/investment-agents → /home/u/projects/thesis_backup.
+_DEFAULT_BACKUP_FOLDER = str(_REPO_ROOT.parent / "thesis_backup")
+
 import streamlit as st
 
 from ui_utils import apply_theme, bi, init_session, render_sidebar
@@ -35,6 +39,7 @@ from lib.thesis_ingestion.extractor import (
     extract_card,
     get_llm_client,
     get_theme_names,
+    is_image_ext,
     preview_article,
     read_document,
 )
@@ -121,16 +126,35 @@ def categorize_card(card: dict) -> set[str]:
     return cats
 
 
-# ── Backup folder open ────────────────────────────────────────────────────────
+# ── Backup folder helpers ─────────────────────────────────────────────────────
+def _ensure_backup_folder(folder: str) -> None:
+    """Create the backup folder if missing (show a one-time success message).
+
+    The folder is auto-created rather than erroring, so a missing path is never a
+    failure state.
+    """
+    if not folder:
+        return
+    p = Path(folder)
+    if p.exists():
+        return
+    try:
+        p.mkdir(parents=True, exist_ok=True)
+        st.success(_tx("Backup folder created.", "已创建备份文件夹"))
+    except Exception as exc:  # noqa: BLE001
+        st.warning(_tx(f"Could not create backup folder: {exc}",
+                       f"无法创建备份文件夹：{exc}"))
+
+
 def _open_folder(folder: str) -> None:
     if not folder:
-        return  # the Open-folder button is disabled when the path is empty
-    if not os.path.isdir(folder):
-        st.warning(_tx(
-            "Path does not exist. Please create the folder first.",
-            "路径不存在，请先创建该文件夹",
-        ))
         return
+    # The folder is auto-created during setup, but mkdir defensively so "open"
+    # always targets an existing directory (no "folder does not exist" error).
+    try:
+        Path(folder).mkdir(parents=True, exist_ok=True)
+    except Exception:  # noqa: BLE001
+        pass
     try:
         if sys.platform.startswith("win"):
             os.startfile(folder)  # type: ignore[attr-defined]
@@ -145,12 +169,24 @@ def _open_folder(folder: str) -> None:
 def _write_backup(file_bytes: bytes, filename: str, doc_hash: str, folder: str) -> str:
     """Copy the uploaded file into the backup folder; return its absolute path.
 
-    Returns "" if no usable backup folder is configured.
+    The original filename is preserved. On a name collision a ``doc_hash[:8]``
+    suffix is appended to avoid clobbering an existing file. The folder is
+    auto-created if missing. Returns "" if no folder is configured / on error.
     """
-    if not folder or not os.path.isdir(folder):
+    if not folder:
         return ""
-    safe = "".join(c for c in (filename or "doc") if c.isalnum() or c in ("-", "_", "."))
-    dest = Path(folder) / f"{doc_hash[:16]}_{safe}"
+    p = Path(folder)
+    try:
+        p.mkdir(parents=True, exist_ok=True)
+    except Exception as exc:  # noqa: BLE001
+        st.warning(_tx(f"Could not create backup folder: {exc}",
+                       f"无法创建备份文件夹：{exc}"))
+        return ""
+    base = os.path.basename(filename or "doc") or "doc"
+    dest = p / base
+    if dest.exists():
+        stem, suffix = os.path.splitext(base)
+        dest = p / f"{stem}_{doc_hash[:8]}{suffix}"
     try:
         with open(dest, "wb") as fh:
             fh.write(file_bytes)
@@ -175,12 +211,16 @@ st.caption(_tx(
 # widgets are instantiated so we never mutate a widget-bound key after creation.
 _qp_ticker = (st.query_params.get("ticker", "") or "").upper().strip()
 _qp_theme = (st.query_params.get("theme", "") or "").strip()
-if _qp_ticker or _qp_theme:
+_qp_category = (st.query_params.get("category", "") or "").strip().lower()
+if _qp_ticker or _qp_theme or _qp_category:
     st.session_state["thesis_force_mode"] = "library"
     if _qp_ticker:
         st.session_state["f_ticker"] = _qp_ticker
     if _qp_theme:
         st.session_state["f_theme"] = _qp_theme
+    if _qp_category in ("macro", "sector", "theme", "stock"):
+        # Consumed by the Library tab ordering so the requested category leads.
+        st.session_state["thesis_active_category"] = _qp_category
     st.query_params.clear()
 
 # A programmatic mode switch (e.g. Re-extract, or a query-param deep link) is
@@ -371,11 +411,18 @@ if _mode == "library":
 
         shown = [c for c in cards if _passes(c)]
 
-        tabs = st.tabs([
-            _tx("Macro", "宏观"), _tx("Sector", "行业"),
-            _tx("Theme", "主题"), _tx("Stock", "个股"),
-        ])
-        for tab, key in zip(tabs, ("macro", "sector", "theme", "stock")):
+        # Streamlit has no API to programmatically select a tab, so a deep-linked
+        # category (e.g. ?category=macro) is honoured by ordering that tab first
+        # (the first tab is the default-active one).
+        _cat_defs = [
+            ("macro", _tx("Macro", "宏观")), ("sector", _tx("Sector", "行业")),
+            ("theme", _tx("Theme", "主题")), ("stock", _tx("Stock", "个股")),
+        ]
+        _active_cat = st.session_state.get("thesis_active_category", "")
+        if _active_cat in {k for k, _ in _cat_defs}:
+            _cat_defs = sorted(_cat_defs, key=lambda kv: 0 if kv[0] == _active_cat else 1)
+        tabs = st.tabs([lbl for _, lbl in _cat_defs])
+        for tab, (key, _lbl) in zip(tabs, _cat_defs):
             with tab:
                 bucket = [c for c in shown if key in categorize_card(c)]
                 if not bucket:
@@ -398,8 +445,15 @@ if _mode == "ingest":
     st.subheader(_tx("Step 1 — Source file & backup", "步骤一 — 源文件与备份"))
 
     # Backup folder config (session_state mirror of persisted config.json).
+    # First load: if nothing is configured yet, fall back to the default
+    # (sibling of the project root), persist it immediately, and auto-create it.
     if "thesis_backup_folder" not in st.session_state:
-        st.session_state["thesis_backup_folder"] = store.get_backup_folder()
+        _saved = store.get_backup_folder()
+        if not _saved:
+            _saved = _DEFAULT_BACKUP_FOLDER
+            store.set_backup_folder(_saved)
+        st.session_state["thesis_backup_folder"] = _saved
+        _ensure_backup_folder(_saved)
 
     bcols = st.columns([4, 1])
     folder = bcols[0].text_input(
@@ -408,8 +462,10 @@ if _mode == "ingest":
         key="thesis_backup_folder_input",
     )
     if folder != st.session_state.get("thesis_backup_folder", ""):
+        # User confirmed a (possibly new) path → persist and auto-create it.
         st.session_state["thesis_backup_folder"] = folder
         store.set_backup_folder(folder)
+        _ensure_backup_folder(folder)
     _folder_set = bool((st.session_state.get("thesis_backup_folder", "") or "").strip())
     if bcols[1].button("📂 " + _tx("Open folder", "打开文件夹"),
                        disabled=not _folder_set):
@@ -430,16 +486,33 @@ if _mode == "ingest":
 
     uploaded = st.file_uploader(
         _tx("Upload document", "上传文档"),
-        type=["pdf", "txt", "md", "docx"],
+        type=["pdf", "txt", "md", "docx", "pptx"],
         key="thesis_uploader",
     )
     if uploaded is not None:
-        fb = uploaded.getvalue()
-        st.session_state["thesis_ing_filebytes"] = fb
-        st.session_state["thesis_ing_filename"] = uploaded.name
-        st.session_state["thesis_ing_hash"] = store.compute_doc_hash(fb)
-        st.session_state.pop("thesis_ing_preview", None)
-        st.session_state.pop("thesis_ing_extracted", None)
+        if is_image_ext(uploaded.name):
+            # Friendly, non-fatal message — never a raw exception for images.
+            st.error(_tx(
+                "Image formats are not supported. Please provide a text document "
+                "(PDF, Word, TXT, etc.).",
+                "图片格式暂不支持，请提供文字版文档（PDF、Word、TXT 等）",
+            ))
+        else:
+            fb = uploaded.getvalue()
+            _dh = store.compute_doc_hash(fb)
+            # Only (re)process + auto-backup when a genuinely NEW file is uploaded
+            # (by content hash), so reruns don't write duplicate backup copies.
+            if st.session_state.get("thesis_ing_hash") != _dh:
+                st.session_state["thesis_ing_filebytes"] = fb
+                st.session_state["thesis_ing_filename"] = uploaded.name
+                st.session_state["thesis_ing_hash"] = _dh
+                # Auto-save the upload to the configured backup folder immediately.
+                _folder = st.session_state.get("thesis_backup_folder", "")
+                _saved_path = _write_backup(fb, uploaded.name, _dh, _folder)
+                st.session_state["thesis_ing_doc_path"] = _saved_path or ""
+                st.session_state.pop("thesis_ing_text", None)
+                st.session_state.pop("thesis_ing_preview", None)
+                st.session_state.pop("thesis_ing_extracted", None)
 
     file_bytes = st.session_state.get("thesis_ing_filebytes")
     filename = st.session_state.get("thesis_ing_filename", "")
@@ -472,6 +545,10 @@ if _mode == "ingest":
                     st.session_state["thesis_ing_text"] = read_document(file_bytes, filename)
                 except UnsupportedFormatError as exc:
                     st.error(str(exc))
+                    st.session_state["thesis_ing_text"] = ""
+                except Exception as exc:  # noqa: BLE001 — show a clean message, not a traceback
+                    st.error(_tx(f"Could not read the document: {exc}",
+                                 f"无法读取文档：{exc}"))
                     st.session_state["thesis_ing_text"] = ""
             file_text = st.session_state.get("thesis_ing_text", "")
 

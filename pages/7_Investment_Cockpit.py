@@ -614,6 +614,15 @@ else:
         for _s in _signals[:6]:
             st.markdown(f"- {_s}")
 
+# Section A renders as text (no per-item cards), so the macro thesis jump button
+# lives here, after the macro block; it deep-links to the Library's Macro tab.
+_lang = st.session_state.get("language", "en")
+st.page_link(
+    "pages/10_Thesis_Library.py",
+    label="📚 宏观研报" if _lang == "zh" else "📚 Macro thesis cards",
+    query_params={"category": "macro"},
+)
+
 st.divider()
 
 

@@ -25,11 +25,18 @@ Design rules honoured here:
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import logging
 import os
 import re
 from datetime import datetime
+
+# Document parsers — now hard dependencies (see requirements.txt). python-docx
+# imports as the top-level module ``docx``; python-pptx as ``pptx``.
+import docx
+import pdfplumber
+from pptx import Presentation
 
 from .schema import (
     PROMPT_VERSION,
@@ -135,13 +142,25 @@ def _decode_raw(file_bytes: bytes) -> str:
     return file_bytes.decode("utf-8", errors="ignore")
 
 
+# Extensions we can extract text from, plus image extensions that are explicitly
+# rejected with a friendly message at the UI layer (see pages/10) — never raised.
+SUPPORTED_EXTS = ("txt", "md", "pdf", "docx", "pptx")
+IMAGE_EXTS = ("jpg", "jpeg", "png", "gif", "bmp", "tiff", "webp")
+
+
+def is_image_ext(filename: str) -> bool:
+    """True if *filename* has a recognised image extension."""
+    return os.path.splitext(filename or "")[1].lower().lstrip(".") in IMAGE_EXTS
+
+
 def read_document(file_bytes: bytes, filename: str) -> str:
     """Extract plain text from an uploaded document.
 
-    Supported: ``.txt`` / ``.md`` (decoded directly), ``.pdf`` (pdfplumber if
-    installed, else raw-text fallback), ``.docx`` (python-docx if installed,
-    else raw-text fallback). Any other extension raises
-    :class:`UnsupportedFormatError`.
+    Supported: ``.txt`` / ``.md`` (decoded directly), ``.pdf`` (pdfplumber),
+    ``.docx`` (python-docx), ``.pptx`` (python-pptx) — all hard dependencies.
+    Any other extension raises :class:`UnsupportedFormatError`. Image formats are
+    intercepted at the UI layer with a friendly message (see ``is_image_ext``)
+    before reaching here.
     """
     ext = os.path.splitext(filename or "")[1].lower().lstrip(".")
 
@@ -149,37 +168,22 @@ def read_document(file_bytes: bytes, filename: str) -> str:
         return _decode_raw(file_bytes)
 
     if ext == "pdf":
-        try:
-            import io
-
-            import pdfplumber  # type: ignore
-
-            with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
-                pages = [(p.extract_text() or "") for p in pdf.pages]
-            text = "\n".join(pages).strip()
-            return text or _decode_raw(file_bytes)
-        except ImportError:
-            _log.warning("read_document: pdfplumber not installed; raw-text fallback")
-            return _decode_raw(file_bytes)
-        except Exception as exc:  # noqa: BLE001
-            _log.warning("read_document: pdf parse failed (%s); raw-text fallback", exc)
-            return _decode_raw(file_bytes)
+        with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
+            pages = [(p.extract_text() or "") for p in pdf.pages]
+        return "\n".join(pages).strip() or _decode_raw(file_bytes)
 
     if ext == "docx":
-        try:
-            import io
+        document = docx.Document(io.BytesIO(file_bytes))
+        return "\n".join(p.text for p in document.paragraphs).strip() or _decode_raw(file_bytes)
 
-            import docx  # type: ignore
-
-            document = docx.Document(io.BytesIO(file_bytes))
-            text = "\n".join(p.text for p in document.paragraphs).strip()
-            return text or _decode_raw(file_bytes)
-        except ImportError:
-            _log.warning("read_document: python-docx not installed; raw-text fallback")
-            return _decode_raw(file_bytes)
-        except Exception as exc:  # noqa: BLE001
-            _log.warning("read_document: docx parse failed (%s); raw-text fallback", exc)
-            return _decode_raw(file_bytes)
+    if ext == "pptx":
+        prs = Presentation(io.BytesIO(file_bytes))
+        parts = []
+        for slide in prs.slides:
+            for shape in slide.shapes:
+                if hasattr(shape, "text") and shape.text.strip():
+                    parts.append(shape.text.strip())
+        return "\n\n".join(parts).strip() or _decode_raw(file_bytes)
 
     raise UnsupportedFormatError(f"unsupported document format: {filename!r}")
 
@@ -240,6 +244,10 @@ def preview_article(file_text: str, llm_client) -> dict:
 
 
 # ── 3b. Full extraction call ─────────────────────────────────────────────────
+# The source document may be in any language (Chinese, English, Japanese, etc.).
+# Extract faithfully in the source language for verbatim fields (source_quote,
+# assumptions, note). Output _en/_zh parallel keys for all bilingual prose fields
+# regardless of source language. (Maintainer note — not sent to the LLM.)
 _EXTRACT_SYSTEM_TMPL = """You are a research analyst assistant extracting a structured thesis card from a
 research article or interview.
 
