@@ -262,13 +262,25 @@ def _render_card(card: dict, ctx: str = "") -> None:
                 for a in card["assumptions"]:
                     st.caption(f"• {a}")
             for sc in card.get("scenarios") or []:
-                if sc.get("event_or_hypothesis"):
-                    st.markdown("**" + _tx("Scenario", "情景") + f"**: {sc['event_or_hypothesis']}")
+                _eoh = bi(sc, "event_or_hypothesis")
+                if _eoh:
+                    st.markdown("**" + _tx("Scenario", "情景") + f"**: {_eoh}")
                 for stp in sc.get("transmission_chain") or []:
                     st.caption(
                         f"  ↳ {stp.get('from_node','')} → {stp.get('to_node','')}: "
-                        f"{stp.get('mechanism','')} ({stp.get('provenance','')})"
+                        f"{bi(stp, 'mechanism')} ({stp.get('provenance','')})"
                     )
+                for cond in sc.get("confirmation_conditions") or []:
+                    _ct = bi(cond, "condition_text")
+                    if _ct:
+                        st.caption(f"  ✓ {_ct} ({cond.get('observable','')}/{cond.get('provenance','')})")
+                for cond in sc.get("falsification_conditions") or []:
+                    _ct = bi(cond, "condition_text")
+                    if _ct:
+                        st.caption(f"  ✗ {_ct} ({cond.get('observable','')}/{cond.get('provenance','')})")
+                _snotes = bi(sc, "notes")
+                if _snotes:
+                    st.caption(f"  — {_snotes}")
 
         # Action buttons
         cols = st.columns(3)
@@ -351,7 +363,7 @@ if _mode == "library":
 def _reset_ingest_state() -> None:
     for k in ("thesis_ing_filebytes", "thesis_ing_filename", "thesis_ing_hash",
               "thesis_ing_text", "thesis_ing_preview", "thesis_ing_extracted",
-              "thesis_ing_doc_path", "thesis_ing_overwrite"):
+              "thesis_ing_doc_path", "thesis_ing_overwrite", "thesis_overwrite_pending"):
         st.session_state.pop(k, None)
 
 
@@ -539,25 +551,46 @@ if _mode == "ingest":
                             for e in errs:
                                 st.markdown(f"  - `{e}`")
                         else:
+                            cid = card.get("card_id")
                             overwrite = bool(st.session_state.get("thesis_ing_overwrite"))
+                            pending = st.session_state.get("thesis_overwrite_pending") == cid
                             if st.button(_tx("Confirm & Save", "确认并保存"),
-                                         key=f"save_{i}_{card.get('card_id')}"):
+                                         key=f"save_{i}_{cid}"):
                                 try:
                                     store.save_card(card, overwrite=overwrite)
-                                    action = "overwritten" if overwrite else "created"
+                                    store.append_ingest_log({
+                                        "doc_hash": card["source"]["doc_hash"],
+                                        "card_id": cid,
+                                        "timestamp": datetime.now().isoformat(timespec="seconds"),
+                                        "action": "overwritten" if overwrite else "created",
+                                    })
+                                    st.session_state.pop("thesis_overwrite_pending", None)
+                                    st.success(_tx(
+                                        f"Saved {cid} ({'overwritten' if overwrite else 'created'}).",
+                                        f"已保存 {cid}（{'overwritten' if overwrite else 'created'}）。",
+                                    ))
                                 except store.CardExistsError:
-                                    store.save_card(card, overwrite=True)
-                                    action = "overwritten"
-                                store.append_ingest_log({
-                                    "doc_hash": card["source"]["doc_hash"],
-                                    "card_id": card["card_id"],
-                                    "timestamp": datetime.now().isoformat(timespec="seconds"),
-                                    "action": action,
-                                })
-                                st.success(_tx(
-                                    f"Saved {card['card_id']} ({action}).",
-                                    f"已保存 {card['card_id']}（{action}）。",
+                                    # No silent overwrite — flag and require a second,
+                                    # separate explicit confirmation from the user.
+                                    st.session_state["thesis_overwrite_pending"] = cid
+                                    st.rerun()
+                            if pending:
+                                st.warning(_tx(
+                                    f"A card for this document already exists (card ID: {cid}). "
+                                    "Click 'Confirm Overwrite' to replace it.",
+                                    f"该文档的卡片已存在（卡片 ID：{cid}）。点击“确认覆盖”以替换。",
                                 ))
+                                if st.button(_tx("Confirm Overwrite", "确认覆盖"),
+                                             key=f"ow_save_{i}_{cid}"):
+                                    store.save_card(card, overwrite=True)
+                                    store.append_ingest_log({
+                                        "doc_hash": card["source"]["doc_hash"],
+                                        "card_id": cid,
+                                        "timestamp": datetime.now().isoformat(timespec="seconds"),
+                                        "action": "overwritten",
+                                    })
+                                    st.session_state.pop("thesis_overwrite_pending", None)
+                                    st.success(_tx(f"Overwrote {cid}.", f"已覆盖 {cid}。"))
 
     if file_bytes and st.button(_tx("Reset ingest", "重置录入"), key="reset_ingest"):
         _reset_ingest_state()

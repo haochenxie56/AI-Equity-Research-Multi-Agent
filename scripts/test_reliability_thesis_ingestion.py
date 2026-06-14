@@ -48,21 +48,25 @@ def valid_card(seed: bytes = b"the article raw bytes v1", *, horizon: str = "mid
     h = _doc_hash(seed)
     cid = store.card_id_from_hash(h, 1)
     scenario = schema.new_scenario_card(
-        event_or_hypothesis="AI capex accelerates through 2026.",
+        event_or_hypothesis_en="AI capex accelerates through 2026.",
+        event_or_hypothesis_zh="AI 资本开支在 2026 年持续加速。",
         transmission_chain=[{
             "step": 1, "from_node": "hyperscaler capex", "to_node": "GPU demand",
-            "mechanism": "more datacenter spend lifts accelerator orders",
+            "mechanism_en": "more datacenter spend lifts accelerator orders",
+            "mechanism_zh": "数据中心支出增加带动加速卡订单",
             "provenance": "stated_by_author",
         }],
         affected_horizons=["mid"],
         affected_themes=["ai_chips"],
         affected_tickers=["NVDA"],
         confirmation_conditions=[{
-            "condition_text": "Hyperscaler capex guidance raised next quarter.",
+            "condition_text_en": "Hyperscaler capex guidance raised next quarter.",
+            "condition_text_zh": "下季度超大规模厂商资本开支指引上调。",
             "observable": "machine_checkable", "provenance": "stated_by_author",
         }],
         falsification_conditions=[{
-            "condition_text": "Capex guidance cut.",
+            "condition_text_en": "Capex guidance cut.",
+            "condition_text_zh": "资本开支指引下调。",
             "observable": "human_judgment", "provenance": "inferred",
         }],
     )
@@ -222,6 +226,43 @@ class TestSchemaValidation(unittest.TestCase):
         ok, errors = validator.validate_card(c)
         self.assertFalse(ok)
         self.assertHasCode(errors, "invalid_condition")
+
+    def test_mechanism_missing_both_languages(self):
+        c = valid_card()
+        step = c["scenarios"][0]["transmission_chain"][0]
+        step.pop("mechanism_en", None); step.pop("mechanism_zh", None)
+        step.pop("mechanism", None)
+        ok, errors = validator.validate_card(c)
+        self.assertFalse(ok)
+        self.assertHasCode(errors, "invalid_transmission_step")
+
+    def test_mechanism_en_only_is_valid(self):
+        c = valid_card()
+        step = c["scenarios"][0]["transmission_chain"][0]
+        step.pop("mechanism_zh", None)
+        ok, errors = validator.validate_card(c)
+        self.assertTrue(ok, f"mechanism_en alone should satisfy presence: {errors}")
+
+    def test_condition_text_missing_both_languages(self):
+        c = valid_card()
+        cond = c["scenarios"][0]["confirmation_conditions"][0]
+        cond.pop("condition_text_en", None); cond.pop("condition_text_zh", None)
+        cond.pop("condition_text", None)
+        ok, errors = validator.validate_card(c)
+        self.assertFalse(ok)
+        self.assertHasCode(errors, "invalid_condition")
+
+    def test_legacy_bare_mechanism_still_valid(self):
+        # Backward compat: a pre-bilingual card with a bare `mechanism` validates.
+        c = valid_card()
+        step = c["scenarios"][0]["transmission_chain"][0]
+        step.pop("mechanism_en", None); step.pop("mechanism_zh", None)
+        step["mechanism"] = "legacy single-language mechanism"
+        cond = c["scenarios"][0]["confirmation_conditions"][0]
+        cond.pop("condition_text_en", None); cond.pop("condition_text_zh", None)
+        cond["condition_text"] = "legacy single-language condition"
+        ok, errors = validator.validate_card(c)
+        self.assertTrue(ok, f"legacy bare fields should validate: {errors}")
 
     def test_invalid_doc_hash(self):
         c = valid_card(); c["source"]["doc_hash"] = "abc123"

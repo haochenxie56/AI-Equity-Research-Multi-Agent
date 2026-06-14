@@ -42,12 +42,16 @@ class TransmissionStep(TypedDict, total=False):
     step: int
     from_node: str   # "from_node" not "from" — "from" is a Python keyword
     to_node: str
-    mechanism: str
+    mechanism: str       # legacy single-language (optional, backward compat)
+    mechanism_en: str    # bilingual UI-facing description
+    mechanism_zh: str
     provenance: str  # "stated_by_author" | "inferred"
 
 
 class Condition(TypedDict, total=False):
-    condition_text: str
+    condition_text: str       # legacy single-language (optional, backward compat)
+    condition_text_en: str    # bilingual UI-facing description
+    condition_text_zh: str
     observable: str   # "machine_checkable" | "human_judgment" | "unspecified"
     provenance: str   # "stated_by_author" | "inferred"
 
@@ -55,7 +59,9 @@ class Condition(TypedDict, total=False):
 class ScenarioCard(TypedDict, total=False):
     schema_version: str                      # "scenario-1.0"
     scenario_id: str                         # sha256 of normalised content, first 16
-    event_or_hypothesis: str                 # one sentence, preserve source language
+    event_or_hypothesis: str                 # legacy bare (optional, backward compat)
+    event_or_hypothesis_en: str              # bilingual UI-facing one-sentence event
+    event_or_hypothesis_zh: str
     transmission_chain: list[TransmissionStep]
     affected_horizons: list[str]             # subset of ["short", "mid", "long"]
     affected_themes: list[str]               # from existing theme_baskets names
@@ -65,7 +71,9 @@ class ScenarioCard(TypedDict, total=False):
     falsification_conditions: list[Condition]
     current_evidence_status: str             # always "unknown"
     evidence_refs: list                      # always empty list in MVP
-    notes: str
+    notes: str                               # legacy bare (optional, backward compat)
+    notes_en: str                            # bilingual UI-facing notes
+    notes_zh: str
 
 
 # ── ThesisCard sub-structures ────────────────────────────────────────────────
@@ -149,6 +157,8 @@ def new_scenario_card(
     *,
     scenario_id: str = "",
     event_or_hypothesis: str = "",
+    event_or_hypothesis_en: str = "",
+    event_or_hypothesis_zh: str = "",
     transmission_chain: list | None = None,
     affected_horizons: list | None = None,
     affected_themes: list | None = None,
@@ -157,16 +167,22 @@ def new_scenario_card(
     confirmation_conditions: list | None = None,
     falsification_conditions: list | None = None,
     notes: str = "",
+    notes_en: str = "",
+    notes_zh: str = "",
 ) -> ScenarioCard:
     """Build a schema-complete ScenarioCard.
 
-    ``current_evidence_status`` is forced to ``"unknown"`` and ``evidence_refs``
-    to ``[]`` — these two are never caller-overridable.
+    ``event_or_hypothesis`` and ``notes`` are bilingual: the canonical keys are
+    ``*_en`` / ``*_zh``. For convenience the legacy bare ``event_or_hypothesis`` /
+    ``notes`` params seed BOTH language keys when the explicit ``*_en`` / ``*_zh``
+    are not given. ``current_evidence_status`` is forced to ``"unknown"`` and
+    ``evidence_refs`` to ``[]`` — these two are never caller-overridable.
     """
     return {
         "schema_version": SCHEMA_VERSION_SCENARIO,
         "scenario_id": scenario_id,
-        "event_or_hypothesis": event_or_hypothesis,
+        "event_or_hypothesis_en": event_or_hypothesis_en or event_or_hypothesis,
+        "event_or_hypothesis_zh": event_or_hypothesis_zh or event_or_hypothesis,
         "transmission_chain": list(transmission_chain or []),
         "affected_horizons": list(affected_horizons or []),
         "affected_themes": list(affected_themes or []),
@@ -176,7 +192,8 @@ def new_scenario_card(
         "falsification_conditions": list(falsification_conditions or []),
         "current_evidence_status": EVIDENCE_STATUS_FIXED,
         "evidence_refs": [],
-        "notes": notes,
+        "notes_en": notes_en or notes,
+        "notes_zh": notes_zh or notes,
     }
 
 

@@ -205,7 +205,7 @@ Output pure JSON with no markdown fences. The JSON must have exactly this struct
     {
       "index": 1,
       "headline_en": "one sentence summarising this argument in English",
-      "headline_zh": "同一论点的中文一句话摘要",
+      "headline_zh": "Chinese one-sentence summary of the same argument using professional investment terminology",
       "primary_tickers": ["list of tickers explicitly named, uppercase, may be empty"],
       "primary_themes": ["main themes this argument relates to, may be empty"],
       "suggested_horizon": "short | mid | long"
@@ -213,7 +213,7 @@ Output pure JSON with no markdown fences. The JSON must have exactly this struct
   ],
   "article_language": "zh | en | mixed",
   "article_title_en": "English title or best guess",
-  "article_title_zh": "中文标题或最佳猜测"
+  "article_title_zh": "Chinese title or best guess using professional investment terminology"
 }
 
 An argument is independently falsifiable if it can be confirmed or refuted
@@ -264,9 +264,13 @@ Rules you must follow without exception:
 - coi.status must always be "coi_unassessed" unless the author explicitly
   discloses a conflict of interest in the text, in which case set it to
   "coi_disclosed" and quote the disclosure in coi.notes.
-- For every prose field output BOTH an English version (field_en) and
-  a Chinese version (field_zh). The Chinese must use professional investment
-  research terminology, not machine translation.
+- Bilingual prose fields: output BOTH an English version (field_en) and a Chinese
+  version (field_zh) for claim_text, mechanism, condition_text,
+  event_or_hypothesis, and scenario notes. The Chinese must use professional
+  investment research terminology, not machine translation.
+- Verbatim author fields stay single-language — quote the author's original text
+  and do NOT translate: source_quote (numeric_claims), note (unspecified_numerics),
+  and each assumptions entry.
 - affected_themes must only contain values from this list: {theme_list}
   Themes the author mentions that are not in this list go into unmapped_themes.
 
@@ -275,14 +279,24 @@ Use these field names: core_claims (each with claim_text_en, claim_text_zh,
 claim_type, related_tickers, related_themes), numeric_claims (metric, value, unit,
 applies_to, time_reference, provenance, source_quote), unspecified_numerics (metric,
 direction, note), assumptions (list of strings), scenarios (each with
-event_or_hypothesis, transmission_chain [step, from_node, to_node, mechanism,
-provenance], affected_horizons, affected_themes, unmapped_themes, affected_tickers,
-confirmation_conditions [condition_text, observable, provenance],
-falsification_conditions [same], notes), and coi (status, notes)."""
+event_or_hypothesis_en, event_or_hypothesis_zh, transmission_chain [step, from_node,
+to_node, mechanism_en, mechanism_zh, provenance], affected_horizons, affected_themes,
+unmapped_themes, affected_tickers, confirmation_conditions [condition_text_en,
+condition_text_zh, observable, provenance], falsification_conditions [same],
+notes_en, notes_zh), and coi (status, notes)."""
 
 
 def _normalise_str(s) -> str:
     return s if isinstance(s, str) else ""
+
+
+def _scenario_event_text(scenario: dict) -> str:
+    """Canonical event text for id/hashing — English preferred, then bare, then zh."""
+    return (
+        _normalise_str(scenario.get("event_or_hypothesis_en"))
+        or _normalise_str(scenario.get("event_or_hypothesis"))
+        or _normalise_str(scenario.get("event_or_hypothesis_zh"))
+    )
 
 
 def _scenario_id(scenario: dict) -> str:
@@ -293,7 +307,7 @@ def _scenario_id(scenario: dict) -> str:
         for st in chain if isinstance(st, dict)
     )
     basis = (
-        _normalise_str(scenario.get("event_or_hypothesis")).strip().lower()
+        _scenario_event_text(scenario).strip().lower()
         + "::" + chain_repr.lower()
     )
     return hashlib.sha256(basis.encode("utf-8")).hexdigest()[:16]
@@ -326,9 +340,11 @@ def _normalise_scenarios(raw_scenarios, card_themes_fallback=None) -> list[dict]
                 norm.get("scenario_id", "?"),
             )
         norm["current_evidence_status"] = "unknown"
-        if norm.get("evidence_refs"):
+        ev = norm.get("evidence_refs")
+        if ev is not None and ev != []:
             _log.warning(
-                "LLM returned non-empty evidence_refs on scenario %r — clearing to []",
+                "LLM returned non-empty or non-list evidence_refs on scenario %r — "
+                "clearing to []",
                 norm.get("scenario_id", "?"),
             )
         norm["evidence_refs"] = []
@@ -340,8 +356,11 @@ def _normalise_scenarios(raw_scenarios, card_themes_fallback=None) -> list[dict]
         ):
             if not isinstance(norm.get(key), list):
                 norm[key] = []
-        norm["event_or_hypothesis"] = _normalise_str(norm.get("event_or_hypothesis"))
-        norm["notes"] = _normalise_str(norm.get("notes"))
+        # Normalise bilingual scenario prose (en/zh); keep any legacy bare key.
+        for base in ("event_or_hypothesis", "notes"):
+            for key in (f"{base}_en", f"{base}_zh", base):
+                if key in norm:
+                    norm[key] = _normalise_str(norm.get(key))
         norm["scenario_id"] = _scenario_id(norm)
         # Uppercase any tickers.
         norm["affected_tickers"] = [

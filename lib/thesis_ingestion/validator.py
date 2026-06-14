@@ -28,6 +28,17 @@ def _nonempty_str(v) -> bool:
     return isinstance(v, str) and v.strip() != ""
 
 
+def _has_text(item: dict, field: str) -> bool:
+    """True if a bilingual (or legacy bare) prose field has any non-empty value.
+
+    Mirrors ``ui_utils.bi`` fallback order: a ``{field}_en`` / ``{field}_zh`` /
+    bare ``{field}`` is accepted, so legacy single-language cards still validate.
+    """
+    if not isinstance(item, dict):
+        return False
+    return any(_nonempty_str(item.get(k)) for k in (f"{field}_en", f"{field}_zh", field))
+
+
 def validate_card(raw: dict) -> tuple[bool, list[str]]:
     """Validate an extracted thesis card.
 
@@ -155,10 +166,10 @@ def validate_card(raw: dict) -> tuple[bool, list[str]]:
                     f"invalid_transmission_step: scenarios[{si}].transmission_chain[{ci}] "
                     f"missing to_node"
                 )
-            if not _nonempty_str(step.get("mechanism")):
+            if not _has_text(step, "mechanism"):
                 errors.append(
                     f"invalid_transmission_step: scenarios[{si}].transmission_chain[{ci}] "
-                    f"missing mechanism"
+                    f"missing mechanism (need mechanism_en or mechanism_zh)"
                 )
             if step.get("provenance") not in PROVENANCE_VALID:
                 errors.append(
@@ -175,6 +186,11 @@ def validate_card(raw: dict) -> tuple[bool, list[str]]:
                         f"invalid_condition: scenarios[{si}].{field}[{ki}] must be an object"
                     )
                     continue
+                if not _has_text(cond, "condition_text"):
+                    errors.append(
+                        f"invalid_condition: scenarios[{si}].{field}[{ki}] missing "
+                        f"condition_text (need condition_text_en or condition_text_zh)"
+                    )
                 if cond.get("observable") not in OBSERVABLE_VALID:
                     errors.append(
                         f"invalid_condition: scenarios[{si}].{field}[{ki}] observable "
