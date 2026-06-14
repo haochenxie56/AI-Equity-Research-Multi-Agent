@@ -503,6 +503,8 @@ st.divider()
 # ---------------------------------------------------------------------------
 
 st.subheader(t("cockpit_hub_sec_macro"))
+# Jump to the Thesis Library (manually-curated macro research cards).
+st.page_link("pages/10_Thesis_Library.py", label="📚 宏观研报 / Macro thesis cards")
 # Dev-mode only: surface the actual stored type to confirm the dict invariant.
 if os.environ.get("COCKPIT_DEBUG"):
     st.caption(
@@ -622,6 +624,8 @@ st.divider()
 # ---------------------------------------------------------------------------
 
 st.subheader(t("cockpit_hub_sec_themes"))
+# Jump to the Thesis Library (manually-curated theme research cards).
+st.page_link("pages/10_Thesis_Library.py", label="📚 主题研报 / Theme thesis cards")
 _themes = st.session_state.get("theme_momentum_results")
 if not _themes:
     st.info(t("cockpit_hub_themes_not_loaded"))
@@ -686,6 +690,8 @@ st.divider()
 
 st.subheader(t("opp_panel_header"))
 st.caption(t("opp_panel_caption"))
+# Jump to the Thesis Library (research cards related to ranked opportunities).
+st.page_link("pages/10_Thesis_Library.py", label="📚 相关研报 / Related thesis cards")
 _all_signals = st.session_state.get("cockpit_all_signals", []) or []
 _opportunities = st.session_state.get("cockpit_opportunities", []) or []
 _lang_c = st.session_state.get("language", "en")
