@@ -1,18 +1,29 @@
 # AI Investment Agent — Project State
 
-**Last updated**: 2026-06-13 (**Thesis Ingestion MVP — IMPLEMENTED, awaiting Codex
-review.** A standalone thesis-card library: curated external research articles /
-interviews → one-LLM-call-per-argument structured cards → local JSON store → new
-`pages/10_Thesis_Library.py`. Zero interaction with the scoring / ranking / snapshot /
-anchor systems (enforced by isolation tests). See the Thesis Ingestion section
+**Last updated**: 2026-06-14 (**Thesis Ingestion MVP — CLOSED, Codex-approved (two
+review rounds), committed direct to `main`.** A standalone thesis-card library: curated
+external research articles / interviews → one-LLM-call-per-argument structured cards →
+local JSON store → new `pages/10_Thesis_Library.py`. Zero interaction with the scoring /
+ranking / snapshot / anchor systems (enforced by isolation tests). Phase doc:
+`docs/reliability_thesis_ingestion_mvp.md`. See the Thesis Ingestion section
 immediately below. Prior closure: **Batch Segment 2** — earnings-calendar fetch hoist +
 FRED liquidity fetchers (Codex-approved, committed direct to `main`, 2026-06-12); prior
 closures (UI Cleanup Segment 1, Anchor Intelligence v2.5 … v2.3, Round 1, Valuation
 Refactor v1, Phase 7B, Phase 7A) are preserved verbatim in the sections below.)
 
-## Thesis Ingestion MVP — IMPLEMENTED (awaiting Codex review, 2026-06-13)
+## Thesis Ingestion MVP — CLOSED (Codex-approved, 2026-06-14)
 
-A new **thesis-card library** feature, fully isolated from the live scoring/ranking
+**Status: CLOSED.** Two Codex review rounds (R1: 5 findings; R2: 1 one-line finding) all
+resolved and approved. Phase doc: `docs/reliability_thesis_ingestion_mvp.md`.
+
+**Approved commits** (direct to `main`): `3d1cbd5` (R2 final fix — evidence_refs warning
+fires for None / all non-`[]`), `fb80f78` (R1 fixes — English-only prompts, bilingual
+field classification, evidence_refs warn guard, explicit two-step overwrite), `72fa870`
+(fix round — validator is the enforcement point for fabricated numerics; warn-then-
+overwrite on scenario invariants), and `ac29fa6` → `20c7fd4` (initial implementation:
+schema/store/validator, extractor, page, Cockpit jump buttons, reliability suite, docs).
+
+A standalone **thesis-card library** feature, fully isolated from the live scoring/ranking
 pipeline. The user feeds in manually-curated external research (articles / interviews);
 each distinct argument is extracted into a structured card by ONE LLM call, validated
 deterministically, stored as a local JSON file, and browsed through a new Streamlit page.
@@ -41,13 +52,19 @@ deterministically, stored as a local JSON file, and browsed through a new Stream
   `translator.add_bilingual` (bilingual via `field_en`/`field_zh` + `bi()`); only
   local file I/O. The thesis library is imported by NONE of `opportunity_ranker`,
   `signal_engine`, `candidate_generator`, `market_internals` (and friends).
-- **Tests:** `scripts/test_reliability_thesis_ingestion.py` — **67 tests, all green**
-  (116 static assertions; stdlib unittest; no network; temp library root, no `data/`
-  writes). Groups: schema/validation, staleness/active, storage isolation, and the
-  load-bearing isolation invariants (no thesis attr/import in the ranking modules;
-  `save_card` leaves `data/snapshots` & `data/anchor_cache.json` byte-identical).
-- **Not yet done (post-review):** `README.md` closure update (deferred to final
-  closeout after Codex review per the task brief).
+- **Key invariants (verified):** zero interaction with the ranking / snapshot / anchor
+  systems (isolation tests assert no thesis attr/import in `opportunity_ranker`,
+  `signal_engine`, `candidate_generator`, `market_internals`, and that `save_card` leaves
+  `data/snapshots` & `data/anchor_cache.json` byte-identical); the **validator is the
+  enforcement point** for numeric fabrication (the extractor no longer silently sanitises
+  `unspecified_numerics` — a leaked `value` is rejected visibly); all LLM prompts are
+  English-only; bilingual prose via `field_en`/`field_zh` rendered with `bi()`.
+- **Tests:** `scripts/test_reliability_thesis_ingestion.py` — **71 tests, 0 failures**
+  (stdlib unittest; no network; temp library root, no `data/` writes). Groups:
+  schema/validation, staleness/active, storage isolation, and the load-bearing isolation
+  invariants. (67 at first implementation; +4 for the bilingual field classification.)
+- **Closure:** `README.md`, this file, `CURRENT_TASK.md`, and the phase doc
+  (`docs/reliability_thesis_ingestion_mvp.md`) synced at closeout.
 
 ## Batch Segment 2 — ITEM 1 (earnings-calendar fetch hoist) + ITEM 2 (FRED liquidity fetchers) — CLOSED (Codex-approved, committed direct to `main` 2026-06-12)
 

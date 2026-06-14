@@ -236,7 +236,8 @@ investment-agents/
 │   ├── 6_PriceVolume.py            # 量价分析 — K 线 + 多指标叠加
 │   ├── 7_Investment_Cockpit.py     # ⭐ 投研中枢 — 主入口（聚合 + 机会清单 + 快照）
 │   ├── 8_Macro_Dashboard.py        # 宏观仪表盘 + Market Internals 工作台
-│   └── 9_Trading_Desk.py           # 交易台 — 入场策略 / 订单叙事 / thesis 监控
+│   ├── 9_Trading_Desk.py           # 交易台 — 入场策略 / 订单叙事 / thesis 监控
+│   └── 10_Thesis_Library.py            # 研报卡片库 — 摄入 / 浏览 / 管理（Thesis Ingestion MVP）
 │
 ├── lib/
 │   ├── llm_orchestrator.py         # Claude API 调用（LLM 层）
@@ -245,6 +246,7 @@ investment-agents/
 │   ├── candidate_generator.py      # 候选生成（发布扫描 universe）
 │   ├── order_advisor.py            # 状态推导 / 入场策略 v4 / 条件注册表
 │   ├── thesis_monitor.py           # 持仓 thesis 监控（噪音 vs 逻辑破坏）
+│   ├── thesis_ingestion/               # Thesis Ingestion MVP（schema / store / extractor / validator）
 │   ├── market_internals.py         # 脆弱度层（组件/复合/迟滞/滚动重算/vintage 守卫）
 │   ├── macro_regime.py             # 宏观 regime 分类（frozen）
 │   ├── relative_strength.py        # 多窗口 RS（日期对齐 + vintage 标记）
@@ -266,6 +268,7 @@ investment-agents/
 ├── scripts/
 │   ├── test_reliability_*.py       # 79 个可靠性测试套件（数千条断言）
 │   ├── calibrate_fragility_backfill.py  # 30 日脆弱度校准回填工具
+│   ├── test_reliability_thesis_ingestion.py  # 71 项 thesis 卡摄入可靠性断言
 │   ├── backfill_anchors.py         # 估值锚历史离线回填 CLI（可重算锚 + 披露滞后门控）
 │   ├── migrate_anchor_archive_to_shards.py  # 一次性离线：单文件归档 → 按 ticker 分片
 │   ├── daily_scan.py / fetch_financials.py / run_research.py
@@ -298,7 +301,7 @@ investment-agents/
 | Anchor Intelligence v2 | ✅ | **Round 1**：生产者统一 + 结构化分析师锚池 + epoch 戳（approved @ 9e53f04）。**v2.3**：只追加估值锚历史（U1）+ 单 vintage 快照锚区块（U2）+ 确定性迁移读出 + thesis 锚迁移 watch（U3，主体 approved @ 9f6c37e）+ **历史回填**（可重算锚 / 分析师绝不杜撰 / 披露滞后前视防护 / 同日接缝守卫，approved @ c57e56e，merged @ 84daa4a） |
 | Anchor Intelligence v2.4 | ✅ | **估值诊断卡**（公司分型 · 适用/已排除方法及原因 · 锚一致性聚合/离群 · 认可区间 · 确定性 `valuation_role` 映射 → 7A 三时间维度接口 · 价格越界/锚池下移等可证伪机械条件；反向 DCF 与叙事催化为 Phase-8 占位）渲染于个股研究 + 交易台；**F4 估值锚归档按 ticker 分片**（`data/anchor_archive/<TICKER>.jsonl`，读取 O(全量)→O(单票)，一次性离线迁移脚本）。纯确定性、零新增锚计算、任何路径零联网；50 项诊断断言，full sweep GREEN=65/RED=13；**复审通过，approved @ `18dfcf2`，已 `--no-ff` 合并 main** |
 | Anchor Intelligence v2.5（v2 系列收官） | ✅ | **多维同业画像**：在 v1 的行业 × 增长带 × 规模带上新增利润率/盈利阶段/收入周期性数值维（确定性，复用已抓取的 `info`）；**同业候选 = 数值维 ∩ 主题篮子成分（与轮动同一份策展名单，单一事实来源）∪ 人工复核的 `peer_profiles` 覆盖标签**（最小种子仅 KTOS——篮子未覆盖的国防科技角落；MSCI/Syntax/Morningstar 等付费黑箱分类已评估并拒绝）。**`peer_match_quality` 诚实降级**：合格同业 < 4 时置 `low` + `insufficient_comparable_peers`，**绝不用原始 GICS 凑数**，并将 EV/S+EV/EBITDA 同业倍数锚**排除**出融合（`relative_pe` 行业图谱锚不受影响）——非可比同业算出的倍数比没有同业锚更糟。诊断卡呈现同业质量。`peers=None`（排序/刷新/交易台）→ 不评估 → 与 v2.4 逐字节一致。SNOW→高质量云同业、KTOS→低质量降级至仅分析师锚的真实路径验收；`peer_match` 49 新套件、诊断卡 50→54、full sweep GREEN=66/RED=13。**B1 修复轮**：`_peers` 曾被排除出 `compute_app_fair_value` 缓存键，却决定 `peer_match_quality` 与 EV 锚取舍 → 首写者依赖（与轮回-1 epoch 混淆同类）；因同业匹配同时影响 EV 锚的取舍与**数值**，故采用 Option A——同业集签名 `peer_sig` 进入缓存键，同业版/无同业版分别缓存、调用顺序无关，无同业路径与 v2.4 逐字节一致（§10 双向测试，判别性已验证）。**复审通过，approved @ `6f9c1ec`，已 `--no-ff` 合并 main；本轮收官 Anchor Intelligence v2 系列** |
-| Thesis Ingestion MVP | 计划 | 人选稿、机器结构化：访谈/研报 → 带可证伪条件的 thesis 卡片 |
+| Thesis Ingestion MVP | ✅ | 人工策展外部研报/访谈 → 单次 LLM 抽取 → 本地 JSON 结构化 thesis 卡；带可证伪条件、时效分级、双语渲染、卡片库独立页面（pages/10）、Cockpit 跳转入口；MVP 零消费（纯攒库），与排序/快照/锚系统零交集 |
 | Phase 7C / 7D | 计划 | 主题受益层级与跨层比较 → 反馈环（推荐质量复盘） |
 | Phase 8 — Evidence Infrastructure | 计划 | 证据包 + 反向 DCF + 对抗式估值辩论 + 宏观 LLM 事件/归因 + IPO/流动性日历；首个「章节 agent」在此验证 |
 | Phase 9 — Agent Synthesis Layer | 远期 | 先做人在环 **Judgment Console**（判断收口页：LLM 在证据约束下给建议、人确认/覆写、来源留痕）→ 验证判断质量后逐步提高自动化；终态 = 章节 agent + orchestrator（agent 吃结构化判断、不碰原始数字；orchestrator 做冲突仲裁、不出操作指令） |

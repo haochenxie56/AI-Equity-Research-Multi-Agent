@@ -5,38 +5,14 @@
 > history preserved verbatim). This file keeps only the active phase. The
 > long-form running status remains in `docs/ai_dev_state/PROJECT_STATE.md`.
 
-## Thesis Ingestion MVP (IN PROGRESS — implemented, awaiting Codex review, 2026-06-13)
+Current task: Legacy red test suite archival (independent batch)
+Status: Not started
+Next action: Archive 13 pre-existing RED suites to scripts/archive/, update parity baseline
 
-A standalone **thesis-card library**, fully isolated from the live scoring / ranking /
-snapshot / anchor systems. Curated external research (articles / interviews) → one LLM
-call per distinct argument → deterministic validation → local JSON store → new
-`pages/10_Thesis_Library.py`.
-
-**Shipped (on `main`, awaiting review — not yet a closed phase):**
-
-- `lib/thesis_ingestion/`: `schema.py`, `store.py`, `validator.py`, `extractor.py`,
-  `__init__.py` (commits: schema/store/validator, then extractor).
-- `pages/10_Thesis_Library.py` — Library + Ingest modes (bilingual via `bi()`).
-- `pages/7_Investment_Cockpit.py` — three additive `st.page_link` jump buttons (buttons
-  only; no logic restructured).
-- `scripts/test_reliability_thesis_ingestion.py` — **67 tests green** (116 assertions);
-  stdlib unittest, no network, temp library root (no `data/` writes). Groups: schema/
-  validation, staleness/active, storage isolation, isolation invariants.
-
-**Run the suite:**
-
-```bash
-python scripts/test_reliability_thesis_ingestion.py -v
-```
-
-**Hard constraints honoured:** no `approved_for_execution`; no broker/order/execution
-field; `current_evidence_status` always `"unknown"`; `evidence_refs` always `[]`;
-`card_status ∈ {active, silenced, unavailable}`; no paid API; no `deep-translator` /
-`translator.add_bilingual`; only local file I/O. Thesis library imported by none of
-`opportunity_ranker` / `signal_engine` / `candidate_generator` / `market_internals`.
-
-**Pending (post-review):** `README.md` closure update (deferred to final closeout after
-Codex review per the task brief). Decisions to flag are in the completion report.
+> **Thesis Ingestion MVP — CLOSED (Codex-approved, 2026-06-14).** Two review rounds, all
+> findings resolved; 71 tests passing; zero interaction with ranking/snapshot/anchor
+> systems. Full summary in `docs/ai_dev_state/PROJECT_STATE.md` and the phase doc
+> `docs/reliability_thesis_ingestion_mvp.md`.
 
 ## Batch Segment 2 — ITEM 1 (earnings-calendar fetch hoist) + ITEM 2 (FRED liquidity fetchers) (CLOSED — Codex-approved, committed direct to `main` 2026-06-12)
 
