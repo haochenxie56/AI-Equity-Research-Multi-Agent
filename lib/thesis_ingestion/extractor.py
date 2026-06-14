@@ -29,6 +29,7 @@ import io
 import json
 import logging
 import os
+import pathlib
 import re
 from datetime import datetime
 
@@ -108,8 +109,9 @@ def get_llm_client():
     # The thesis feature is import-isolated, so unlike the Cockpit path it does
     # not transitively trigger another module's load_dotenv(). Load it explicitly
     # here (idempotent — only sets vars not already present) so a direct visit to
-    # the Thesis Library page still picks up ANTHROPIC_API_KEY from .env.
-    load_dotenv()
+    # the Thesis Library page still picks up ANTHROPIC_API_KEY from .env. Explicit
+    # repo-root path (CWD-independent), consistent with the other modules.
+    load_dotenv(pathlib.Path(__file__).resolve().parent.parent.parent / ".env")
 
     import anthropic
 
