@@ -503,8 +503,6 @@ st.divider()
 # ---------------------------------------------------------------------------
 
 st.subheader(t("cockpit_hub_sec_macro"))
-# Jump to the Thesis Library (manually-curated macro research cards).
-st.page_link("pages/10_Thesis_Library.py", label="📚 宏观研报 / Macro thesis cards")
 # Dev-mode only: surface the actual stored type to confirm the dict invariant.
 if os.environ.get("COCKPIT_DEBUG"):
     st.caption(
@@ -624,8 +622,6 @@ st.divider()
 # ---------------------------------------------------------------------------
 
 st.subheader(t("cockpit_hub_sec_themes"))
-# Jump to the Thesis Library (manually-curated theme research cards).
-st.page_link("pages/10_Thesis_Library.py", label="📚 主题研报 / Theme thesis cards")
 _themes = st.session_state.get("theme_momentum_results")
 if not _themes:
     st.info(t("cockpit_hub_themes_not_loaded"))
@@ -680,6 +676,14 @@ else:
                             f"{t('cockpit_hub_breadth')}: "
                             f"{int(_bb*100)}% > {getattr(_th, 'benchmark', 'QQQ')}"
                             + (f" · {int(_ba*100)}% > SMA20" if _ba is not None else ""))
+                # Contextual jump to the Thesis Library, pre-filtered to this theme.
+                _theme_key = getattr(_th, "theme_key", "") or ""
+                if _theme_key:
+                    st.page_link(
+                        "pages/10_Thesis_Library.py",
+                        label="📚 相关研报" if _lang == "zh" else "📚 Thesis cards",
+                        query_params={"theme": _theme_key},
+                    )
 
 st.divider()
 
@@ -690,8 +694,6 @@ st.divider()
 
 st.subheader(t("opp_panel_header"))
 st.caption(t("opp_panel_caption"))
-# Jump to the Thesis Library (research cards related to ranked opportunities).
-st.page_link("pages/10_Thesis_Library.py", label="📚 相关研报 / Related thesis cards")
 _all_signals = st.session_state.get("cockpit_all_signals", []) or []
 _opportunities = st.session_state.get("cockpit_opportunities", []) or []
 _lang_c = st.session_state.get("language", "en")
@@ -795,6 +797,13 @@ def _render_opportunity_card(card: dict, rank: int, horizon: str,
             _hints.append(f"⏳ {t('opp_rs_stale')}")
         if _hints:
             st.caption(" · ".join(_hints))
+        # Contextual jump to the Thesis Library, pre-filtered to this ticker.
+        _tcol = st.columns([1, 3])
+        _tcol[0].page_link(
+            "pages/10_Thesis_Library.py",
+            label="📚 研报" if _lang_c == "zh" else "📚 Thesis",
+            query_params={"ticker": tk},
+        )
 
 
 if not _opportunities:

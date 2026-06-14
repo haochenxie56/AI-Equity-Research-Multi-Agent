@@ -123,8 +123,13 @@ def categorize_card(card: dict) -> set[str]:
 
 # ── Backup folder open ────────────────────────────────────────────────────────
 def _open_folder(folder: str) -> None:
-    if not folder or not os.path.isdir(folder):
-        st.warning(_tx("Folder does not exist.", "文件夹不存在。"))
+    if not folder:
+        return  # the Open-folder button is disabled when the path is empty
+    if not os.path.isdir(folder):
+        st.warning(_tx(
+            "Path does not exist. Please create the folder first.",
+            "路径不存在，请先创建该文件夹",
+        ))
         return
     try:
         if sys.platform.startswith("win"):
@@ -164,8 +169,23 @@ st.caption(_tx(
     "外部研报手动整理 → 结构化论点卡片。仅供研究，不构成投资建议。",
 ))
 
-# A programmatic mode switch (e.g. Re-extract) is applied here, BEFORE the radio
-# widget is instantiated, so we never mutate a widget-bound key after creation.
+# ── Query-param deep links (e.g. from the Cockpit theme / signal cards) ──
+# Pre-apply a ticker / theme filter, force Library mode, then clear the URL so it
+# stays clean during later interactions. Done BEFORE the mode radio + filter
+# widgets are instantiated so we never mutate a widget-bound key after creation.
+_qp_ticker = (st.query_params.get("ticker", "") or "").upper().strip()
+_qp_theme = (st.query_params.get("theme", "") or "").strip()
+if _qp_ticker or _qp_theme:
+    st.session_state["thesis_force_mode"] = "library"
+    if _qp_ticker:
+        st.session_state["f_ticker"] = _qp_ticker
+    if _qp_theme:
+        st.session_state["f_theme"] = _qp_theme
+    st.query_params.clear()
+
+# A programmatic mode switch (e.g. Re-extract, or a query-param deep link) is
+# applied here, BEFORE the radio widget is instantiated, so we never mutate a
+# widget-bound key after creation.
 if "thesis_force_mode" in st.session_state:
     st.session_state["thesis_mode"] = st.session_state.pop("thesis_force_mode")
 
@@ -320,9 +340,16 @@ if _mode == "library":
         fcols = st.columns([2, 2, 1])
         f_ticker = fcols[0].text_input(_tx("Filter by ticker", "按代码筛选"), key="f_ticker").upper().strip()
         all_themes = sorted({t for c in cards for t in _card_themes(c)})
+        # Include any pre-applied theme (e.g. from a ?theme= deep link) in the
+        # options even if no card references it yet, so the stored f_theme value
+        # is always a valid selectbox option (otherwise Streamlit raises).
+        _active_theme = st.session_state.get("f_theme", "(all)")
+        _theme_opts = ["(all)"] + sorted(
+            set(all_themes) | ({_active_theme} if _active_theme not in ("(all)", "") else set())
+        )
         f_theme = fcols[1].selectbox(
             _tx("Filter by theme", "按主题筛选"),
-            options=["(all)"] + all_themes, key="f_theme",
+            options=_theme_opts, key="f_theme",
         )
         f_status = fcols[2].selectbox(
             _tx("Status", "状态"),
@@ -383,7 +410,9 @@ if _mode == "ingest":
     if folder != st.session_state.get("thesis_backup_folder", ""):
         st.session_state["thesis_backup_folder"] = folder
         store.set_backup_folder(folder)
-    if bcols[1].button("📂 " + _tx("Open folder", "打开文件夹")):
+    _folder_set = bool((st.session_state.get("thesis_backup_folder", "") or "").strip())
+    if bcols[1].button("📂 " + _tx("Open folder", "打开文件夹"),
+                       disabled=not _folder_set):
         _open_folder(st.session_state.get("thesis_backup_folder", ""))
 
     reext = st.session_state.get("thesis_reextract_path")
