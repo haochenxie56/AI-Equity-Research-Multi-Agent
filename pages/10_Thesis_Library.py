@@ -681,6 +681,9 @@ if _mode == "ingest":
                                         "action": "overwritten" if overwrite else "created",
                                     })
                                     st.session_state.pop("thesis_overwrite_pending", None)
+                                    # Reset so the next upload of the same document
+                                    # shows the warning again (not a silent overwrite).
+                                    st.session_state["thesis_ing_overwrite"] = False
                                     st.success(_tx(
                                         f"Saved {cid} ({'overwritten' if overwrite else 'created'}).",
                                         f"已保存 {cid}（{'overwritten' if overwrite else 'created'}）。",
@@ -706,6 +709,9 @@ if _mode == "ingest":
                                         "action": "overwritten",
                                     })
                                     st.session_state.pop("thesis_overwrite_pending", None)
+                                    # Reset so the next upload of the same document
+                                    # shows the warning again (not a silent overwrite).
+                                    st.session_state["thesis_ing_overwrite"] = False
                                     st.success(_tx(f"Overwrote {cid}.", f"已覆盖 {cid}。"))
 
     if file_bytes and st.button(_tx("Reset ingest", "重置录入"), key="reset_ingest"):

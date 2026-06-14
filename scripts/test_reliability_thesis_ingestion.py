@@ -288,6 +288,12 @@ class TestSchemaValidation(unittest.TestCase):
         self.assertFalse(ok)
         self.assertHasCode(errors, "invalid_core_claim")
 
+    def test_empty_core_claims_rejected(self):
+        c = valid_card(); c["core_claims"] = []
+        ok, errors = validator.validate_card(c)
+        self.assertFalse(ok)
+        self.assertHasCode(errors, "invalid_core_claims")
+
     def test_invalid_prompt_version(self):
         c = valid_card(); c["extraction_meta"]["prompt_version"] = "v0"
         ok, errors = validator.validate_card(c)

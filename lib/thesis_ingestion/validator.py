@@ -238,6 +238,8 @@ def validate_card(raw: dict) -> tuple[bool, list[str]]:
     if not isinstance(core_claims, list):
         errors.append("invalid_core_claims: core_claims must be a list")
         core_claims = []
+    if isinstance(core_claims, list) and len(core_claims) == 0:
+        errors.append("invalid_core_claims: core_claims must not be empty")
     for i, cc in enumerate(core_claims):
         if not isinstance(cc, dict):
             errors.append(f"invalid_core_claim: core_claims[{i}] must be an object")

@@ -263,6 +263,15 @@ research article or interview.
 You are extracting argument #{argument_index}: "{argument_headline}"
 
 Rules you must follow without exception:
+- core_claims is the most important field. For the argument you are
+  extracting, you MUST produce at least one item in core_claims. Each
+  item represents one distinct claim the author makes within this
+  argument. At minimum, produce one item summarising the argument's
+  central thesis. Use claim_type "thesis" for the main claim,
+  "risk_warning" for stated risks, "timing_call" for time-specific
+  predictions, and "structural_observation" for factual observations
+  the author uses as supporting evidence. claim_text_en and
+  claim_text_zh are both required for every item.
 - Faithfully represent what the author said. Do not add, infer, or embellish.
 - For every numeric claim the author made explicitly, include it in numeric_claims
   with provenance "stated_by_author" and a source_quote.
