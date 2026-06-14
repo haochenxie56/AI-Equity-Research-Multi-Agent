@@ -25,6 +25,7 @@ import sys
 import tempfile
 import types
 import unittest
+from unittest import mock
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -293,6 +294,45 @@ class TestSchemaValidation(unittest.TestCase):
         ok, errors = validator.validate_card(c)
         self.assertFalse(ok)
         self.assertHasCode(errors, "invalid_core_claims")
+
+    def test_inner_object_parse_raises_extraction_error(self):
+        # Regression: when the LLM emits unescaped quotes, the top-level JSON is
+        # undecodable and _parse_json's scanner falls through to the first inner
+        # object (a core_claims item). extract_card must turn that silent
+        # data-loss into a visible ExtractionError, not assemble an empty card.
+        from lib.thesis_ingestion import extractor as ex
+
+        inner = {  # keys of a single core_claims ITEM, not a card
+            "claim_text_en": "x", "claim_text_zh": "y", "claim_type": "thesis",
+            "related_tickers": [], "related_themes": [],
+        }
+        with mock.patch.object(ex, "_call", return_value='{"junk": 1}'), \
+             mock.patch.object(ex, "_parse_json", return_value=inner):
+            with self.assertRaises(ex.ExtractionError):
+                ex.extract_card(
+                    file_text="text", argument_index=1, argument_headline="h",
+                    horizon_type="mid", doc_meta={"doc_hash": "a" * 64},
+                    llm_client=None, extraction_seq=1,
+                )
+
+    def test_valid_top_level_parse_does_not_raise(self):
+        # A genuine card object (has core_claims at top level) must NOT trip the
+        # inner-object guard.
+        from lib.thesis_ingestion import extractor as ex
+
+        card_like = {
+            "core_claims": [{"claim_text_en": "a", "claim_text_zh": "b"}],
+            "numeric_claims": [], "unspecified_numerics": [],
+            "assumptions": [], "scenarios": [], "coi": {"status": "coi_unassessed"},
+        }
+        with mock.patch.object(ex, "_call", return_value="{}"), \
+             mock.patch.object(ex, "_parse_json", return_value=card_like):
+            card = ex.extract_card(
+                file_text="text", argument_index=1, argument_headline="h",
+                horizon_type="mid", doc_meta={"doc_hash": "a" * 64},
+                llm_client=None, extraction_seq=1,
+            )
+        self.assertEqual(len(card["core_claims"]), 1)
 
     def test_invalid_prompt_version(self):
         c = valid_card(); c["extraction_meta"]["prompt_version"] = "v0"

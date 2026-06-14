@@ -638,6 +638,16 @@ if _mode == "ingest":
                                     )
                                     extracted.append(card)
                                     seq += 1
+                                except ExtractionError as e:
+                                    st.error(
+                                        "提取失败：LLM 返回了无效 JSON，请重试。如问题持续，"
+                                        "请检查文档是否包含特殊字符。\n\n"
+                                        "Extraction failed: LLM returned invalid JSON. Please retry. "
+                                        "If the problem persists, check whether the document contains "
+                                        "special characters.\n\n"
+                                        f"Details: {e}"
+                                    )
+                                    continue  # skip to next selected argument
                                 except Exception as exc:  # noqa: BLE001
                                     st.error(_tx(
                                         f"Argument #{arg.get('index')} failed: {exc}",

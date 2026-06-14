@@ -232,7 +232,10 @@ Output pure JSON with no markdown fences. The JSON must have exactly this struct
 An argument is independently falsifiable if it can be confirmed or refuted
 without relying on other arguments in the same article.
 Do not merge all arguments into one. Do not invent arguments not present in the text.
-Output between 1 and 6 arguments. If the article has only one coherent argument, output 1."""
+Output between 1 and 6 arguments. If the article has only one coherent argument, output 1.
+Important: your response must be valid JSON. Use 「」 or 『』 for
+quotation marks inside string values. Never use unescaped ASCII
+double-quotes inside a JSON string value."""
 
 
 def preview_article(file_text: str, llm_client) -> dict:
@@ -272,6 +275,10 @@ Rules you must follow without exception:
   predictions, and "structural_observation" for factual observations
   the author uses as supporting evidence. claim_text_en and
   claim_text_zh are both required for every item.
+- Your response must be valid JSON. When you need to quote a term,
+  ticker, or phrase inside a string value, use Chinese quotation marks
+  「」 or 『』 instead of ASCII double-quotes. Never use unescaped
+  ASCII double-quotes inside a JSON string value.
 - Faithfully represent what the author said. Do not add, infer, or embellish.
 - For every numeric claim the author made explicitly, include it in numeric_claims
   with provenance "stated_by_author" and a source_quote.
@@ -424,10 +431,32 @@ def extract_card(
     )
     raw_text = _call(llm_client, system, file_text, max_tokens=4000)
     parsed = _parse_json(raw_text)
+
+    # Guard against mis-parse: if the scanner fell through to an inner
+    # object, parsed will look like a claim item rather than a card.
+    # A valid top-level response must contain at least one of these keys.
+    _EXPECTED_TOP_LEVEL_KEYS = {
+        "core_claims", "numeric_claims", "scenarios",
+        "assumptions", "coi", "source_language"
+    }
+    if parsed and not (set(parsed.keys()) & _EXPECTED_TOP_LEVEL_KEYS):
+        # The parse landed on an inner object. Log the raw response and raise.
+        _log.error(
+            "extract_card: _parse_json returned an inner object (keys=%s). "
+            "Raw response snippet: %.500s",
+            list(parsed.keys()),
+            raw_text[:500] if raw_text else "",
+        )
+        raise ExtractionError(
+            f"JSON parse landed on inner object (keys={list(parsed.keys())}). "
+            f"The LLM likely emitted unescaped quotes. Raw (first 500 chars): "
+            f"{raw_text[:500] if raw_text else ''}"
+        )
+
     if not parsed:
         raise ExtractionError(
-            f"extract_card: could not parse JSON from response "
-            f"({len(raw_text)} chars). Raw head: {raw_text[:400]!r}"
+            f"Failed to parse LLM response as JSON. "
+            f"Raw (first 500 chars): {raw_text[:500] if raw_text else ''}"
         )
 
     doc_hash = str(doc_meta.get("doc_hash", ""))
