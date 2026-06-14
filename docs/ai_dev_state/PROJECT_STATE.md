@@ -1,21 +1,53 @@
 # AI Investment Agent — Project State
 
-**Last updated**: 2026-06-12 (**Batch Segment 2 — ITEM 1 (bulk earnings-calendar
-fetch hoisted before the Track B fan-out, cold-cache 429 fix) + ITEM 2 (FRED liquidity
-fetchers: SOFR / ON RRP / TGA / bank reserves, display-only, deliberately excluded from
-the snapshot _meta and `fetch_all_macro`/`MacroDataResult`) — Codex-approved, committed
-DIRECT to `main` (not a `--no-ff` branch merge).** See the segment-2 section immediately
-below. Prior closure: **UI Cleanup Batch — Segment 1: Market-Internals Fragility
-plain-language + i18n pass — Codex-approved, committed DIRECT to `main` (not a `--no-ff`
-branch merge), folded with the previously-approved README principle correction.** See the
-segment-1 section below. Prior closure: **Anchor
-Intelligence v2.5 — multi-dimensional peer profile + honest `peer_match_quality`
-degrade — CLOSED, APPROVED @ `6f9c1ec`, merged to `main` via `--no-ff`** off branch
-`phase-anchor-intel-v2-5` (off `main` @ `ef8cb28`). **v2.5 is the FINAL v2 round — it
-closes the Anchor Intelligence v2 series, which is now COMPLETE.** See the v2.5 section
-below; v2.4 (CLOSED, APPROVED @ `18dfcf2`) follows, then v2.3, Round 1,
-Valuation Refactor v1, Phase 7B, Valuation Stop-the-Bleed, and Phase 7A. Prior
-status blob preserved verbatim afterward.)
+**Last updated**: 2026-06-13 (**Thesis Ingestion MVP — IMPLEMENTED, awaiting Codex
+review.** A standalone thesis-card library: curated external research articles /
+interviews → one-LLM-call-per-argument structured cards → local JSON store → new
+`pages/10_Thesis_Library.py`. Zero interaction with the scoring / ranking / snapshot /
+anchor systems (enforced by isolation tests). See the Thesis Ingestion section
+immediately below. Prior closure: **Batch Segment 2** — earnings-calendar fetch hoist +
+FRED liquidity fetchers (Codex-approved, committed direct to `main`, 2026-06-12); prior
+closures (UI Cleanup Segment 1, Anchor Intelligence v2.5 … v2.3, Round 1, Valuation
+Refactor v1, Phase 7B, Phase 7A) are preserved verbatim in the sections below.)
+
+## Thesis Ingestion MVP — IMPLEMENTED (awaiting Codex review, 2026-06-13)
+
+A new **thesis-card library** feature, fully isolated from the live scoring/ranking
+pipeline. The user feeds in manually-curated external research (articles / interviews);
+each distinct argument is extracted into a structured card by ONE LLM call, validated
+deterministically, stored as a local JSON file, and browsed through a new Streamlit page.
+
+- **Package `lib/thesis_ingestion/`** — `schema.py` (ThesisCard / ScenarioCard TypedDicts
+  + deterministic builders + invariant constants), `store.py` (atomic card read/write,
+  append-only `ingest_log.jsonl`, dedup-by-hash, status management, `scan_unavailable`,
+  read-time staleness / `is_active`; configurable library root for test isolation),
+  `validator.py` (post-extraction validation — provenance, evidence-status/refs
+  invariants, fabricated-numeric guard, bilingual core-claim + structural checks; no
+  short-circuit), `extractor.py` (`preview_article` + per-argument `extract_card`;
+  txt/md/pdf/docx reading with soft `pdfplumber`/`python-docx` imports + raw-text
+  fallback; theme-name injection from `theme_baskets`; all IDs/invariants/meta set
+  deterministically — the LLM only interprets, never computes a number).
+- **`pages/10_Thesis_Library.py`** — Library mode (cards grouped into 宏观/Macro ·
+  行业/Sector · 主题/Theme · 个股/Stock via deterministic categorisation; horizon /
+  staleness / status / active badges; Silence/Unsilence/Delete/Re-extract; filter bar;
+  on-load `scan_unavailable`) and Ingest mode (backup-folder config + open-folder;
+  upload; dedup overwrite gate; preview → per-argument horizon override + selection →
+  one extraction call per argument → validation-gated Confirm & Save + ingest-log append).
+- **`pages/7_Investment_Cockpit.py`** — additive `st.page_link` jump buttons to the new
+  page after the macro / themes / opportunity-ranking section headers (buttons only).
+- **Hard constraints honoured:** no `approved_for_execution`; no broker/order/execution
+  field; `current_evidence_status` always `"unknown"`; `evidence_refs` always `[]`;
+  `card_status ∈ {active, silenced, unavailable}`; no paid API; no `deep-translator` /
+  `translator.add_bilingual` (bilingual via `field_en`/`field_zh` + `bi()`); only
+  local file I/O. The thesis library is imported by NONE of `opportunity_ranker`,
+  `signal_engine`, `candidate_generator`, `market_internals` (and friends).
+- **Tests:** `scripts/test_reliability_thesis_ingestion.py` — **67 tests, all green**
+  (116 static assertions; stdlib unittest; no network; temp library root, no `data/`
+  writes). Groups: schema/validation, staleness/active, storage isolation, and the
+  load-bearing isolation invariants (no thesis attr/import in the ranking modules;
+  `save_card` leaves `data/snapshots` & `data/anchor_cache.json` byte-identical).
+- **Not yet done (post-review):** `README.md` closure update (deferred to final
+  closeout after Codex review per the task brief).
 
 ## Batch Segment 2 — ITEM 1 (earnings-calendar fetch hoist) + ITEM 2 (FRED liquidity fetchers) — CLOSED (Codex-approved, committed direct to `main` 2026-06-12)
 
