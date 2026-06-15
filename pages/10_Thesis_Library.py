@@ -447,7 +447,7 @@ if _mode == "library":
 def _reset_ingest_state() -> None:
     for k in ("thesis_ing_filebytes", "thesis_ing_filename", "thesis_ing_hash",
               "thesis_ing_text", "thesis_ing_preview", "thesis_ing_extracted",
-              "thesis_ing_doc_path", "thesis_ing_overwrite", "thesis_overwrite_pending",
+              "thesis_ing_doc_path", "thesis_ing_overwrite_hash", "thesis_overwrite_pending",
               "thesis_saved_card_ids"):
         st.session_state.pop(k, None)
 
@@ -517,6 +517,9 @@ if _mode == "ingest":
                 st.session_state["thesis_ing_filebytes"] = fb
                 st.session_state["thesis_ing_filename"] = uploaded.name
                 st.session_state["thesis_ing_hash"] = _dh
+                # A new document invalidates any prior overwrite confirmation.
+                if st.session_state.get("thesis_ing_overwrite_hash") != _dh:
+                    st.session_state.pop("thesis_ing_overwrite_hash", None)
                 # Auto-save the upload to the configured backup folder immediately.
                 _folder = st.session_state.get("thesis_backup_folder", "")
                 _saved_path = _write_backup(fb, uploaded.name, _dh, _folder)
@@ -536,7 +539,7 @@ if _mode == "ingest":
         saved_in_session = st.session_state.get("thesis_saved_card_ids", set())
         prior_session_cards = [c for c in existing_cards if c not in saved_in_session]
         proceed = True
-        if prior_session_cards and not st.session_state.get("thesis_ing_overwrite"):
+        if prior_session_cards and st.session_state.get("thesis_ing_overwrite_hash") != doc_hash:
             _example = prior_session_cards[0]
             st.warning(_tx(
                 f"This document has already been ingested (card ID: {_example}). "
@@ -545,7 +548,7 @@ if _mode == "ingest":
             ))
             wc = st.columns(2)
             if wc[0].button(_tx("Confirm overwrite", "确认覆盖"), key="ow_confirm"):
-                st.session_state["thesis_ing_overwrite"] = True
+                st.session_state["thesis_ing_overwrite_hash"] = doc_hash
                 st.rerun()
             if wc[1].button(_tx("Cancel", "取消"), key="ow_cancel"):
                 _reset_ingest_state()
@@ -684,7 +687,7 @@ if _mode == "ingest":
                                 st.markdown(f"  - `{e}`")
                         else:
                             cid = card.get("card_id")
-                            overwrite = bool(st.session_state.get("thesis_ing_overwrite"))
+                            overwrite = st.session_state.get("thesis_ing_overwrite_hash") == doc_hash
                             pending = st.session_state.get("thesis_overwrite_pending") == cid
                             if st.button(_tx("Confirm & Save", "确认并保存"),
                                          key=f"save_{i}_{cid}"):
@@ -697,12 +700,11 @@ if _mode == "ingest":
                                         "action": "overwritten" if overwrite else "created",
                                     })
                                     st.session_state.pop("thesis_overwrite_pending", None)
-                                    # Reset so the next upload of the same document
-                                    # shows the warning again (not a silent overwrite).
-                                    st.session_state["thesis_ing_overwrite"] = False
                                     # Track this card as saved IN THIS session so the
                                     # next card from the same document is not flagged
-                                    # as a prior-session duplicate.
+                                    # as a prior-session duplicate. The overwrite
+                                    # confirmation is doc_hash-scoped and stays active
+                                    # for the whole batch (not reset per card).
                                     if "thesis_saved_card_ids" not in st.session_state:
                                         st.session_state["thesis_saved_card_ids"] = set()
                                     st.session_state["thesis_saved_card_ids"].add(cid)
@@ -731,9 +733,6 @@ if _mode == "ingest":
                                         "action": "overwritten",
                                     })
                                     st.session_state.pop("thesis_overwrite_pending", None)
-                                    # Reset so the next upload of the same document
-                                    # shows the warning again (not a silent overwrite).
-                                    st.session_state["thesis_ing_overwrite"] = False
                                     if "thesis_saved_card_ids" not in st.session_state:
                                         st.session_state["thesis_saved_card_ids"] = set()
                                     st.session_state["thesis_saved_card_ids"].add(cid)
