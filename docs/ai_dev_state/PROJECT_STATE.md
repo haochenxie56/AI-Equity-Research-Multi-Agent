@@ -1,7 +1,7 @@
 # AI Investment Agent — Project State
 
-**Last updated**: 2026-06-14 (**Thesis Ingestion MVP — CLOSED, Codex-approved (two
-review rounds), committed direct to `main`.** A standalone thesis-card library: curated
+**Last updated**: 2026-06-15 (**Thesis Ingestion MVP — CLOSED + UI verification batch
+complete (16 fix commits, 80 tests, pushed to `main`).** A standalone thesis-card library: curated
 external research articles / interviews → one-LLM-call-per-argument structured cards →
 local JSON store → new `pages/10_Thesis_Library.py`. Zero interaction with the scoring /
 ranking / snapshot / anchor systems (enforced by isolation tests). Phase doc:
@@ -15,6 +15,29 @@ Refactor v1, Phase 7B, Phase 7A) are preserved verbatim in the sections below.)
 
 **Status: CLOSED.** Two Codex review rounds (R1: 5 findings; R2: 1 one-line finding) all
 resolved and approved. Phase doc: `docs/reliability_thesis_ingestion_mvp.md`.
+
+**UI verification batch — COMPLETE (2026-06-15, 16 fix commits since `667e483`, pushed to
+`main`).** Final test count: **80** (0 failures). Key fixes:
+- **Sidebar nav**: Thesis Library added to the hand-rolled sidebar (`showSidebarNavigation=false`).
+- **Contextual jump buttons** (`switch_page` + session_state, replacing non-working
+  `page_link` query_params): macro section → Macro tab; theme cards → Theme tab + theme
+  filter; signal cards → Stock tab + ticker filter. Library reader also infers the tab
+  from `?ticker`/`?theme` for URL-based deep links.
+- **Backup folder auto-setup**: default `../thesis_backup`, auto-created; uploaded files
+  auto-archived to it (collision-suffixed); WSL/macOS/Linux/Windows open-folder.
+- **Document formats**: docx/pdf/pptx via `python-docx` / `pdfplumber` / `python-pptx`
+  (hard deps); friendly image-format rejection.
+- **JSON robustness**: `json-repair` for LLM JSON malformation (unescaped quotes, trailing
+  commas), replacing the hand-rolled state machine; no-fall-through top-level parse.
+- **Enum normalisation** at assembly: `observable` (bool→enum), `affected_horizons`
+  (Chinese/decorated → short/mid/long via prefix match), `direction`, and `provenance`
+  (None/omitted → `inferred`).
+- **Multi-card dedup fix**: cards 2–N of one document no longer trigger a false overwrite
+  warning; overwrite confirmation scoped to `doc_hash` (not a per-card boolean).
+- **Defensive `isinstance` guards** on all nested list-of-object fields (drop malformed
+  items rather than reject the whole card).
+- **`load_dotenv`** made explicit (CWD-independent) in `get_llm_client` so a direct visit
+  to the Library page resolves `ANTHROPIC_API_KEY`.
 
 **Approved commits** (direct to `main`): `3d1cbd5` (R2 final fix — evidence_refs warning
 fires for None / all non-`[]`), `fb80f78` (R1 fixes — English-only prompts, bilingual

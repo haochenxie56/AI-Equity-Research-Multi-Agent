@@ -9,9 +9,11 @@ Current task: Legacy red test suite archival (independent batch)
 Status: Not started
 Next action: Archive 13 pre-existing RED suites to scripts/archive/, update parity baseline
 
-> **Thesis Ingestion MVP — CLOSED (Codex-approved, 2026-06-14).** Two review rounds, all
-> findings resolved; 71 tests passing; zero interaction with ranking/snapshot/anchor
-> systems. Full summary in `docs/ai_dev_state/PROJECT_STATE.md` and the phase doc
+> **Thesis Ingestion MVP — CLOSED (Codex-approved, 2026-06-14) + UI verification batch
+> COMPLETE (2026-06-15, 16 fix commits, 80 tests passing).** UI batch fixes: sidebar nav,
+> contextual jump buttons (switch_page), backup folder auto-setup, docx/pdf/pptx support,
+> json-repair for LLM JSON, enum normalisation, multi-card dedup, doc_hash-scoped overwrite,
+> isinstance guards. Full summary in `docs/ai_dev_state/PROJECT_STATE.md` and the phase doc
 > `docs/reliability_thesis_ingestion_mvp.md`.
 
 ## Batch Segment 2 — ITEM 1 (earnings-calendar fetch hoist) + ITEM 2 (FRED liquidity fetchers) (CLOSED — Codex-approved, committed direct to `main` 2026-06-12)
