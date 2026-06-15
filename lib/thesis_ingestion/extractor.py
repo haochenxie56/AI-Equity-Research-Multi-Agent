@@ -494,6 +494,12 @@ def _normalise_scenarios(raw_scenarios, card_themes_fallback=None) -> list[dict]
         ):
             if not isinstance(norm.get(key), list):
                 norm[key] = []
+        # Drop malformed (non-dict) items from object-list fields so a stray
+        # string / null / int never reaches the validator as a whole-card
+        # rejection — defensive no-op for well-formed data.
+        for obj_field in ("transmission_chain", "confirmation_conditions",
+                          "falsification_conditions"):
+            norm[obj_field] = [it for it in norm[obj_field] if isinstance(it, dict)]
         # Coerce affected_horizons to the {short, mid, long} enum; drop unknowns.
         norm["affected_horizons"] = [
             h for raw in norm.get("affected_horizons", [])
