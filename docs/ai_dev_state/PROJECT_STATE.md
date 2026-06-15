@@ -1,5 +1,65 @@
 # AI Investment Agent — Project State
 
+## Legacy Red Suite Archival — CLOSED (independent documentary batch, 2026-06-15)
+
+**Status: complete.** Moved the 13 permanently-drifted Phase-5-era RED
+`test_reliability_*` suites out of `scripts/` into `scripts/archive/` (via
+`git mv`, renames tracked). These suites produced noise in every Codex Step-4
+sweep and required manual RED-baseline verification each cycle; that recurring
+cost is now retired. No implementation file changed; no Codex review required.
+
+**13 archived suites** (`scripts/archive/`):
+`test_reliability_agent_evaluation.py`,
+`test_reliability_phase_5e_cockpit_ui_planning.py`,
+`test_reliability_phase_5f_shadow_mode_planning.py`,
+`test_reliability_phase_5h_cockpit_ui_preview.py`,
+`test_reliability_phase_5i_product_logic_reconciliation.py`,
+`test_reliability_phase_5j_theme_intelligence.py`,
+`test_reliability_phase_5n_cockpit_ui_v02.py`,
+`test_reliability_phase_5o_macro_dashboard.py`,
+`test_reliability_phase_5p_navigation_cleanup.py`,
+`test_reliability_phase_5q_human_feedback_ui.py`,
+`test_reliability_phase_5r_ui_ux_polish.py`,
+`test_reliability_phase_5s_closeout.py`,
+`test_reliability_phase_6b_signal_layer.py`.
+
+**New parity baseline (`main @ b323c09`, this batch not yet a new commit at
+measurement time):**
+- Active suites: **67** — full `scripts/test_reliability_*.py` sweep
+  **GREEN=67 / RED=0**, **0 failing assertions** across every active suite.
+- Archived suites: **13** → `scripts/archive/`.
+- Passing assertions: **≥5,497 parseable** across the 67 active suites (floor —
+  ~40 suites self-report only `ALL TESTS PASSED` without a numeric count, so the
+  full aggregate is not cleanly summable). This is intentionally **not** stated
+  as the prior `14,039` figure: the test environment was rebuilt from a broken
+  `.venv` stub onto newer `pandas 3.0 / numpy 2.4 / pytest 9.1`, so absolute
+  assertion totals are no longer comparable to the earlier measurement. Pre-
+  archive the same rebuilt stack measured 80 suites (GREEN=67 / RED=13, 211
+  failing assertions — all 211 lived inside the 13 archived suites; every GREEN
+  suite had 0 failures), and the +1 GREEN over the historical 66 is the
+  `test_reliability_thesis_ingestion.py` suite added in the b323c09 batch.
+
+**Parity-scan exclusion (Step 4 — Option B, no sweep script exists):** the
+canonical sweep is the direct glob `scripts/test_reliability_*.py`, which is
+**non-recursive** and therefore does **not** descend into `scripts/archive/`.
+Archived suites are excluded automatically — no `--ignore` flag or runner change
+was needed. (Verified: the post-move glob sweep enumerated 67 suites, not 80.)
+
+**Earlier historical sweep figures below (e.g. `GREEN=66 / RED=13` /
+`GREEN=65 / RED=13`) are phase-time records and are left verbatim — they
+describe the state at the time each phase closed, not the current baseline.**
+
+**Current task:** Legacy Red Suite Archival — complete; next: **Phase 7C —
+Theme Beneficiary Layers** (planning phase).
+
+> *Note on Step 6.2 of the batch brief (remove the "manual RED baseline
+> verification" debt entry): no standalone debt/known-issues entry for that cost
+> existed in this file — the recurring cost was only ever implicit in the
+> historical `GREEN=NN / RED=13` phase notes, which are left intact as history.
+> The retirement of that cost is recorded in this section instead.*
+
+---
+
 **Last updated**: 2026-06-15 (**Thesis Ingestion MVP — CLOSED + UI verification batch
 complete (16 fix commits, 80 tests, pushed to `main`).** A standalone thesis-card library: curated
 external research articles / interviews → one-LLM-call-per-argument structured cards →

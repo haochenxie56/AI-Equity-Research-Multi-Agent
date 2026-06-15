@@ -5,9 +5,20 @@
 > history preserved verbatim). This file keeps only the active phase. The
 > long-form running status remains in `docs/ai_dev_state/PROJECT_STATE.md`.
 
-Current task: Legacy red test suite archival (independent batch)
-Status: Not started
-Next action: Archive 13 pre-existing RED suites to scripts/archive/, update parity baseline
+**Status:** Idle — ready for next phase
+
+**Last completed:** Legacy Red Suite Archival (independent batch)
+- Moved 13 Phase-5 RED suites to `scripts/archive/` (via `git mv`).
+- New parity baseline: **GREEN=67 / RED=0** (full `scripts/test_reliability_*.py`
+  sweep; 0 failing assertions across all active suites; ≥5,497 passing
+  assertions parseable — full aggregate not comparable to the prior 14,039
+  because the env was rebuilt on newer pandas/numpy/pytest).
+- Archived suites excluded automatically: the canonical glob
+  `scripts/test_reliability_*.py` is non-recursive and never descends into
+  `scripts/archive/`.
+- Baseline commit: `main @ b323c09`.
+
+**Next:** Phase 7C — Theme Beneficiary Layers (planning phase)
 
 > **Thesis Ingestion MVP — CLOSED (Codex-approved, 2026-06-14) + UI verification batch
 > COMPLETE (2026-06-15, 16 fix commits, 80 tests passing).** UI batch fixes: sidebar nav,
