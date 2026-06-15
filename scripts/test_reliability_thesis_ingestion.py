@@ -331,6 +331,31 @@ class TestSchemaValidation(unittest.TestCase):
         self.assertEqual(_normalise_direction("sideways"), "unspecified")
         self.assertEqual(_normalise_direction(None), "unspecified")
 
+    def test_transmission_provenance_normalisation(self):
+        from lib.thesis_ingestion.extractor import (
+            _normalise_provenance,
+            _normalise_scenarios,
+        )
+        # helper: None / unknown → inferred; valid values pass through
+        self.assertEqual(_normalise_provenance(None), "inferred")
+        self.assertEqual(_normalise_provenance("bogus"), "inferred")
+        self.assertEqual(_normalise_provenance("stated_by_author"), "stated_by_author")
+        self.assertEqual(_normalise_provenance("inferred"), "inferred")
+
+        # A transmission step with provenance=None fails validation as-is...
+        c = valid_card()
+        c["scenarios"][0]["transmission_chain"][0]["provenance"] = None
+        ok_before, errs_before = validator.validate_card(c)
+        self.assertFalse(ok_before)
+        self.assertHasCode(errs_before, "invalid_transmission_step")
+
+        # ...but after _normalise_scenarios the step becomes "inferred" and validates.
+        c["scenarios"] = _normalise_scenarios(c["scenarios"])
+        self.assertEqual(
+            c["scenarios"][0]["transmission_chain"][0]["provenance"], "inferred")
+        ok_after, errs_after = validator.validate_card(c)
+        self.assertTrue(ok_after, f"normalised card should validate: {errs_after}")
+
     def test_parse_json_repairs_unescaped_quotes(self):
         from lib.thesis_ingestion.extractor import _parse_json
         # Simulate the exact failure mode: unescaped quotes in notes_zh

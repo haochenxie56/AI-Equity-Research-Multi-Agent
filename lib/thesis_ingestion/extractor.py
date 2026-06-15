@@ -331,8 +331,10 @@ Rules you must follow without exception:
   "direction" in unspecified_numerics must be exactly one of:
   "up", "down", or "unspecified". Never use other strings.
 - For transmission_chain, each step must have a clear from_node and to_node.
-  If you are inferring a step the author implied but did not state,
-  set provenance to "inferred".
+  For every transmission_chain step, provenance must be exactly
+  "stated_by_author" if the author explicitly described this
+  transmission mechanism, or "inferred" if you are inferring it
+  from context. Never omit this field. Never use null or None.
 - For confirmation_conditions and falsification_conditions, if the author stated
   explicit conditions, set provenance "stated_by_author".
   If you are inferring them from the argument logic, set provenance "inferred".
@@ -450,6 +452,12 @@ def _normalise_direction(val) -> str:
     return "unspecified"
 
 
+def _normalise_provenance(val) -> str:
+    if val in {"stated_by_author", "inferred"}:
+        return val
+    return "inferred"  # safe default — missing provenance means we inferred it
+
+
 def _normalise_scenarios(raw_scenarios, card_themes_fallback=None) -> list[dict]:
     """Force scenario invariants (schema_version, evidence fields, id)."""
     out: list[dict] = []
@@ -491,11 +499,17 @@ def _normalise_scenarios(raw_scenarios, card_themes_fallback=None) -> list[dict]
             h for raw in norm.get("affected_horizons", [])
             if (h := _normalise_horizon(raw)) is not None
         ]
-        # Coerce each condition's observable to the enum (e.g. boolean true → string).
+        # Coerce each transmission step's provenance (None/omitted → "inferred").
+        for step in norm.get("transmission_chain", []):
+            if isinstance(step, dict):
+                step["provenance"] = _normalise_provenance(step.get("provenance"))
+        # Coerce each condition's observable + provenance to their enums
+        # (e.g. boolean true → string; omitted provenance → "inferred").
         for cond_field in ("confirmation_conditions", "falsification_conditions"):
             for cond in norm.get(cond_field, []):
                 if isinstance(cond, dict):
                     cond["observable"] = _normalise_observable(cond.get("observable"))
+                    cond["provenance"] = _normalise_provenance(cond.get("provenance"))
         # Normalise bilingual scenario prose (en/zh); keep any legacy bare key.
         for base in ("event_or_hypothesis", "notes"):
             for key in (f"{base}_en", f"{base}_zh", base):
@@ -589,6 +603,10 @@ def extract_card(
 
     # ── numeric_claims / unspecified_numerics: content as the author stated ──
     numeric_claims = [nc for nc in (parsed.get("numeric_claims") or []) if isinstance(nc, dict)]
+    # Coerce each provenance to the {stated_by_author, inferred} enum (value is
+    # left untouched — it has its own validator check).
+    for nc in numeric_claims:
+        nc["provenance"] = _normalise_provenance(nc.get("provenance"))
     unspecified = [un for un in (parsed.get("unspecified_numerics") or []) if isinstance(un, dict)]
     # Coerce each direction to the {up, down, unspecified} enum.
     for un in unspecified:
