@@ -295,6 +295,24 @@ class TestSchemaValidation(unittest.TestCase):
         self.assertFalse(ok)
         self.assertHasCode(errors, "invalid_core_claims")
 
+    def test_parse_json_repairs_unescaped_quotes(self):
+        from lib.thesis_ingestion.extractor import _parse_json
+        # Simulate the exact failure mode: unescaped quotes in notes_zh
+        # make the top-level object fail to parse on Strategy 1.
+        bad_json = (
+            '{"core_claims": [{"claim_text_en": "test", '
+            '"claim_text_zh": "test", "claim_type": "thesis", '
+            '"related_tickers": [], "related_themes": []}], '
+            '"numeric_claims": [], "scenarios": [], "assumptions": [], '
+            '"coi": {"status": "coi_unassessed", "notes": ""}, '
+            '"notes_zh": "文中"CXMT"指中际旭创。", '
+            '"notes_en": "CXMT is a company."}'
+        )
+        result = _parse_json(bad_json)
+        self.assertIn("core_claims", result,
+            "Strategy 2 should repair unescaped quotes and return top-level object")
+        self.assertEqual(len(result["core_claims"]), 1)
+
     def test_inner_object_parse_raises_extraction_error(self):
         # Regression: when the LLM emits unescaped quotes, the top-level JSON is
         # undecodable and _parse_json's scanner falls through to the first inner
