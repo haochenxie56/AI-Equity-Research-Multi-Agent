@@ -315,8 +315,10 @@ class TestSchemaValidation(unittest.TestCase):
         self.assertEqual(_normalise_horizon("长期"), "long")
         self.assertEqual(_normalise_horizon("medium-term"), "mid")
         self.assertEqual(_normalise_horizon("SHORT"), "short")
-        # unrecognised values are dropped (return None)
-        self.assertIsNone(_normalise_horizon("中期（12–24个月）"))
+        # decorated forms map via prefix matching
+        self.assertEqual(_normalise_horizon("中期（12–24个月）"), "mid")
+        self.assertEqual(_normalise_horizon("short-term (0-3 months)"), "short")
+        # genuinely unrecognised values are still dropped (return None)
         self.assertIsNone(_normalise_horizon("quarterly"))
 
     def test_direction_normalisation(self):

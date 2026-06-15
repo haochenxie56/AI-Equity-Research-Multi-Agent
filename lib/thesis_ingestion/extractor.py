@@ -459,13 +459,24 @@ def _normalise_observable(val) -> str:
 
 def _normalise_horizon(val: str) -> str | None:
     v = str(val).lower().strip()
+    # Exact matches first
     if v in {"short", "short-term", "短线", "短期"}:
         return "short"
     if v in {"mid", "medium", "mid-term", "medium-term", "中线", "中期"}:
         return "mid"
     if v in {"long", "long-term", "长线", "长期"}:
         return "long"
-    return None  # drop unrecognised values
+    # Prefix/substring matches for decorated forms like "中期（12–24个月）"
+    for prefix in ("short", "短线", "短期"):
+        if v.startswith(prefix):
+            return "short"
+    for prefix in ("mid", "medium", "中线", "中期"):
+        if v.startswith(prefix):
+            return "mid"
+    for prefix in ("long", "长线", "长期"):
+        if v.startswith(prefix):
+            return "long"
+    return None
 
 
 def _normalise_direction(val) -> str:
