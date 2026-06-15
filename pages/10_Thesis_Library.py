@@ -226,10 +226,16 @@ if _qp_ticker or _qp_theme or _qp_category:
     st.session_state["thesis_force_mode"] = "library"
     if _qp_ticker:
         st.session_state["f_ticker"] = _qp_ticker
+        # Ticker links should default to the stock tab
+        if not _qp_category:
+            st.session_state["thesis_active_category"] = "stock"
     if _qp_theme:
         st.session_state["f_theme"] = _qp_theme
+        # Theme links should default to the theme tab
+        if not _qp_category:
+            st.session_state["thesis_active_category"] = "theme"
     if _qp_category in ("macro", "sector", "theme", "stock"):
-        # Consumed by the Library tab ordering so the requested category leads.
+        # Explicit category wins over the inferred default above.
         st.session_state["thesis_active_category"] = _qp_category
     st.query_params.clear()
 

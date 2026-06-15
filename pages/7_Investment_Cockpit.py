@@ -617,11 +617,11 @@ else:
 # Section A renders as text (no per-item cards), so the macro thesis jump button
 # lives here, after the macro block; it deep-links to the Library's Macro tab.
 _lang = st.session_state.get("language", "en")
-st.page_link(
-    "pages/10_Thesis_Library.py",
-    label="📚 宏观研报" if _lang == "zh" else "📚 Macro thesis cards",
-    query_params={"category": "macro"},
-)
+if st.button("📚 宏观研报" if _lang == "zh" else "📚 Macro thesis cards",
+             key="thesis_nav_macro"):
+    st.session_state["thesis_force_mode"] = "library"
+    st.session_state["thesis_active_category"] = "macro"
+    st.switch_page("pages/10_Thesis_Library.py")
 
 st.divider()
 
@@ -688,11 +688,12 @@ else:
                 # Contextual jump to the Thesis Library, pre-filtered to this theme.
                 _theme_key = getattr(_th, "theme_key", "") or ""
                 if _theme_key:
-                    st.page_link(
-                        "pages/10_Thesis_Library.py",
-                        label="📚 相关研报" if _lang == "zh" else "📚 Thesis cards",
-                        query_params={"theme": _theme_key},
-                    )
+                    if st.button("📚 相关研报" if _lang == "zh" else "📚 Thesis cards",
+                                 key=f"thesis_nav_theme_{_theme_key}"):
+                        st.session_state["thesis_force_mode"] = "library"
+                        st.session_state["thesis_active_category"] = "theme"
+                        st.session_state["f_theme"] = _theme_key
+                        st.switch_page("pages/10_Thesis_Library.py")
 
 st.divider()
 
@@ -808,11 +809,12 @@ def _render_opportunity_card(card: dict, rank: int, horizon: str,
             st.caption(" · ".join(_hints))
         # Contextual jump to the Thesis Library, pre-filtered to this ticker.
         _tcol = st.columns([1, 3])
-        _tcol[0].page_link(
-            "pages/10_Thesis_Library.py",
-            label="📚 研报" if _lang_c == "zh" else "📚 Thesis",
-            query_params={"ticker": tk},
-        )
+        if _tcol[0].button("📚 研报" if _lang_c == "zh" else "📚 Thesis",
+                           key=f"thesis_nav_ticker_{tk}"):
+            st.session_state["thesis_force_mode"] = "library"
+            st.session_state["thesis_active_category"] = "stock"
+            st.session_state["f_ticker"] = tk.upper()
+            st.switch_page("pages/10_Thesis_Library.py")
 
 
 if not _opportunities:
