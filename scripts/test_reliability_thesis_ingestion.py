@@ -615,6 +615,27 @@ class TestStorage(unittest.TestCase):
                                  "timestamp": "t2", "action": "overwritten"})
         self.assertEqual(store.check_existing_by_hash(h)["action"], "overwritten")
 
+    def test_check_existing_cards_for_hash(self):
+        # Two cards from the SAME document (seq 1 and seq 2, same doc_hash prefix)
+        # should both be returned, so the page can distinguish a multi-card batch
+        # from a duplicate upload.
+        h = _doc_hash(b"multi-card-doc")
+        self.assertEqual(store.check_existing_cards_for_hash(h), [])
+        c1 = store.card_id_from_hash(h, 1)
+        c2 = store.card_id_from_hash(h, 2)
+        store.append_ingest_log({"doc_hash": h, "card_id": c1,
+                                 "timestamp": "t1", "action": "created"})
+        store.append_ingest_log({"doc_hash": h, "card_id": c2,
+                                 "timestamp": "t2", "action": "created"})
+        # a duplicate_skipped entry must NOT be counted
+        store.append_ingest_log({"doc_hash": h, "card_id": "skip-1",
+                                 "timestamp": "t3", "action": "duplicate_skipped"})
+        result = store.check_existing_cards_for_hash(h)
+        self.assertIn(c1, result)
+        self.assertIn(c2, result)
+        self.assertNotIn("skip-1", result)
+        self.assertEqual(len(result), 2)
+
     def test_delete_card(self):
         card = valid_card()
         store.save_card(card)

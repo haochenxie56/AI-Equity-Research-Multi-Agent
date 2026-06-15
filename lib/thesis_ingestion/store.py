@@ -202,6 +202,33 @@ def check_existing_by_hash(doc_hash: str) -> dict | None:
     return found
 
 
+def check_existing_cards_for_hash(doc_hash: str) -> list[str]:
+    """
+    Return list of card_ids already saved for this doc_hash.
+    Used to distinguish: is this a duplicate upload (same doc, new
+    session) vs. a subsequent card in the same extraction batch?
+    """
+    card_ids: list[str] = []
+    log_path = _ingest_log_path()
+    if not log_path.exists():
+        return card_ids
+    with open(log_path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+                if (entry.get("doc_hash") == doc_hash
+                        and entry.get("action") in {"created", "overwritten"}):
+                    cid = entry.get("card_id")
+                    if cid and cid not in card_ids:
+                        card_ids.append(cid)
+            except Exception:  # noqa: BLE001
+                pass
+    return card_ids
+
+
 # ── Status management / availability scan ────────────────────────────────────
 def scan_unavailable(cards: list[dict]) -> list[str]:
     """Return card_ids whose ``source.doc_path`` no longer exists on disk.
@@ -379,6 +406,7 @@ __all__ = [
     "list_cards",
     "append_ingest_log",
     "check_existing_by_hash",
+    "check_existing_cards_for_hash",
     "scan_unavailable",
     "update_card_status",
     "load_config",

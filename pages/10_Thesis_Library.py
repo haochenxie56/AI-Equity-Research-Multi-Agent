@@ -447,7 +447,8 @@ if _mode == "library":
 def _reset_ingest_state() -> None:
     for k in ("thesis_ing_filebytes", "thesis_ing_filename", "thesis_ing_hash",
               "thesis_ing_text", "thesis_ing_preview", "thesis_ing_extracted",
-              "thesis_ing_doc_path", "thesis_ing_overwrite", "thesis_overwrite_pending"):
+              "thesis_ing_doc_path", "thesis_ing_overwrite", "thesis_overwrite_pending",
+              "thesis_saved_card_ids"):
         st.session_state.pop(k, None)
 
 
@@ -529,13 +530,18 @@ if _mode == "ingest":
     doc_hash = st.session_state.get("thesis_ing_hash", "")
 
     if file_bytes:
-        existing = store.check_existing_by_hash(doc_hash)
+        existing_cards = store.check_existing_cards_for_hash(doc_hash)
+        # Cards saved earlier in THIS extraction session are expected (a document
+        # yields multiple cards). Only warn about cards from a PRIOR session.
+        saved_in_session = st.session_state.get("thesis_saved_card_ids", set())
+        prior_session_cards = [c for c in existing_cards if c not in saved_in_session]
         proceed = True
-        if existing and not st.session_state.get("thesis_ing_overwrite"):
+        if prior_session_cards and not st.session_state.get("thesis_ing_overwrite"):
+            _example = prior_session_cards[0]
             st.warning(_tx(
-                f"This document has already been ingested (card ID: {existing.get('card_id')}). "
+                f"This document has already been ingested (card ID: {_example}). "
                 "Do you want to re-extract and overwrite?",
-                f"该文档已被录入（卡片 ID：{existing.get('card_id')}）。是否重新提取并覆盖？",
+                f"该文档已被录入（卡片 ID：{_example}）。是否重新提取并覆盖？",
             ))
             wc = st.columns(2)
             if wc[0].button(_tx("Confirm overwrite", "确认覆盖"), key="ow_confirm"):
@@ -694,6 +700,12 @@ if _mode == "ingest":
                                     # Reset so the next upload of the same document
                                     # shows the warning again (not a silent overwrite).
                                     st.session_state["thesis_ing_overwrite"] = False
+                                    # Track this card as saved IN THIS session so the
+                                    # next card from the same document is not flagged
+                                    # as a prior-session duplicate.
+                                    if "thesis_saved_card_ids" not in st.session_state:
+                                        st.session_state["thesis_saved_card_ids"] = set()
+                                    st.session_state["thesis_saved_card_ids"].add(cid)
                                     st.success(_tx(
                                         f"Saved {cid} ({'overwritten' if overwrite else 'created'}).",
                                         f"已保存 {cid}（{'overwritten' if overwrite else 'created'}）。",
@@ -722,6 +734,9 @@ if _mode == "ingest":
                                     # Reset so the next upload of the same document
                                     # shows the warning again (not a silent overwrite).
                                     st.session_state["thesis_ing_overwrite"] = False
+                                    if "thesis_saved_card_ids" not in st.session_state:
+                                        st.session_state["thesis_saved_card_ids"] = set()
+                                    st.session_state["thesis_saved_card_ids"].add(cid)
                                     st.success(_tx(f"Overwrote {cid}.", f"已覆盖 {cid}。"))
 
     if file_bytes and st.button(_tx("Reset ingest", "重置录入"), key="reset_ingest"):
