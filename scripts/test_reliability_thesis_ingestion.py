@@ -295,6 +295,40 @@ class TestSchemaValidation(unittest.TestCase):
         self.assertFalse(ok)
         self.assertHasCode(errors, "invalid_core_claims")
 
+    def test_observable_boolean_coercion(self):
+        from lib.thesis_ingestion.extractor import _normalise_observable
+        self.assertEqual(_normalise_observable(True), "machine_checkable")
+        self.assertEqual(_normalise_observable("true"), "machine_checkable")
+        self.assertEqual(_normalise_observable(False), "unspecified")
+        self.assertEqual(_normalise_observable("false"), "unspecified")
+        # valid strings pass through unchanged
+        self.assertEqual(_normalise_observable("machine_checkable"), "machine_checkable")
+        self.assertEqual(_normalise_observable("human_judgment"), "human_judgment")
+        self.assertEqual(_normalise_observable("unspecified"), "unspecified")
+        # anything else degrades to "unspecified"
+        self.assertEqual(_normalise_observable("garbage"), "unspecified")
+
+    def test_horizon_normalisation(self):
+        from lib.thesis_ingestion.extractor import _normalise_horizon
+        self.assertEqual(_normalise_horizon("中期"), "mid")
+        self.assertEqual(_normalise_horizon("短期"), "short")
+        self.assertEqual(_normalise_horizon("长期"), "long")
+        self.assertEqual(_normalise_horizon("medium-term"), "mid")
+        self.assertEqual(_normalise_horizon("SHORT"), "short")
+        # unrecognised values are dropped (return None)
+        self.assertIsNone(_normalise_horizon("中期（12–24个月）"))
+        self.assertIsNone(_normalise_horizon("quarterly"))
+
+    def test_direction_normalisation(self):
+        from lib.thesis_ingestion.extractor import _normalise_direction
+        self.assertEqual(_normalise_direction("upside_risk"), "up")
+        self.assertEqual(_normalise_direction("downside_risk"), "down")
+        self.assertEqual(_normalise_direction("up"), "up")
+        self.assertEqual(_normalise_direction("下行"), "down")
+        # unknown → unspecified
+        self.assertEqual(_normalise_direction("sideways"), "unspecified")
+        self.assertEqual(_normalise_direction(None), "unspecified")
+
     def test_parse_json_repairs_unescaped_quotes(self):
         from lib.thesis_ingestion.extractor import _parse_json
         # Simulate the exact failure mode: unescaped quotes in notes_zh

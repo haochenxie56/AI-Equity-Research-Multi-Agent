@@ -368,12 +368,24 @@ Rules you must follow without exception:
   and include source_quote showing what they said.
 - If the author indicated a direction but gave no number (e.g. "margins will improve"),
   put it in unspecified_numerics. Never invent a proxy value.
+  "direction" in unspecified_numerics must be exactly one of:
+  "up", "down", or "unspecified". Never use other strings.
 - For transmission_chain, each step must have a clear from_node and to_node.
   If you are inferring a step the author implied but did not state,
   set provenance to "inferred".
 - For confirmation_conditions and falsification_conditions, if the author stated
   explicit conditions, set provenance "stated_by_author".
   If you are inferring them from the argument logic, set provenance "inferred".
+  "observable" must be exactly one of these three strings:
+  "machine_checkable", "human_judgment", or "unspecified".
+  Never use a boolean. Use "machine_checkable" when the condition
+  can be verified from market data or financial statements.
+  Use "human_judgment" when it requires qualitative assessment.
+  Use "unspecified" when unclear.
+- "affected_horizons" must only contain values from this exact list:
+  ["short", "mid", "long"]. Never use Chinese or descriptive strings.
+  short = weeks to 3 months, mid = 3 months to 18 months,
+  long = 18 months or more.
 - current_evidence_status must always be "unknown". Do not change this.
 - evidence_refs must always be an empty list. Do not add anything.
 - coi.status must always be "coi_unassessed" unless the author explicitly
@@ -435,6 +447,38 @@ def _coi_from_llm(raw_coi) -> dict:
     return empty_coi()
 
 
+def _normalise_observable(val) -> str:
+    if val is True or val == "true":
+        return "machine_checkable"
+    if val is False or val == "false":
+        return "unspecified"
+    if val in {"machine_checkable", "human_judgment", "unspecified"}:
+        return val
+    return "unspecified"
+
+
+def _normalise_horizon(val: str) -> str | None:
+    v = str(val).lower().strip()
+    if v in {"short", "short-term", "短线", "短期"}:
+        return "short"
+    if v in {"mid", "medium", "mid-term", "medium-term", "中线", "中期"}:
+        return "mid"
+    if v in {"long", "long-term", "长线", "长期"}:
+        return "long"
+    return None  # drop unrecognised values
+
+
+def _normalise_direction(val) -> str:
+    v = str(val).lower().strip()
+    if v in {"up", "upside", "upside_risk", "increase", "higher",
+             "上升", "上行", "上涨"}:
+        return "up"
+    if v in {"down", "downside", "downside_risk", "decrease", "lower",
+             "下降", "下行", "下跌"}:
+        return "down"
+    return "unspecified"
+
+
 def _normalise_scenarios(raw_scenarios, card_themes_fallback=None) -> list[dict]:
     """Force scenario invariants (schema_version, evidence fields, id)."""
     out: list[dict] = []
@@ -471,6 +515,16 @@ def _normalise_scenarios(raw_scenarios, card_themes_fallback=None) -> list[dict]
         ):
             if not isinstance(norm.get(key), list):
                 norm[key] = []
+        # Coerce affected_horizons to the {short, mid, long} enum; drop unknowns.
+        norm["affected_horizons"] = [
+            h for raw in norm.get("affected_horizons", [])
+            if (h := _normalise_horizon(raw)) is not None
+        ]
+        # Coerce each condition's observable to the enum (e.g. boolean true → string).
+        for cond_field in ("confirmation_conditions", "falsification_conditions"):
+            for cond in norm.get(cond_field, []):
+                if isinstance(cond, dict):
+                    cond["observable"] = _normalise_observable(cond.get("observable"))
         # Normalise bilingual scenario prose (en/zh); keep any legacy bare key.
         for base in ("event_or_hypothesis", "notes"):
             for key in (f"{base}_en", f"{base}_zh", base):
@@ -565,6 +619,9 @@ def extract_card(
     # ── numeric_claims / unspecified_numerics: content as the author stated ──
     numeric_claims = [nc for nc in (parsed.get("numeric_claims") or []) if isinstance(nc, dict)]
     unspecified = [un for un in (parsed.get("unspecified_numerics") or []) if isinstance(un, dict)]
+    # Coerce each direction to the {up, down, unspecified} enum.
+    for un in unspecified:
+        un["direction"] = _normalise_direction(un.get("direction"))
 
     assumptions = [str(a) for a in (parsed.get("assumptions") or []) if str(a).strip()]
     scenarios = _normalise_scenarios(parsed.get("scenarios"))
