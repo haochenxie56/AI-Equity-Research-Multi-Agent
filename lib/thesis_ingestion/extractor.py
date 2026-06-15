@@ -33,6 +33,14 @@ import pathlib
 import re
 from datetime import datetime
 
+# json-repair fixes malformed LLM JSON (unescaped quotes, trailing commas, …);
+# optional — _parse_json falls back gracefully if it is not installed.
+try:
+    from json_repair import repair_json as _repair_json_str
+    _JSON_REPAIR_AVAILABLE = True
+except ImportError:
+    _JSON_REPAIR_AVAILABLE = False
+
 # Document parsers — now hard dependencies (see requirements.txt). python-docx
 # imports as the top-level module ``docx``; python-pptx as ``pptx``.
 import docx
@@ -69,71 +77,17 @@ def _strip_fences(text: str) -> str:
     return text.strip()
 
 
-def _repair_json_quotes(text: str) -> str:
-    """
-    Replace unescaped ASCII double-quotes inside JSON string values
-    with Chinese quotation marks to make the JSON parseable.
-
-    Strategy: find patterns where a double-quote appears after a
-    non-backslash character that is not a structural JSON character
-    (i.e. not after : [ , { or whitespace at the start of a value).
-    This is a best-effort heuristic — it handles the most common case
-    where the LLM quotes a term like "CXMT" inside a string value.
-
-    Use a state-machine approach: walk the string character by character,
-    track whether we are inside a string, and replace unescaped quotes
-    that appear mid-string (not at string boundaries).
-    """
-    result = []
-    in_string = False
-    i = 0
-    while i < len(text):
-        ch = text[i]
-        if ch == '\\' and in_string:
-            # Escaped character — pass through both chars unchanged
-            result.append(ch)
-            i += 1
-            if i < len(text):
-                result.append(text[i])
-            i += 1
-            continue
-        if ch == '"':
-            if not in_string:
-                # Opening quote of a JSON string
-                in_string = True
-                result.append(ch)
-            else:
-                # Could be closing quote or unescaped mid-string quote.
-                # Peek ahead: if next non-whitespace char is a structural
-                # JSON character (: , } ] newline) this is a closing quote.
-                j = i + 1
-                while j < len(text) and text[j] in ' \t\r\n':
-                    j += 1
-                next_ch = text[j] if j < len(text) else ''
-                if next_ch in ':,}]"' or j >= len(text):
-                    # Closing quote
-                    in_string = False
-                    result.append(ch)
-                else:
-                    # Mid-string unescaped quote — replace with 「
-                    result.append('「')
-            i += 1
-            continue
-        result.append(ch)
-        i += 1
-    return ''.join(result)
-
-
 def _parse_json(text: str) -> dict:
     """Find the top-level JSON object in an LLM response.
 
-    Strategy order: strip fences → parse the top-level object → repair unescaped
-    quotes and re-parse → lenient last-resort scan. Raises nothing — returns {}
-    on total failure so the caller can decide how to surface the error.
+    Strategy order: strip fences → parse the top-level object → repair malformed
+    JSON via json-repair and re-parse → lenient last-resort scan. Raises nothing
+    — returns {} on total failure so the caller can decide how to surface the
+    error.
 
-    Strategies 1 and 2 decode at the FIRST ``{`` only (tolerating surrounding
-    prose but NOT falling through to inner objects), so a malformed top-level
-    object proceeds to the repair step instead of silently returning an inner
+    Strategy 1 decodes at the FIRST ``{`` only (tolerating surrounding prose but
+    NOT falling through to inner objects), so a malformed top-level object
+    proceeds to the json-repair step instead of silently returning an inner
     object (e.g. a single ``core_claims`` item). The lenient first-decodable-
     object scan is kept only as a final fallback.
     """
@@ -162,18 +116,24 @@ def _parse_json(text: str) -> dict:
                     pass
         return None
 
-    # Strategy 1: strip fences, parse the top-level object directly.
+    # Strategy 1: strip fences, parse top-level object directly
     clean = _strip_fences(text)
     result = _decode_at_first_brace(clean)
     if result is not None:
         return result
 
-    # Strategy 2: repair unescaped quotes, then parse the top-level object.
-    result = _decode_at_first_brace(_repair_json_quotes(clean))
-    if result is not None:
-        return result
+    # Strategy 2: use json_repair to fix malformed JSON (unescaped quotes,
+    # trailing commas, etc.), then parse
+    if _JSON_REPAIR_AVAILABLE:
+        try:
+            repaired_str = _repair_json_str(clean)
+            repaired = json.loads(repaired_str)
+            if isinstance(repaired, dict) and repaired:
+                return repaired
+        except Exception:  # noqa: BLE001
+            pass
 
-    # Strategy 3 (last resort): lenient scan for the first decodable object.
+    # Strategy 3: last resort lenient scan
     result = _first_obj(text)
     if result is not None:
         return result
