@@ -30,10 +30,13 @@ measurement time):**
 - Archived suites: **13** → `scripts/archive/`.
 - Passing assertions: **≥5,497 parseable** across the 67 active suites (floor —
   ~40 suites self-report only `ALL TESTS PASSED` without a numeric count, so the
-  full aggregate is not cleanly summable). This is intentionally **not** stated
-  as the prior `14,039` figure: the test environment was rebuilt from a broken
-  `.venv` stub onto newer `pandas 3.0 / numpy 2.4 / pytest 9.1`, so absolute
-  assertion totals are no longer comparable to the earlier measurement. Pre-
+  full aggregate is not cleanly summable). NOTE: Baseline measured using system
+  Python user-site (`python3 --user --break-system-packages`, pandas 3.0.3 /
+  numpy 2.4.4 / pytest 9.1). The repo .venv is a non-functional stub (no pip, no
+  site-packages) and will produce RED=67 if used directly. To reproduce this
+  baseline, use: `python3 scripts/test_reliability_<name>.py` (not
+  `.venv/bin/python`). Absolute assertion counts are not comparable to the prior
+  14,039 figure (different env). Pre-
   archive the same rebuilt stack measured 80 suites (GREEN=67 / RED=13, 211
   failing assertions — all 211 lived inside the 13 archived suites; every GREEN
   suite had 0 failures), and the +1 GREEN over the historical 66 is the
