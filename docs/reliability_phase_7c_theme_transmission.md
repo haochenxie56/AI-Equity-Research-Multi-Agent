@@ -94,6 +94,47 @@ fail-closed import inside a `try`, AST-based), **S8** (no
 
 ---
 
+## Design Decisions
+
+- **`transmission_order` is a capital-propagation *sequence*, NOT a strength
+  ranking.** Same order value = same wave; the cluster subdivides a wave by
+  demand-vs-supply logic. **tier_2 / tier_3 themes are not weaker than
+  tier_1** — capital rotation means a later-order theme may be the *next*
+  opportunity, not an inferior one.
+- **All seed data is static and human-curated.** `THEME_TRANSMISSION_ORDER` and
+  `TICKER_ROLE_MAP` are a manually curated snapshot — no runtime inference, no
+  yfinance, no LLM auto-assignment. This is a v1 invariant.
+- **Reuses the Phase-5 schema, no duplication.**
+  `lib/reliability/phase5_theme_intelligence.py` (`IndustryChainNode`,
+  `ThemeCandidateRole`, `ThemeRecord`, etc.) is imported **read-only and never
+  modified**; Phase 7C adds no parallel schema over that ground work.
+- **Naming avoids collision with rotation.** `transmission_order` /
+  `transmission_cluster` were chosen deliberately to avoid clashing with
+  `rotation.py`'s `tier` field (Leader / Challenger / Sleeper) — the two
+  concepts are distinct and must not be conflated.
+- **Unassessed tickers get `role="unknown"` automatically; the module never
+  raises** and never skips a constituent.
+- **v1 does not include LLM-assisted tier suggestion.** That is reserved for v2
+  via the human-in-the-loop **Judgment Console** (Phase 9).
+
+---
+
+## Transmission Order
+
+| Wave | Cluster | Themes |
+|---|---|---|
+| 1 | compute_core | ai_chips |
+| 2 | supply_chain | semiconductor_mfg, hbm_memory |
+| 2 | demand_application | cloud_hyperscaler |
+| 3 | infrastructure | networking_optical, ai_servers_infra |
+| 3 | demand_application | data_infrastructure, ai_software |
+| 3 | defense_security | cybersecurity |
+| 3 | adjacent_cycle | robotics_autonomous |
+| 4 | physical_buildout | datacenter_power |
+| 4 | endpoint_diffusion | edge_ai_devices |
+
+---
+
 ## Invariants
 
 - **Isolation**: `theme_transmission` imports only `theme_baskets` and
