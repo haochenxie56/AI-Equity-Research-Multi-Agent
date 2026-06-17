@@ -61,6 +61,16 @@ _ai_bd = "#30363d" if _dark else "#d0d7de"
 _ai_txt = "#e6edf3" if _dark else "#1f2328"
 
 
+def _badge(text: str, color: str) -> str:
+    """Pill badge (identical to the Cockpit page helper; pages can't cross-import)."""
+    return (
+        f'<span style="display:inline-block;padding:2px 9px;'
+        f'border-radius:10px;background:{color}22;color:{color};'
+        f'border:1px solid {color}55;font-size:0.72rem;'
+        f'font-weight:600;">{text}</span>'
+    )
+
+
 def _ai_block(text: str, title: str) -> None:
     """Render one LLM analysis paragraph with a numbered sub-title."""
     if not text or "unavailable" in text.lower():
@@ -96,6 +106,29 @@ def _ai_hint() -> None:
 # Market Themes (cross-GICS) — helper renderers
 # ══════════════════════════════════════════════════════════════════════════════
 
+# Phase 7C — bilingual labels for transmission cluster / role strings (i18n).
+CLUSTER_LABELS = {
+    "compute_core":        {"en": "Compute Core",       "zh": "核心算力"},
+    "supply_chain":        {"en": "Supply Chain",        "zh": "供应链"},
+    "demand_application":  {"en": "Demand / App Layer",  "zh": "需求/应用层"},
+    "infrastructure":      {"en": "Infrastructure",      "zh": "基础设施"},
+    "defense_security":    {"en": "Defense / Security",  "zh": "安全防御"},
+    "physical_buildout":   {"en": "Physical Build-out",  "zh": "实体基建"},
+    "endpoint_diffusion":  {"en": "Endpoint Diffusion",  "zh": "终端普及"},
+    "adjacent_cycle":      {"en": "Adjacent Cycle",      "zh": "关联赛道"},
+}
+
+ROLE_LABELS = {
+    "leader":                        {"en": "Leader",     "zh": "主导"},
+    "second_derivative_beneficiary": {"en": "2nd Wave",   "zh": "二阶受益"},
+    "supplier":                      {"en": "Supplier",   "zh": "供应商"},
+    "platform":                      {"en": "Platform",   "zh": "平台"},
+    "speculative":                   {"en": "Speculative","zh": "投机"},
+    "laggard":                       {"en": "Laggard",    "zh": "落后"},
+    "unknown":                       {"en": "Unassessed", "zh": "未评估"},
+}
+
+
 def _theme_ret_cell(v, dark: bool) -> str:
     """Color-coded return <td> for the theme heatmap (green +, red -)."""
     hdr_c = "#8b949e"
@@ -124,6 +157,55 @@ def _render_theme_ai(ai: dict, lang: str) -> None:
     for label, val in rows:
         if val:
             st.markdown(f"**{label}**: {val}")
+
+
+def _render_theme_transmission(theme_key: str, lang: str) -> None:
+    """Phase 7C — transmission-chain drilldown inside a theme expander.
+
+    Shows the theme's transmission position (order + localized cluster), its
+    upstream / downstream / same-wave themes (localized names), and the role
+    distribution of its constituents. Fail-closed: any error renders nothing so
+    the rest of the expander is unaffected."""
+    try:
+        from lib.theme_transmission import get_theme_transmission_summary
+        from theme_baskets import THEME_BASKETS as _TB
+        s = get_theme_transmission_summary(theme_key)
+    except Exception:  # noqa: BLE001 — fail-closed; omit the transmission section
+        return
+    if not s or s.get("transmission_order") is None:
+        return
+
+    _lkey = "label_zh" if lang == "zh" else "label_en"
+    _ckey = "zh" if lang == "zh" else "en"
+
+    def _tl(keys) -> str:
+        return ", ".join((_TB.get(k, {}).get(_lkey) or k) for k in keys) or "—"
+
+    _ord = s["transmission_order"]
+    _clu = s.get("transmission_cluster") or ""
+    _clu_lbl = CLUSTER_LABELS.get(_clu, {}).get(_ckey) or _clu or "—"
+    _ordtxt = f"第{_ord}波" if lang == "zh" else f"order {_ord}"
+
+    st.markdown("**" + ("传导链分析" if lang == "zh" else "Transmission chain") + "**")
+    _pos_lbl = "传导位置" if lang == "zh" else "Transmission"
+    _up_lbl = "上游主题" if lang == "zh" else "Upstream"
+    _dn_lbl = "下游主题" if lang == "zh" else "Downstream"
+    _sw_lbl = "同波段" if lang == "zh" else "Same wave"
+    st.markdown(f"- {_pos_lbl}: {_ordtxt} · {_clu_lbl}")
+    st.markdown(f"- {_up_lbl}: {_tl(s.get('upstream_themes', []))}")
+    st.markdown(f"- {_dn_lbl}: {_tl(s.get('downstream_themes', []))}")
+    st.markdown(f"- {_sw_lbl}: {_tl(s.get('same_wave_themes', []))}")
+
+    st.markdown("**" + ("角色分布" if lang == "zh" else "Role distribution") + "**")
+    roles = s.get("roles") or {}
+    for _role in ("leader", "second_derivative_beneficiary", "platform",
+                  "supplier", "speculative", "laggard", "unknown"):
+        _tks = roles.get(_role) or []
+        if not _tks:
+            continue
+        _rl = ROLE_LABELS.get(_role, {}).get(_ckey) or _role
+        st.markdown(f"- {_rl}: " + ", ".join(_tks))
+    st.divider()
 
 
 def _render_market_themes(lang: str, dark: bool) -> None:
@@ -220,81 +302,253 @@ def _render_market_themes(lang: str, dark: bool) -> None:
 
     st.divider()
 
-    # ── Per-theme drilldown expanders ─────────────────────────────────────────
-    for r in themes:
-        cfg = THEME_BASKETS.get(r.theme_key, {})
-        label = r.label_zh if lang == "zh" else r.label_en
-        score100 = int(round(r.momentum_score * 100))
-        with st.expander(f"{label}  ·  {t('theme_col_score')}: {score100}", expanded=False):
-            desc = cfg.get("description_zh" if lang == "zh" else "description_en", "")
-            if desc:
-                st.caption(desc)
+    # ── Per-theme drilldown — Phase 7C wave-based, button-expandable cards ─────
+    # Themes are grouped by transmission wave (order 1→4); each wave is a
+    # labelled section of horizontally-laid-out cards. A card is a bordered
+    # container with a thumbnail (name + wave badge + role-count metrics) and a
+    # full-width toggle button that expands the body in place. No st.expander is
+    # used (Streamlit expander labels can't carry the structured thumbnail).
+    themes_by_key = {r.theme_key: r for r in themes}
 
-            # Constituent 1M / 3M returns via load_ohlcv (cached, free)
-            const_rows = []
-            for tk in r.constituents:
-                _r1 = _r3 = None
-                try:
-                    df = load_ohlcv(tk, "1y")
-                    if df is not None and not df.empty and "Close" in df.columns:
-                        close = df["Close"].dropna()
-                        if len(close) > 22:
-                            _r1 = float(close.iloc[-1] / close.iloc[-22] - 1) * 100
-                        if len(close) > 64:
-                            _r3 = float(close.iloc[-1] / close.iloc[-64] - 1) * 100
-                except Exception:
-                    pass
-                const_rows.append((tk, _r1, _r3))
+    # Wave grouping + per-card open-state init from the transmission order;
+    # fail-closed to a flat (un-grouped) button-card list.
+    try:
+        from collections import defaultdict
+        from lib.theme_transmission import (
+            THEME_TRANSMISSION_ORDER, get_theme_transmission_summary,
+        )
+        wave_groups = defaultdict(list)
+        wave_first_cluster = {}
+        for entry in THEME_TRANSMISSION_ORDER:
+            wave_groups[entry["order"]].append(entry["theme"])
+            wave_first_cluster.setdefault(entry["order"], entry["cluster"])
+            _ck = f"card_open_{entry['theme']}"
+            if _ck not in st.session_state:
+                st.session_state[_ck] = False
+    except Exception:  # noqa: BLE001 — fail-closed: flat list, no role counts
+        wave_groups = None
+        get_theme_transmission_summary = None
 
-            # Constituent table
-            st.markdown(f"**{t('theme_constituent_returns')}**")
-            crow_html = []
-            for tk, _r1, _r3 in const_rows:
-                tk_c = "#388bfd" if dark else "#0969da"
-                crow_html.append(
-                    f"<tr><td style='padding:4px 10px;font-family:monospace;color:{tk_c}'>{tk}</td>"
-                    f"{_theme_ret_cell(_r1, dark)}{_theme_ret_cell(_r3, dark)}</tr>"
+    def _summary_for(theme_key):
+        """Transmission summary for a theme, or None if it raises / is absent."""
+        if not get_theme_transmission_summary:
+            return None
+        try:
+            return get_theme_transmission_summary(theme_key)
+        except Exception:  # noqa: BLE001 — fail-closed
+            return None
+
+    def _render_card_body(r, cfg) -> None:
+        """Expanded card body: role distribution, constituent table, bar, AI."""
+        _ckey = "zh" if lang == "zh" else "en"
+        # 1. Role distribution with ticker lists (skip empty roles).
+        _roles = (_summary_for(r.theme_key) or {}).get("roles") or {}
+        _sep = "：" if lang == "zh" else ": "
+        for _role in ("leader", "second_derivative_beneficiary", "platform",
+                      "supplier", "speculative", "laggard", "unknown"):
+            _tks = _roles.get(_role) or []
+            if not _tks:
+                continue
+            _rl = ROLE_LABELS.get(_role, {}).get(_ckey) or _role
+            st.markdown(f"**{_rl}**{_sep}" + " · ".join(_tks))
+
+        # 2. divider
+        st.divider()
+
+        # 3. Constituent 1M / 3M returns via load_ohlcv (cached, free)
+        const_rows = []
+        for tk in r.constituents:
+            _r1 = _r3 = None
+            try:
+                df = load_ohlcv(tk, "1y")
+                if df is not None and not df.empty and "Close" in df.columns:
+                    close = df["Close"].dropna()
+                    if len(close) > 22:
+                        _r1 = float(close.iloc[-1] / close.iloc[-22] - 1) * 100
+                    if len(close) > 64:
+                        _r3 = float(close.iloc[-1] / close.iloc[-64] - 1) * 100
+            except Exception:
+                pass
+            const_rows.append((tk, _r1, _r3))
+
+        # Constituent table
+        st.markdown(f"**{t('theme_constituent_returns')}**")
+        crow_html = []
+        for tk, _r1, _r3 in const_rows:
+            tk_c = "#388bfd" if dark else "#0969da"
+            crow_html.append(
+                f"<tr><td style='padding:4px 10px;font-family:monospace;color:{tk_c}'>{tk}</td>"
+                f"{_theme_ret_cell(_r1, dark)}{_theme_ret_cell(_r3, dark)}</tr>"
+            )
+        st.markdown(
+            "<table style='border-collapse:collapse;font-size:13px'>"
+            f"<thead><tr><th style='padding:4px 10px;text-align:left;color:{hdr_c};font-weight:normal'>{t('theme_constituents')}</th>"
+            f"<th style='padding:4px 10px;text-align:right;color:{hdr_c};font-weight:normal'>1M</th>"
+            f"<th style='padding:4px 10px;text-align:right;color:{hdr_c};font-weight:normal'>3M</th>"
+            f"</tr></thead><tbody>{''.join(crow_html)}</tbody></table>",
+            unsafe_allow_html=True,
+        )
+
+        # 4. Bar chart of constituent 3M returns, sorted desc
+        bar = sorted(
+            [(tk, _r3) for tk, _r1, _r3 in const_rows if _r3 is not None],
+            key=lambda x: x[1], reverse=True,
+        )
+        if bar:
+            fig = go.Figure(go.Bar(
+                x=[b[0] for b in bar],
+                y=[round(b[1], 1) for b in bar],
+                marker_color=["#3fb950" if b[1] >= 0 else "#f85149" for b in bar],
+                text=[f"{b[1]:+.1f}%" for b in bar],
+                textposition="outside",
+            ))
+            apply_layout(fig, title=t("theme_bar_title"), height=280)
+            apply_legend(fig)
+            st.plotly_chart(fig, use_container_width=True, key=f"theme_bar_{r.theme_key}")
+        else:
+            st.caption(t("theme_constituent_na"))
+
+        # 5. AI analysis — only on click (not auto-run)
+        if st.button(t("theme_analyze_btn"), key=f"theme_analyze_{r.theme_key}"):
+            with st.spinner(t("theme_analyzing")):
+                sys.path.insert(0, str(Path(__file__).parent.parent / "lib"))
+                from llm_orchestrator import analyze_theme_basket
+                _regime = st.session_state.get("macro_regime_result", "unknown")
+                st.session_state[f"theme_ai_{r.theme_key}"] = analyze_theme_basket(
+                    r.theme_key, r, _regime, lang
                 )
+        _ai = st.session_state.get(f"theme_ai_{r.theme_key}")
+        if _ai:
+            _render_theme_ai(_ai, lang)
+
+    def _render_card(theme_key, order) -> None:
+        r = themes_by_key.get(theme_key)
+        if r is None:
+            return
+        cfg = THEME_BASKETS.get(theme_key, {})
+        label = r.label_zh if lang == "zh" else r.label_en
+        is_open = bool(st.session_state.get(f"card_open_{theme_key}", False))
+        _ckey = "zh" if lang == "zh" else "en"
+        _lkey = "label_zh" if lang == "zh" else "label_en"
+
+        # Phase 7C — thumbnail adopts the Cockpit Section-B theme-card visual
+        # style (name → 3M-excess metric → momentum badge → stage badge →
+        # breadth → transmission badge → leaders/next-wave), then the toggle
+        # button. `r` is this theme's ThemeMomentumResult (from compute_all_themes
+        # via themes_by_key); all getattr reads fail-closed.
+        with st.container(border=True):
+            # 1. Theme name.
+            st.markdown(f"**{label}**")
+
+            # 2. 3M-excess metric (fallback to the absolute 3M return).
+            _x3 = getattr(r, "excess_3m", None)
+            if _x3 is not None:
+                st.metric(t("theme_col_3m_excess"), f"{_x3:+.1f}%")
+            else:
+                _r3 = getattr(r, "return_3m", None)
+                st.metric(t("theme_col_3m"),
+                          f"{_r3:+.1f}%" if _r3 is not None else "—")
+
+            # 3. Momentum-score badge (same thresholds as the Cockpit).
+            _ms = getattr(r, "momentum_score", 0.0) or 0.0
+            _mcolor = ("#3fb950" if _ms >= 0.66
+                       else ("#d29922" if _ms >= 0.33 else "#8b949e"))
             st.markdown(
-                "<table style='border-collapse:collapse;font-size:13px'>"
-                f"<thead><tr><th style='padding:4px 10px;text-align:left;color:{hdr_c};font-weight:normal'>{t('theme_constituents')}</th>"
-                f"<th style='padding:4px 10px;text-align:right;color:{hdr_c};font-weight:normal'>1M</th>"
-                f"<th style='padding:4px 10px;text-align:right;color:{hdr_c};font-weight:normal'>3M</th>"
-                f"</tr></thead><tbody>{''.join(crow_html)}</tbody></table>",
+                f"{t('theme_col_score')}: " + _badge(f"{_ms:.2f}", _mcolor),
                 unsafe_allow_html=True,
             )
 
-            # Bar chart of constituent 3M returns, sorted desc
-            bar = sorted(
-                [(tk, _r3) for tk, _r1, _r3 in const_rows if _r3 is not None],
-                key=lambda x: x[1], reverse=True,
-            )
-            if bar:
-                fig = go.Figure(go.Bar(
-                    x=[b[0] for b in bar],
-                    y=[round(b[1], 1) for b in bar],
-                    marker_color=["#3fb950" if b[1] >= 0 else "#f85149" for b in bar],
-                    text=[f"{b[1]:+.1f}%" for b in bar],
-                    textposition="outside",
-                ))
-                apply_layout(fig, title=t("theme_bar_title"), height=280)
-                apply_legend(fig)
-                st.plotly_chart(fig, use_container_width=True, key=f"theme_bar_{r.theme_key}")
-            else:
-                st.caption(t("theme_constituent_na"))
+            # 4. Rotation-stage badge + confirmed/unconfirmed.
+            _stage = getattr(r, "stage", "") or ""
+            if _stage:
+                _scol = {"leading": "#3fb950", "rotating_in": "#388bfd",
+                         "rotating_out": "#d29922",
+                         "out_of_favor": "#8b949e"}.get(_stage, "#8b949e")
+                _conf_txt = (("广度确认" if lang == "zh" else "confirmed")
+                             if getattr(r, "stage_confirmed", False)
+                             else ("未确认" if lang == "zh" else "unconfirmed"))
+                st.markdown(
+                    f"{t('theme_col_stage')}: "
+                    + _badge(f"{t('stage_' + _stage)} · {_conf_txt}", _scol),
+                    unsafe_allow_html=True,
+                )
+                # 5. Breadth one-liner.
+                _bb = getattr(r, "breadth_beat_pct", None)
+                _ba = getattr(r, "breadth_above_sma20_pct", None)
+                if _bb is not None:
+                    st.caption(
+                        f"{t('theme_col_breadth')}: "
+                        f"{int(_bb*100)}% > {getattr(r, 'benchmark', 'QQQ')}"
+                        + (f" · {int(_ba*100)}% > SMA20" if _ba is not None else ""))
 
-            # AI analysis — only on click (not auto-run)
-            if st.button(t("theme_analyze_btn"), key=f"theme_analyze_{r.theme_key}"):
-                with st.spinner(t("theme_analyzing")):
-                    sys.path.insert(0, str(Path(__file__).parent.parent / "lib"))
-                    from llm_orchestrator import analyze_theme_basket
-                    _regime = st.session_state.get("macro_regime_result", "unknown")
-                    st.session_state[f"theme_ai_{r.theme_key}"] = analyze_theme_basket(
-                        r.theme_key, r, _regime, lang
-                    )
-            _ai = st.session_state.get(f"theme_ai_{r.theme_key}")
-            if _ai:
-                _render_theme_ai(_ai, lang)
+            # 6/7. Transmission-position badge + leaders / next-wave (fail-closed).
+            _summ = _summary_for(theme_key)
+            if _summ and _summ.get("transmission_order") is not None:
+                _ord = _summ["transmission_order"]
+                _clu = _summ.get("transmission_cluster") or ""
+                _clu_lbl = CLUSTER_LABELS.get(_clu, {}).get(_ckey) or _clu or "—"
+                _txcolor = {1: "#3fb950", 2: "#388bfd", 3: "#d29922",
+                            4: "#8b949e"}.get(_ord, "#8b949e")
+                _txlbl = "传导位置" if lang == "zh" else "Transmission"
+                _ordtxt = f"第{_ord}波" if lang == "zh" else f"Wave {_ord}"
+                st.markdown(
+                    f"{_txlbl}: " + _badge(f"{_ordtxt} · {_clu_lbl}", _txcolor),
+                    unsafe_allow_html=True,
+                )
+                _leaders = (_summ.get("roles") or {}).get("leader", [])
+                _down = _summ.get("downstream_themes", [])
+                _ctx = []
+                if _leaders:
+                    _ctx.append(("龙头: " if lang == "zh" else "Leaders: ")
+                                + ", ".join(_leaders[:4]))
+                if _down:
+                    _down_lbls = [(THEME_BASKETS.get(_k, {}).get(_lkey) or _k)
+                                  for _k in _down]
+                    _ctx.append(("下一波: " if lang == "zh" else "Next wave: ")
+                                + ", ".join(_down_lbls))
+                if _ctx:
+                    st.caption(" · ".join(_ctx))
+
+            # 8. Toggle button (after items 1-7; same session_state flip logic).
+            btn_label = (("▲ 收起" if lang == "zh" else "▲ Collapse") if is_open
+                         else ("▼ 展开" if lang == "zh" else "▼ Expand"))
+            if st.button(btn_label, key=f"btn_{theme_key}", use_container_width=True):
+                st.session_state[f"card_open_{theme_key}"] = not is_open
+                st.rerun()
+
+            if is_open:
+                st.divider()
+                _render_card_body(r, cfg)
+
+    if not wave_groups:
+        # Fail-closed fallback: flat un-grouped button-card list (no expander).
+        for r in themes:
+            _render_card(r.theme_key, None)
+        return
+
+    _ckey = "zh" if lang == "zh" else "en"
+    for _wi, _order in enumerate(sorted(wave_groups)):
+        if _wi > 0:
+            st.divider()
+        _theme_keys = [tk for tk in wave_groups[_order] if tk in themes_by_key]
+        if not _theme_keys:
+            continue
+        _wave_lbl = f"第{_order}波" if lang == "zh" else f"Wave {_order}"
+        _clu = wave_first_cluster.get(_order, "")
+        _clu_lbl = CLUSTER_LABELS.get(_clu, {}).get(_ckey) or _clu or ""
+        st.markdown(f"##### ── {_wave_lbl}  {_clu_lbl} ──")
+        # Single-theme wave -> centered card; otherwise rows of 3 columns.
+        if len(_theme_keys) == 1:
+            _cols = st.columns([1, 2, 1])
+            with _cols[1]:
+                _render_card(_theme_keys[0], _order)
+        else:
+            for _i in range(0, len(_theme_keys), 3):
+                _chunk = _theme_keys[_i:_i + 3]
+                _cols = st.columns(3)
+                for _j, _tk in enumerate(_chunk):
+                    with _cols[_j]:
+                        _render_card(_tk, _order)
 
 
 st.title(t("p2_title"))
