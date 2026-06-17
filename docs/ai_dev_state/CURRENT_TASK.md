@@ -5,20 +5,36 @@
 > history preserved verbatim). This file keeps only the active phase. The
 > long-form running status remains in `docs/ai_dev_state/PROJECT_STATE.md`.
 
-**Status:** Idle — ready for next phase
+**Status:** Phase 7C — Theme Transmission Mapping: **implemented + UI-verified;
+feature commit on branch `phase-7c-theme-transmission` @ `bbdf5b0`. Awaiting
+review — NOT merged to `main`, NOT pushed.**
 
-**Last completed:** Legacy Red Suite Archival (independent batch)
-- Moved 13 Phase-5 RED suites to `scripts/archive/` (via `git mv`).
-- New parity baseline: **GREEN=67 / RED=0** (full `scripts/test_reliability_*.py`
-  sweep; 0 failing assertions across all active suites; ≥5,497 passing
-  assertions parseable — full aggregate not comparable to the prior 14,039
-  because the env was rebuilt on newer pandas/numpy/pytest).
-- Archived suites excluded automatically: the canonical glob
-  `scripts/test_reliability_*.py` is non-recursive and never descends into
-  `scripts/archive/`.
-- Baseline commit: `main @ b323c09`.
+**Last completed:** Phase 7C — Theme Transmission Mapping (feature commit
+`bbdf5b0`)
+- New `lib/theme_transmission.py`: `THEME_TRANSMISSION_ORDER` (12 AI themes →
+  capital propagation order 1–4 + transmission cluster) + `TICKER_ROLE_MAP`
+  (per-ticker role seed; unassessed → `unknown`); builds onto the existing
+  `phase5_theme_intelligence` schema (zero duplication); public API
+  `get_transmission_order` / `_cluster` / `get_ticker_role` /
+  `get_theme_transmission_summary` / `get_diffusion_context`. Zero network,
+  zero LLM, deterministic.
+- Display-only wiring: `opportunity_ranker` rationale tags (fail-closed import;
+  no scoring change), Cockpit theme-card transmission row, Sector Market-Themes
+  wave-card redesign. `phase5_theme_intelligence.py` and `theme_baskets.py`
+  untouched.
+- Tests: `scripts/test_reliability_theme_transmission.py` — **ALL 11 TESTS
+  PASSED** (incl. S1 isolation, S7 ranker fail-closed, S8 no
+  `approved_for_execution`, S9 `theme_baskets` parity). Active parity suites
+  now **68** (was 67). Phase doc:
+  `docs/reliability_phase_7c_theme_transmission.md`.
 
-**Next:** Phase 7C — Theme Beneficiary Layers (planning phase)
+**Prior baseline:** Legacy Red Suite Archival (independent batch) — moved 13
+Phase-5 RED suites to `scripts/archive/` (`git mv`); baseline **GREEN=67 /
+RED=0** at `main @ b323c09`; archived suites excluded automatically (the
+canonical glob `scripts/test_reliability_*.py` is non-recursive).
+
+**Next:** Phase 7C review → merge to `main` (`--no-ff`, after explicit
+approval); then Phase 7D (cross-layer comparison → feedback loop).
 
 > **Thesis Ingestion MVP — CLOSED (Codex-approved, 2026-06-14) + UI verification batch
 > COMPLETE (2026-06-15, 16 fix commits, 80 tests passing).** UI batch fixes: sidebar nav,
