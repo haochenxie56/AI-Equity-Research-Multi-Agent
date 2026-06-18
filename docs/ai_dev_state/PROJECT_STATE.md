@@ -1,5 +1,46 @@
 # AI Investment Agent — Project State
 
+## Phase 7C — Theme Transmission Mapping (Implemented + UI-verified; awaiting review)
+
+Adds a deterministic **transmission-chain** layer over the existing theme
+baskets: the *order* in which capital propagates across the AI industry chain
+(1–4) and each ticker's *role* within a theme. **Display / context only — it
+contributes no number to any scoring path.** Feature commit on branch
+`phase-7c-theme-transmission` @ `bbdf5b0`; **not merged to `main`, not pushed.**
+Phase doc: `docs/reliability_phase_7c_theme_transmission.md`.
+
+- **New `lib/theme_transmission.py`**: `THEME_TRANSMISSION_ORDER` (12 themes →
+  order 1–4 + transmission cluster) + `TICKER_ROLE_MAP` (per-ticker role seed:
+  leader / second_derivative_beneficiary / supplier / platform / speculative /
+  laggard; unassessed → `unknown`, never raises, never skips). Builds onto the
+  Phase-5 `phase5_theme_intelligence` schema (`IndustryChainNode`,
+  `ThemeCandidateRole`, `ThemeRecord`, `SubthemeRecord`,
+  `ThemeIntelligenceSnapshot`) — **zero schema duplication**;
+  `build_theme_transmission_snapshot()` validates with a build-time
+  dangling-ref integrity check. Public API: `get_transmission_order`,
+  `get_transmission_cluster`, `get_ticker_role`,
+  `get_theme_transmission_summary`, `get_diffusion_context`. **Zero network,
+  zero LLM, deterministic.**
+- **Isolation invariant**: imports only `theme_baskets` +
+  `phase5_theme_intelligence`; never `opportunity_ranker`, `thesis_ingestion`,
+  `anchor_cache`, or any `pages/` (AST-pinned by test S1).
+- **Scoring invariant**: `lib/opportunity_ranker.py` gains only display
+  rationale `ReasonCode` tags via a fail-closed `try/except ImportError`
+  import — **no change to scoring, weights, or numeric outputs**.
+- **UI**: Cockpit theme card transmission row (`第N波 · cluster`, localized +
+  leaders/downstream caption, fail-closed); Sector Market-Themes tab redesigned
+  into a wave-based card layout (4 waves, horizontal columns, button-triggered
+  expand/collapse, Cockpit-style thumbnail).
+- **Untouched**: `lib/reliability/phase5_theme_intelligence.py` and
+  `lib/theme_baskets.py` (reused read-only, not modified).
+- **Tests**: `scripts/test_reliability_theme_transmission.py` — **ALL 11 TESTS
+  PASSED** (S1 isolation, S7 ranker fail-closed, S8 no `approved_for_execution`,
+  S9 `theme_baskets` parity exit 0). **Active parity suites now 68 (was 67)** —
+  full `scripts/test_reliability_*.py` glob (non-recursive; the new suite is the
+  68th).
+
+---
+
 ## Legacy Red Suite Archival — CLOSED (independent documentary batch, 2026-06-15)
 
 **Status: complete.** Moved the 13 permanently-drifted Phase-5-era RED

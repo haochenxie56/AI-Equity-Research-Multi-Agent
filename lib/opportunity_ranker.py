@@ -37,6 +37,20 @@ except Exception:  # noqa: BLE001 — degrade to "no cache enrichment"
         return None
 
 
+# Phase 7C — transmission context (DISPLAY-ONLY rationale enrichment). Imported
+# fail-closed: if theme_transmission cannot import, the ranker keeps working with
+# no transmission tags and zero impact on any score.
+try:  # pragma: no cover - import guard
+    from lib.theme_transmission import (
+        THEME_TRANSMISSION_ORDER as _TX_ORDER,
+        get_ticker_role as _tx_role,
+        get_transmission_order as _tx_order,
+    )
+    _TX_AVAILABLE = True
+except ImportError:  # noqa: BLE001 — fail-closed; no transmission context
+    _TX_AVAILABLE = False
+
+
 # Canonical key set of the FRESH snapshot anchor block (Anchor Intel v2.3 U2).
 # Exported so the §18-style parity test derives the expected fields from the CODE
 # (a field added here must be classified by the parity assertion, never silently).
@@ -534,6 +548,24 @@ def build_reason_codes(candidate, rs, theme_momentum: float,
         why_matters.append(ReasonCode(
             "triple_horizon_signal", "Signal fires across all three horizons",
             "三个时间维度均触发信号"))
+
+    # ---- transmission context (Phase 7C; DISPLAY ONLY — no scoring impact) ----
+    # For each theme the ticker belongs to (seed-mapped role != "unknown"), append
+    # a rationale tag naming its role + the theme's capital-propagation order.
+    # Unassessed memberships ("unknown") are omitted entirely. Fail-closed.
+    if _TX_AVAILABLE:
+        _tk = str(_g(candidate, "ticker", "") or "").upper().strip()
+        if _tk:
+            for _entry in _TX_ORDER:
+                _theme = _entry["theme"]
+                _role = _tx_role(_theme, _tk)
+                if _role == "unknown":
+                    continue
+                _order = _tx_order(_theme)
+                why_matters.append(ReasonCode(
+                    f"transmission_{_theme}",
+                    f"[transmission: {_role} in {_theme} (order {_order})]",
+                    f"[传导链：{_theme} 中为 {_role}（第 {_order} 棒）]"))
     return why_now, why_matters
 
 

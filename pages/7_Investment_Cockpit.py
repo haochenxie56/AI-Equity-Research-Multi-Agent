@@ -65,6 +65,19 @@ def _badge(text: str, color: str) -> str:
     )
 
 
+# Phase 7C — bilingual labels for transmission cluster strings (display i18n).
+CLUSTER_LABELS = {
+    "compute_core":        {"en": "Compute Core",       "zh": "核心算力"},
+    "supply_chain":        {"en": "Supply Chain",        "zh": "供应链"},
+    "demand_application":  {"en": "Demand / App Layer",  "zh": "需求/应用层"},
+    "infrastructure":      {"en": "Infrastructure",      "zh": "基础设施"},
+    "defense_security":    {"en": "Defense / Security",  "zh": "安全防御"},
+    "physical_buildout":   {"en": "Physical Build-out",  "zh": "实体基建"},
+    "endpoint_diffusion":  {"en": "Endpoint Diffusion",  "zh": "终端普及"},
+    "adjacent_cycle":      {"en": "Adjacent Cycle",      "zh": "关联赛道"},
+}
+
+
 _STRENGTH_COLOR = {"triple": "#d4a017", "double": "#3fb950",
                    "single": "#388bfd", "none": "#8b949e"}
 _REGIME_COLOR = {"risk_on": "#3fb950", "risk_off": "#f85149",
@@ -685,6 +698,47 @@ else:
                             f"{t('cockpit_hub_breadth')}: "
                             f"{int(_bb*100)}% > {getattr(_th, 'benchmark', 'QQQ')}"
                             + (f" · {int(_ba*100)}% > SMA20" if _ba is not None else ""))
+                # Phase 7C — transmission-chain row (display only; fail-closed).
+                # Shows the theme's capital-propagation order + cluster, with the
+                # in-theme leaders and the next-wave (downstream) themes for context.
+                _tx_key = getattr(_th, "theme_key", "") or ""
+                try:
+                    from lib.theme_transmission import get_theme_transmission_summary
+                    _tx = get_theme_transmission_summary(_tx_key) if _tx_key else None
+                except Exception:  # noqa: BLE001 — fail-closed; row simply omitted
+                    _tx = None
+                if _tx and _tx.get("transmission_order") is not None:
+                    _ord = _tx["transmission_order"]
+                    _clu = _tx.get("transmission_cluster") or ""
+                    # i18n: localize the raw cluster string (fail-closed to raw).
+                    _clu_lbl = (CLUSTER_LABELS.get(_clu, {}).get(
+                        "zh" if _lang == "zh" else "en") or _clu or "—")
+                    _txcolor = {1: "#3fb950", 2: "#388bfd", 3: "#d29922",
+                                4: "#8b949e"}.get(_ord, "#8b949e")
+                    _txlbl = "传导位置" if _lang == "zh" else "Transmission"
+                    _ordtxt = (f"第{_ord}波" if _lang == "zh" else f"order {_ord}")
+                    st.markdown(
+                        f"{_txlbl}: " + _badge(f"{_ordtxt} · {_clu_lbl}", _txcolor),
+                        unsafe_allow_html=True,
+                    )
+                    # Localize theme-key lists via THEME_BASKETS labels (fail-closed).
+                    try:
+                        from lib.theme_baskets import THEME_BASKETS as _TB
+                    except Exception:  # noqa: BLE001
+                        _TB = {}
+                    _lkey = "label_zh" if _lang == "zh" else "label_en"
+                    _leaders = (_tx.get("roles") or {}).get("leader", [])
+                    _down = _tx.get("downstream_themes", [])
+                    _ctx = []
+                    if _leaders:
+                        _ctx.append(("龙头: " if _lang == "zh" else "Leaders: ")
+                                    + ", ".join(_leaders[:4]))
+                    if _down:
+                        _down_lbls = [(_TB.get(_k, {}).get(_lkey) or _k) for _k in _down]
+                        _ctx.append(("下一波: " if _lang == "zh" else "Next wave: ")
+                                    + ", ".join(_down_lbls))
+                    if _ctx:
+                        st.caption(" · ".join(_ctx))
                 # Contextual jump to the Thesis Library, pre-filtered to this theme.
                 _theme_key = getattr(_th, "theme_key", "") or ""
                 if _theme_key:
