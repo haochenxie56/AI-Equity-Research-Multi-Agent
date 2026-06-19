@@ -652,6 +652,7 @@ def render_sidebar() -> None:
         st.page_link("pages/4_Equity.py",             label=t("nav_p4"))
         st.page_link("pages/9_Trading_Desk.py",       label=t("nav_p9"))
         st.page_link("pages/10_Thesis_Library.py",    label=t("nav_p10"))
+        st.page_link("pages/11_Audit_Review.py",      label=t("nav_p11"))
 
 
 # ── Number formatting ─────────────────────────────────────────────────────────
@@ -1089,6 +1090,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "nav_p8":             "🌐 宏观仪表盘",
         "nav_p9":             "📋 交易台",
         "nav_p10":            "📚 研报卡片库",
+        "nav_p11":            "🔍 审计回顾",
         "nav_section":        "导航",
         # ── Phase 6C-B: Investment Cockpit rebuild (data aggregation hub) ────────
         "cockpit_hub_title":            "🧭 投研中枢 / Investment Cockpit",
@@ -2582,6 +2584,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "nav_p8":             "🌐 Macro Dashboard",
         "nav_p9":             "📋 Trading Desk",
         "nav_p10":            "📚 Thesis Library",
+        "nav_p11":            "🔍 Audit Review",
         "nav_section":        "Navigation",
         # ── Phase 6C-B: Investment Cockpit rebuild (data aggregation hub) ────────
         "cockpit_hub_title":            "🧭 Investment Cockpit / 投研中枢",
