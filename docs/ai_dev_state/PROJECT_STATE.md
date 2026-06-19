@@ -1,12 +1,47 @@
 # AI Investment Agent — Project State
 
-## Phase 7C — Theme Transmission Mapping (Implemented + UI-verified; awaiting review)
+## Phase 7D Block A — Snapshot Audit Query Interface (COMPLETE — merged to `main` @ `5a57850`, 2026-06-19)
+
+A read-only **audit-query layer** + bilingual review page over the daily
+opportunity snapshot trail (`data/snapshots/opportunities_*.jsonl`). **Pure
+reader: no signal engine, no ranking, no network — the audit track stays separate
+from the live rolling-recompute track (ROADMAP invariant).** UI-verified in EN +
+中文 (2026-06-19). Feature commit `5b14da1`; `--no-ff` merge `5a57850` (pushed). At
+closeout the trail held **9 snapshot files / 180 ticker records / 43 tickers**.
+Phase doc: this section + `CURRENT_TASK.md`.
+
+- **New `lib/audit_query.py`** — `OpportunityRecord` / `MetaRecord` typed wrappers
+  with safe `.get()` defaults tolerant of the additive schema drift (`anchor`
+  absent in the 3 earliest files; `rs_stale` / `_meta.earnings_skipped` absent in
+  the earliest). Five functions: `load_all_meta`, `load_all_opportunities`,
+  `query_status_transitions` (joins `_meta` fragility by date),
+  `compute_actionable_follow_through` (per-horizon "Actionable Now" score
+  follow-through over a snapshot-day window, with honest `insufficient_history`),
+  `compute_fragility_series`. Reuses the two existing read primitives
+  (`opportunity_ranker.load_ticker_series`, `market_internals.read_recent_meta`);
+  fail-closed at file and line granularity, never raises.
+- **New `pages/11_Audit_Review.py`** (Sections A–E) — snapshot coverage table,
+  fragility-history Altair bar chart (normal/elevated/high color-coded), ticker
+  status history, follow-through analysis, audit-trail integrity + schema-drift
+  summary. Fully bilingual: every label, column header, and cell value follows the
+  EN/中文 toggle (nested `{"zh":…,"en":…}` maps); `st.cache_data(ttl=300)` loaders.
+  Registered in `render_sidebar()` as `nav_p11`.
+- **`ui_utils.py`** — `nav_p11` page link + both translation dicts
+  (🔍 Audit Review / 🔍 审计回顾).
+- **Tests**: `scripts/test_reliability_phase_7d_audit_query.py` §7D.1–§7D.10
+  **10/10** (in-memory `tmp_path`; §7D.10 AST + runtime import-graph guard that
+  `audit_query` never pulls `signal_engine`).
+- **Deferred:** `data/agent_outputs/` intentionally NOT created (Phase 8A).
+
+---
+
+## Phase 7C — Theme Transmission Mapping (CLOSED — merged to `main`, post-7C docs sync @ `c959576`)
 
 Adds a deterministic **transmission-chain** layer over the existing theme
 baskets: the *order* in which capital propagates across the AI industry chain
 (1–4) and each ticker's *role* within a theme. **Display / context only — it
-contributes no number to any scoring path.** Feature commit on branch
-`phase-7c-theme-transmission` @ `bbdf5b0`; **not merged to `main`, not pushed.**
+contributes no number to any scoring path.** Shipped via `--no-ff` merge of
+`phase-7c-theme-transmission` (feature `bbdf5b0`); **merged to `main` and pushed.**
 Phase doc: `docs/reliability_phase_7c_theme_transmission.md`.
 
 - **New `lib/theme_transmission.py`**: `THEME_TRANSMISSION_ORDER` (12 themes →

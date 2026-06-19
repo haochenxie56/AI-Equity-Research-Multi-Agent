@@ -5,36 +5,36 @@
 > history preserved verbatim). This file keeps only the active phase. The
 > long-form running status remains in `docs/ai_dev_state/PROJECT_STATE.md`.
 
-**Status:** Phase 7C — Theme Transmission Mapping: **implemented + UI-verified;
-feature commit on branch `phase-7c-theme-transmission` @ `bbdf5b0`. Awaiting
-review — NOT merged to `main`, NOT pushed.**
+**Status:** Phase 7D Block A — Snapshot Audit Query Interface: **COMPLETE,
+UI-verified (EN + 中文, 2026-06-19), merged to `main` via `--no-ff` @ `5a57850`
+(feature commit `5b14da1`) and pushed.**
 
-**Last completed:** Phase 7C — Theme Transmission Mapping (feature commit
-`bbdf5b0`)
-- New `lib/theme_transmission.py`: `THEME_TRANSMISSION_ORDER` (12 AI themes →
-  capital propagation order 1–4 + transmission cluster) + `TICKER_ROLE_MAP`
-  (per-ticker role seed; unassessed → `unknown`); builds onto the existing
-  `phase5_theme_intelligence` schema (zero duplication); public API
-  `get_transmission_order` / `_cluster` / `get_ticker_role` /
-  `get_theme_transmission_summary` / `get_diffusion_context`. Zero network,
-  zero LLM, deterministic.
-- Display-only wiring: `opportunity_ranker` rationale tags (fail-closed import;
-  no scoring change), Cockpit theme-card transmission row, Sector Market-Themes
-  wave-card redesign. `phase5_theme_intelligence.py` and `theme_baskets.py`
-  untouched.
-- Tests: `scripts/test_reliability_theme_transmission.py` — **ALL 11 TESTS
-  PASSED** (incl. S1 isolation, S7 ranker fail-closed, S8 no
-  `approved_for_execution`, S9 `theme_baskets` parity). Active parity suites
-  now **68** (was 67). Phase doc:
-  `docs/reliability_phase_7c_theme_transmission.md`.
+**Last completed:** Phase 7D Block A — Snapshot Audit Query Interface (merge
+`5a57850`)
+- New `lib/audit_query.py`: pure read-only query layer over
+  `data/snapshots/opportunities_*.jsonl` (9 files / 180 records / 43 tickers at
+  closeout). `OpportunityRecord` / `MetaRecord` typed wrappers with safe
+  `.get()` defaults across the additive-drift history; five functions
+  `load_all_meta`, `load_all_opportunities`, `query_status_transitions`,
+  `compute_actionable_follow_through`, `compute_fragility_series`. No signal
+  engine, no ranking, no network — fail-closed throughout.
+- New bilingual `pages/11_Audit_Review.py` (Sections A–E): snapshot coverage
+  table, fragility-history Altair bar chart (normal/elevated/high color-coded),
+  ticker status history with `_meta` fragility join, follow-through analysis
+  with insufficient-history guards, audit-trail integrity + schema-drift
+  summary. All labels / column headers / cell values follow the EN/中文 toggle;
+  `st.cache_data(ttl=300)` on all loaders. Registered in `render_sidebar()` as
+  `nav_p11` (🔍 Audit Review / 🔍 审计回顾).
+- Tests `scripts/test_reliability_phase_7d_audit_query.py` §7D.1–§7D.10 **10/10**
+  (all in-memory via `tmp_path`; §7D.10 AST + runtime guard that `audit_query`
+  never pulls `signal_engine`). `data/agent_outputs/` intentionally NOT created
+  (deferred to Phase 8A).
 
-**Prior baseline:** Legacy Red Suite Archival (independent batch) — moved 13
-Phase-5 RED suites to `scripts/archive/` (`git mv`); baseline **GREEN=67 /
-RED=0** at `main @ b323c09`; archived suites excluded automatically (the
-canonical glob `scripts/test_reliability_*.py` is non-recursive).
+**Prior:** Phase 7C — Theme Transmission Mapping CLOSED (merged to `main`; post-7C
+docs sync @ `c959576`). Phase 7B / Anchor Intelligence v2 series history below and
+in `PROJECT_STATE.md`.
 
-**Next:** Phase 7C review → merge to `main` (`--no-ff`, after explicit
-approval); then Phase 7D (cross-layer comparison → feedback loop).
+**Next:** Phase 8A — Agent Framework Foundation.
 
 > **Thesis Ingestion MVP — CLOSED (Codex-approved, 2026-06-14) + UI verification batch
 > COMPLETE (2026-06-15, 16 fix commits, 80 tests passing).** UI batch fixes: sidebar nav,

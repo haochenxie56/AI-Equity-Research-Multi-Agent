@@ -237,11 +237,13 @@ investment-agents/
 │   ├── 7_Investment_Cockpit.py     # ⭐ 投研中枢 — 主入口（聚合 + 机会清单 + 快照）
 │   ├── 8_Macro_Dashboard.py        # 宏观仪表盘 + Market Internals 工作台
 │   ├── 9_Trading_Desk.py           # 交易台 — 入场策略 / 订单叙事 / thesis 监控
-│   └── 10_Thesis_Library.py            # 研报卡片库 — 摄入 / 浏览 / 管理（Thesis Ingestion MVP）
+│   ├── 10_Thesis_Library.py            # 研报卡片库 — 摄入 / 浏览 / 管理（Thesis Ingestion MVP）
+│   └── 11_Audit_Review.py             # 快照审计回顾 — 覆盖/脆弱度/状态历史/跟进/完整性（只读 · 双语）
 │
 ├── lib/
 │   ├── llm_orchestrator.py         # Claude API 调用（LLM 层）
 │   ├── opportunity_ranker.py       # 机会排序编排（三周期评分/状态/快照）
+│   ├── audit_query.py              # 快照审计查询层（只读 / 无信号引擎 / 无排序 / 无联网 / fail-closed）
 │   ├── signal_engine.py            # 双轨信号引擎 + Finnhub 财报日历
 │   ├── candidate_generator.py      # 候选生成（发布扫描 universe）
 │   ├── order_advisor.py            # 状态推导 / 入场策略 v4 / 条件注册表
@@ -266,9 +268,10 @@ investment-agents/
 │   └── reliability/                # 可靠性基础设施（适配器层）
 │
 ├── scripts/
-│   ├── test_reliability_*.py       # 68 个可靠性测试套件（数千条断言）
+│   ├── test_reliability_*.py       # 69 个可靠性测试套件（数千条断言）
 │   ├── calibrate_fragility_backfill.py  # 30 日脆弱度校准回填工具
 │   ├── test_reliability_thesis_ingestion.py  # 71 项 thesis 卡摄入可靠性断言
+│   ├── test_reliability_phase_7d_audit_query.py  # 快照审计查询 §7D.1–§7D.10（含导入图守卫）
 │   ├── backfill_anchors.py         # 估值锚历史离线回填 CLI（可重算锚 + 披露滞后门控）
 │   ├── migrate_anchor_archive_to_shards.py  # 一次性离线：单文件归档 → 按 ticker 分片
 │   ├── daily_scan.py / fetch_financials.py / run_research.py
@@ -303,7 +306,8 @@ investment-agents/
 | Anchor Intelligence v2.5（v2 系列收官） | ✅ | **多维同业画像**：在 v1 的行业 × 增长带 × 规模带上新增利润率/盈利阶段/收入周期性数值维（确定性，复用已抓取的 `info`）；**同业候选 = 数值维 ∩ 主题篮子成分（与轮动同一份策展名单，单一事实来源）∪ 人工复核的 `peer_profiles` 覆盖标签**（最小种子仅 KTOS——篮子未覆盖的国防科技角落；MSCI/Syntax/Morningstar 等付费黑箱分类已评估并拒绝）。**`peer_match_quality` 诚实降级**：合格同业 < 4 时置 `low` + `insufficient_comparable_peers`，**绝不用原始 GICS 凑数**，并将 EV/S+EV/EBITDA 同业倍数锚**排除**出融合（`relative_pe` 行业图谱锚不受影响）——非可比同业算出的倍数比没有同业锚更糟。诊断卡呈现同业质量。`peers=None`（排序/刷新/交易台）→ 不评估 → 与 v2.4 逐字节一致。SNOW→高质量云同业、KTOS→低质量降级至仅分析师锚的真实路径验收；`peer_match` 49 新套件、诊断卡 50→54、full sweep GREEN=66/RED=13。**B1 修复轮**：`_peers` 曾被排除出 `compute_app_fair_value` 缓存键，却决定 `peer_match_quality` 与 EV 锚取舍 → 首写者依赖（与轮回-1 epoch 混淆同类）；因同业匹配同时影响 EV 锚的取舍与**数值**，故采用 Option A——同业集签名 `peer_sig` 进入缓存键，同业版/无同业版分别缓存、调用顺序无关，无同业路径与 v2.4 逐字节一致（§10 双向测试，判别性已验证）。**复审通过，approved @ `6f9c1ec`，已 `--no-ff` 合并 main；本轮收官 Anchor Intelligence v2 系列** |
 | Thesis Ingestion MVP | ✅ | 人工策展外部研报/访谈 → 单次 LLM 抽取 → 本地 JSON 结构化 thesis 卡；带可证伪条件、时效分级、双语渲染、卡片库独立页面（pages/10）、Cockpit 跳转入口；MVP 零消费（纯攒库），与排序/快照/锚系统零交集；UI验收批次已完成：侧边栏导航、主题卡/信号卡上下文跳转（switch_page）、备份文件夹自动创建与上传自动存档、docx/pdf/pptx格式支持、多卡提取去重逻辑、JSON修复（json-repair）、枚举规范化、测试 80 项 |
 | Phase 7C — 主题传导映射 | ✅ | 12 个 AI 主题映射资本传导棒次（1–4）+ 传导簇 · 每票角色种子（主导/二阶/供应商/平台/投机/落后；未评估→`unknown`）；复用 `phase5_theme_intelligence` schema（零重复）· **仅展示用、绝不进入排序**；隔离不变量（只依赖 `theme_baskets` + `phase5_theme_intelligence`，不碰 ranker / pages）；Cockpit 主题卡传导行 + Sector 市场主题波次卡片重设计；新增 `theme_transmission` 套件 11 项全过（S1 隔离 / S7 ranker fail-closed / S8 无 `approved_for_execution` / S9 篮子 parity）；feature commit `bbdf5b0`（待审，未合并 main） |
-| Phase 7D | 计划 | 跨层比较 → 反馈环（推荐质量复盘） |
+| Phase 7D Block A — 快照审计查询接口 | ✅ | 只读审计查询层（`lib/audit_query.py`：`load_all_meta` / `load_all_opportunities` / `query_status_transitions` / `compute_actionable_follow_through` / `compute_fragility_series` + 类型化记录包，容忍叠加式 schema 漂移；**无信号引擎 / 无排序 / 无联网，fail-closed**）+ 双语审计回顾页（pages/11，A–E 节：覆盖表 / 脆弱度 Altair 图 / 状态历史 / 跟进分析 / 完整性，全部标签·表头·单元格随中英切换）；§7D.1–§7D.10 全过（tmp_path 内存；§7D.10 AST + 运行时守卫禁止引入 `signal_engine`）；feature `5b14da1`，`--no-ff` 合并 main @ `5a57850` 并推送；UI 验收 EN + 中文通过（2026-06-19） |
+| Phase 7D（其余） | 计划 | 跨层比较 → 反馈环（推荐质量复盘） |
 | Phase 8 — Evidence Infrastructure | 计划 | 证据包 + 反向 DCF + 对抗式估值辩论 + 宏观 LLM 事件/归因 + IPO/流动性日历；首个「章节 agent」在此验证 |
 | Phase 9 — Agent Synthesis Layer | 远期 | 先做人在环 **Judgment Console**（判断收口页：LLM 在证据约束下给建议、人确认/覆写、来源留痕）→ 验证判断质量后逐步提高自动化；终态 = 章节 agent + orchestrator（agent 吃结构化判断、不碰原始数字；orchestrator 做冲突仲裁、不出操作指令） |
 | 另类数据接入 | 远期 | 期权流/暗池作为**新增正交组件**叠加进脆弱度复合（非替换）；以快照对照验证领先性/误报率改善 |
