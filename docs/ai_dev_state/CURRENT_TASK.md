@@ -5,36 +5,49 @@
 > history preserved verbatim). This file keeps only the active phase. The
 > long-form running status remains in `docs/ai_dev_state/PROJECT_STATE.md`.
 
-**Status:** Phase 7D Block A — Snapshot Audit Query Interface: **COMPLETE,
-UI-verified (EN + 中文, 2026-06-19), merged to `main` via `--no-ff` @ `5a57850`
-(feature commit `5b14da1`) and pushed.**
+**Status:** Phase 8A — Agent Framework Foundation: **COMPLETE, Codex-APPROVED
+(two review rounds), merged to `main` via `--no-ff` @ `f6a0f74` (feature commit
+`bfefd4d`) and pushed.**
 
-**Last completed:** Phase 7D Block A — Snapshot Audit Query Interface (merge
-`5a57850`)
-- New `lib/audit_query.py`: pure read-only query layer over
-  `data/snapshots/opportunities_*.jsonl` (9 files / 180 records / 43 tickers at
-  closeout). `OpportunityRecord` / `MetaRecord` typed wrappers with safe
-  `.get()` defaults across the additive-drift history; five functions
-  `load_all_meta`, `load_all_opportunities`, `query_status_transitions`,
-  `compute_actionable_follow_through`, `compute_fragility_series`. No signal
-  engine, no ranking, no network — fail-closed throughout.
-- New bilingual `pages/11_Audit_Review.py` (Sections A–E): snapshot coverage
-  table, fragility-history Altair bar chart (normal/elevated/high color-coded),
-  ticker status history with `_meta` fragility join, follow-through analysis
-  with insufficient-history guards, audit-trail integrity + schema-drift
-  summary. All labels / column headers / cell values follow the EN/中文 toggle;
-  `st.cache_data(ttl=300)` on all loaders. Registered in `render_sidebar()` as
-  `nav_p11` (🔍 Audit Review / 🔍 审计回顾).
-- Tests `scripts/test_reliability_phase_7d_audit_query.py` §7D.1–§7D.10 **10/10**
-  (all in-memory via `tmp_path`; §7D.10 AST + runtime guard that `audit_query`
-  never pulls `signal_engine`). `data/agent_outputs/` intentionally NOT created
-  (deferred to Phase 8A).
+**Last completed:** Phase 8A — Agent Framework Foundation (merge `f6a0f74`)
+- The connective tissue that activates the dormant World 2 reliability layer.
+  **7 new files; no existing file modified.** Two new namespace-only packages
+  `lib/agent_framework/` and `lib/agents/`.
+- `lib/agent_framework/agent_output.py`: `AgentOutput` `@dataclass` (10 required
+  fields + `agent_result: Optional[AgentResult]` embedded + `debate_report`
+  forward-ref for Phase 8B). `validate_judgment` blocks digits / % / $ / metric
+  tokens. `agent_result_to_agent_output` flattens `findings[].evidence +
+  risks[].evidence` (raises on empty). JSONL persistence `append_agent_output`
+  / `load_agent_outputs` at `data/agent_outputs/<agent_id>/<date>.jsonl`.
+- `lib/agent_framework/agent_runner.py`: `run_llm_agent` 11-step pipeline
+  (tool_results → `EvidenceStore` at `data/agent_evidence/<agent_id>/<run_id>/`
+  → evidence packet → constrained prompt → Claude → parse+validate →
+  `AgentOutput` → persist). `AgentRunError` on validation `severity==error`;
+  fail-closed fallback (`judgment_source="rule_based"`, human-confirm, synthetic
+  EvidenceRef) on LLM/parse failure. System prompt carries the invariants
+  (JSON-only, evidence-bound, no numeric fabrication, judgment constraint,
+  `approved_for_execution` always False).
+- `lib/agent_framework/world_adapter.py`: `llm_output_to_tool_result` +
+  `processed_signals_to_tool_result`; `_normalize_to_dict` converts dataclass
+  inputs (e.g. `MacroRegimeResult`) via `dataclasses.asdict` before validation.
+- `lib/agents/macro_regime_agent.py`: `run_macro_regime_agent` MacroRegimeAgent
+  smoke test (accepts the `MacroRegimeResult` dataclass or a plain dict) +
+  `end_of_today_iso`.
+- **Import discipline:** every `lib.reliability` / `lib.llm_orchestrator` import
+  is lazy (inside functions); importing `agent_framework` never triggers the
+  52-module eager `lib.reliability.__init__`. Verified by a subprocess guard.
+- Tests `scripts/test_agent_framework_foundation.py` §8A.1–§8A.11 **11/11**
+  (in-memory / monkeypatched; §8A.10 subprocess import guard; §8A.11 dataclass
+  normalization discriminating test, RED confirmed without `_normalize_to_dict`).
+- **Two Codex review rounds:** REJECT (R4.2 — dataclass normalization missing) →
+  fix → APPROVE WITH FIXES (docstring drift) → fix → APPROVE.
 
-**Prior:** Phase 7C — Theme Transmission Mapping CLOSED (merged to `main`; post-7C
-docs sync @ `c959576`). Phase 7B / Anchor Intelligence v2 series history below and
-in `PROJECT_STATE.md`.
+**Prior:** Phase 7D Block A — Snapshot Audit Query Interface CLOSED (merge
+`5a57850`, UI-verified EN + 中文 2026-06-19). Phase 7C / 7B / Anchor Intelligence
+v2 series history below and in `PROJECT_STATE.md`.
 
-**Next:** Phase 8A — Agent Framework Foundation.
+**Next:** Phase 8B — Foundation Agent Implementation (first agents:
+MacroRegimeAgent live wiring, MoneyFlowAgent).
 
 > **Thesis Ingestion MVP — CLOSED (Codex-approved, 2026-06-14) + UI verification batch
 > COMPLETE (2026-06-15, 16 fix commits, 80 tests passing).** UI batch fixes: sidebar nav,

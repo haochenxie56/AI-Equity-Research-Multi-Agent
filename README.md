@@ -265,13 +265,16 @@ investment-agents/
 │   ├── technical.py / data_fetcher.py / cache_manager.py / sectors.py
 │   ├── valuation.py / financial_tab.py / pv_tab.py / report_writer.py
 │   ├── workflow_state.py / translator.py
-│   └── reliability/                # 可靠性基础设施（适配器层）
+│   ├── reliability/                # 可靠性基础设施（适配器层 / World 2）
+│   ├── agent_framework/            # Phase 8A：AgentOutput / agent_runner / world_adapter（lib.reliability 全惰性导入）
+│   └── agents/                     # 具体 agent 实现（macro_regime_agent —— MacroRegimeAgent 冒烟）
 │
 ├── scripts/
 │   ├── test_reliability_*.py       # 69 个可靠性测试套件（数千条断言）
 │   ├── calibrate_fragility_backfill.py  # 30 日脆弱度校准回填工具
 │   ├── test_reliability_thesis_ingestion.py  # 71 项 thesis 卡摄入可靠性断言
 │   ├── test_reliability_phase_7d_audit_query.py  # 快照审计查询 §7D.1–§7D.10（含导入图守卫）
+│   ├── test_agent_framework_foundation.py  # Phase 8A Agent 框架 §8A.1–§8A.11（含子进程导入守卫）
 │   ├── backfill_anchors.py         # 估值锚历史离线回填 CLI（可重算锚 + 披露滞后门控）
 │   ├── migrate_anchor_archive_to_shards.py  # 一次性离线：单文件归档 → 按 ticker 分片
 │   ├── daily_scan.py / fetch_financials.py / run_research.py
@@ -283,7 +286,9 @@ investment-agents/
 │
 ├── .claude/agents/                 # Claude Code 子 Agent 定义
 ├── data/                           # Parquet 缓存 + 每日快照（git-ignored）
-│   └── snapshots/                  # opportunities_YYYYMMDD.jsonl（审计轨）
+│   ├── snapshots/                  # opportunities_YYYYMMDD.jsonl（审计轨）
+│   ├── agent_outputs/              # AgentOutput JSONL（<agent_id>/<date>.jsonl，Phase 8A）
+│   └── agent_evidence/             # EvidenceStore tool_results（<agent_id>/<run_id>/，Phase 8A）
 └── research/                       # 工作流状态 + 生成报告（git-ignored）
 ```
 
@@ -307,6 +312,7 @@ investment-agents/
 | Thesis Ingestion MVP | ✅ | 人工策展外部研报/访谈 → 单次 LLM 抽取 → 本地 JSON 结构化 thesis 卡；带可证伪条件、时效分级、双语渲染、卡片库独立页面（pages/10）、Cockpit 跳转入口；MVP 零消费（纯攒库），与排序/快照/锚系统零交集；UI验收批次已完成：侧边栏导航、主题卡/信号卡上下文跳转（switch_page）、备份文件夹自动创建与上传自动存档、docx/pdf/pptx格式支持、多卡提取去重逻辑、JSON修复（json-repair）、枚举规范化、测试 80 项 |
 | Phase 7C — 主题传导映射 | ✅ | 12 个 AI 主题映射资本传导棒次（1–4）+ 传导簇 · 每票角色种子（主导/二阶/供应商/平台/投机/落后；未评估→`unknown`）；复用 `phase5_theme_intelligence` schema（零重复）· **仅展示用、绝不进入排序**；隔离不变量（只依赖 `theme_baskets` + `phase5_theme_intelligence`，不碰 ranker / pages）；Cockpit 主题卡传导行 + Sector 市场主题波次卡片重设计；新增 `theme_transmission` 套件 11 项全过（S1 隔离 / S7 ranker fail-closed / S8 无 `approved_for_execution` / S9 篮子 parity）；feature commit `bbdf5b0`（待审，未合并 main） |
 | Phase 7D Block A — 快照审计查询接口 | ✅ | 只读审计查询层（`lib/audit_query.py`：`load_all_meta` / `load_all_opportunities` / `query_status_transitions` / `compute_actionable_follow_through` / `compute_fragility_series` + 类型化记录包，容忍叠加式 schema 漂移；**无信号引擎 / 无排序 / 无联网，fail-closed**）+ 双语审计回顾页（pages/11，A–E 节：覆盖表 / 脆弱度 Altair 图 / 状态历史 / 跟进分析 / 完整性，全部标签·表头·单元格随中英切换）；§7D.1–§7D.10 全过（tmp_path 内存；§7D.10 AST + 运行时守卫禁止引入 `signal_engine`）；feature `5b14da1`，`--no-ff` 合并 main @ `5a57850` 并推送；UI 验收 EN + 中文通过（2026-06-19） |
+| Phase 8A — Agent Framework Foundation | ✅ | 激活 World 2 可靠性层的连接组织（7 个新文件）：统一 `AgentOutput` dataclass（嵌入校验后的 `AgentResult` + 证据引用从 findings/risks 扁平化 + `judgment` 数值约束守卫）· LLM agent runner（`run_llm_agent` 11 步：tool_results → `EvidenceStore` → 证据包 → 受约束提示 → Claude → 解析+校验 → `AgentOutput` → JSONL 落盘；fail-closed 兜底为 rule-based + 需人工确认，校验 error 抛 `AgentRunError`）· World1→World2 适配器（`llm_output_to_tool_result` / `processed_signals_to_tool_result`，dataclass 自动 `asdict` 归一化）· JSONL 持久化（`data/agent_outputs/<agent_id>/<date>.jsonl`）· **MacroRegimeAgent 端到端冒烟**。所有 `lib.reliability` 导入惰性化（导入 `agent_framework` 绝不触发 52 模块 eager `__init__`，子进程导入守卫验证）；`approved_for_execution` 恒 `False`；不接线既有页面（Phase 8B）。两轮 Codex 审查（REJECT→修复→APPROVE）；§8A.1–§8A.11 **11/11** 通过；`--no-ff` 合并 main @ `f6a0f74` |
 | Phase 7D（其余） | 计划 | 跨层比较 → 反馈环（推荐质量复盘） |
 | Phase 8 — Evidence Infrastructure | 计划 | 证据包 + 反向 DCF + 对抗式估值辩论 + 宏观 LLM 事件/归因 + IPO/流动性日历；首个「章节 agent」在此验证 |
 | Phase 9 — Agent Synthesis Layer | 远期 | 先做人在环 **Judgment Console**（判断收口页：LLM 在证据约束下给建议、人确认/覆写、来源留痕）→ 验证判断质量后逐步提高自动化；终态 = 章节 agent + orchestrator（agent 吃结构化判断、不碰原始数字；orchestrator 做冲突仲裁、不出操作指令） |

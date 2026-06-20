@@ -1,5 +1,65 @@
 # AI Investment Agent — Project State
 
+## Phase 8A — Agent Framework Foundation (COMPLETE — merged to `main` @ `f6a0f74`, 2026-06-19)
+
+The **connective tissue that activates the dormant World 2 reliability layer**:
+a unified agent-output contract, an evidence-first LLM agent runner, a
+World1→World2 adapter, JSONL persistence, and the first real agent
+(MacroRegimeAgent) as an end-to-end smoke test. **7 new files; no existing file
+modified.** Two Codex review rounds (REJECT → fix → APPROVE WITH FIXES → fix →
+APPROVE). Feature commit `bfefd4d`; `--no-ff` merge `f6a0f74` (pushed). Phase
+doc: this section + `CURRENT_TASK.md`.
+
+- **Two new namespace-only packages** `lib/agent_framework/` and `lib/agents/`
+  (empty `__init__.py`, no eager imports).
+- **`lib/agent_framework/agent_output.py`** — `AgentOutput` `@dataclass`
+  embedding `Optional[AgentResult]` (NOT a Pydantic subclass; `AgentResult` is
+  `extra="forbid"`) + a `debate_report` forward-ref slot for Phase 8B.
+  `validate_judgment` blocks digits / `%` / `$` / metric-name tokens (keeps the
+  judgment out of `validate_agent_result`'s numeric-claim path).
+  `agent_result_to_agent_output` flattens evidence from `findings[].evidence +
+  risks[].evidence` and raises if empty. `append_agent_output` /
+  `load_agent_outputs` persist append-only JSONL at
+  `data/agent_outputs/<agent_id>/<date>.jsonl` (fail-closed, never raise).
+- **`lib/agent_framework/agent_runner.py`** — `run_llm_agent`, the 11-step
+  pipeline: validate inputs → mint `run_id` (`create_run_context`) → persist
+  ToolResults to an `EvidenceStore` at `data/agent_evidence/<agent_id>/<run_id>/`
+  → `build_evidence_packet` → `build_agent_result_prompt` → call Claude
+  (reusing `llm_orchestrator._get_client` + model `claude-sonnet-4-6`) →
+  `parse_and_validate_agent_result` → extract first-finding judgment → map →
+  `append_agent_output`. `AgentRunError` on validation `severity==error`;
+  fail-closed fallback (`judgment_source="rule_based"`,
+  `requires_human_confirmation=True`, one synthetic `runner_error` EvidenceRef)
+  on any LLM/parse failure. System prompt carries the invariants (JSON-only,
+  evidence-bound, no numeric fabrication, judgment constraint,
+  `approved_for_execution` always False).
+- **`lib/agent_framework/world_adapter.py`** — `llm_output_to_tool_result`
+  (World 1 `analyze_*` dict → ToolResult) and `processed_signals_to_tool_result`
+  (deterministic signals → ToolResult, the numeric-firewall entry point). Both
+  normalize dataclass inputs (e.g. `MacroRegimeResult`) via `dataclasses.asdict`
+  before the dict guard.
+- **`lib/agents/macro_regime_agent.py`** — `run_macro_regime_agent`
+  (MacroRegimeAgent smoke test; accepts the `MacroRegimeResult` dataclass or a
+  plain dict) + `end_of_today_iso`.
+- **Import discipline (enforced):** ALL `lib.reliability` and
+  `lib.llm_orchestrator` imports are lazy (inside functions); only
+  `TYPE_CHECKING` annotations reference them at module level. Importing the
+  `agent_framework` modules never triggers the **52-module eager
+  `lib.reliability.__init__`** (empirically confirmed). `DebateReport` is a
+  forward-ref only.
+- **Tests** `scripts/test_agent_framework_foundation.py` §8A.1–§8A.11 **11/11**
+  (in-memory / monkeypatched). §8A.10 is a **subprocess** import guard (clean
+  `sys.modules`); §8A.11 is the dataclass-normalization discriminating test
+  (proven RED when `_normalize_to_dict` is reverted). Not a `test_reliability_*`
+  suite, so the reliability-suite count is unchanged.
+- **Bypassed/untouched:** `lib/reliability/integration_boundary.py` (all modes
+  unwired pass-through) and `ReliabilityFeatureFlags` defaults
+  (`reliability_enabled=False`) — Phase 8A activates the layer for agent runs
+  without flipping any global flag or wiring into existing pages (that is
+  Phase 8B).
+
+---
+
 ## Phase 7D Block A — Snapshot Audit Query Interface (COMPLETE — merged to `main` @ `5a57850`, 2026-06-19)
 
 A read-only **audit-query layer** + bilingual review page over the daily
