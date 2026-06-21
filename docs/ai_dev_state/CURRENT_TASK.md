@@ -5,11 +5,40 @@
 > history preserved verbatim). This file keeps only the active phase. The
 > long-form running status remains in `docs/ai_dev_state/PROJECT_STATE.md`.
 
-**Status:** Phase 8B-0 — New Data Source Ingestion Layer: **COMPLETE,
-Codex-APPROVED (three review rounds), merged to `main` via `--no-ff` @ `69d7c9f`
-(feature commit `b365f25`) and pushed.**
+**Status:** Phase 8B — MacroRegimeAgent production implementation: **COMPLETE,
+Codex-APPROVED (two review rounds), merged to `main` via `--no-ff` @ `eabf0c2d`
+(feature commit `c25efe1`) and pushed.**
 
-**Last completed:** Phase 8B-0 — New Data Source Ingestion Layer (merge `69d7c9f`)
+**Current task:** Phase 8B continued — **MoneyFlowAgent** implementation (consumes
+the Phase 8B-0 Quiver dark-pool + Massive Options GEX/DEX processed signals,
+following the same evidence-first MacroRegimeAgent pattern).
+
+**Last completed:** Phase 8B — MacroRegimeAgent production implementation (merge
+`eabf0c2d`)
+- Upgrades the first concrete agent from the Phase 8A smoke test to a production
+  agent: deterministic macro regime classification → horizon-aware,
+  evidence-backed `AgentOutput`. Every cited number (three confidence metrics +
+  vote tally + regime-stability count) is computed in code and persisted as
+  evidence BEFORE the LLM runs. **4 files changed; 24 tests; Phase 6A live macro
+  suite 337/337 GREEN** after the `macro_regime.py` change.
+- `lib/macro_regime.py`: additive `votes_risk_on` / `votes_risk_off` /
+  `votes_total` on `MacroRegimeResult`, populated by `classify_regime()` (degraded
+  path stays 0); `macro_state.serialize_regime` unaffected (field whitelist).
+- `lib/agents/macro_regime_agent.py` (full rewrite): `_compute_short_confidence`
+  (vote-agreement ratio), `_compute_mid_confidence` (consecutive same-regime days
+  via `load_all_meta`, Guard A current-regime degrade + Guard B unknown-history
+  break, `_MID_CONFIDENCE_BREAKPOINTS` saturating curve), `_compute_long_confidence`
+  (`data_coverage × short_confidence`); `run_macro_regime_agent` accepts
+  `MacroRegimeResult`/dict/`None`, builds TWO ToolResults, dynamic numeric-free
+  task instruction, outer fail-closed guard; lazy `lib.reliability` imports.
+- `pages/7_Investment_Cockpit.py`: additive, key-gated, fail-closed hook reusing
+  the already-computed regime; stores `macro_regime_agent_output` only.
+- Tests: `scripts/test_phase_8b_macro_regime_agent.py` 24/24 (M6 split into M6a
+  Guard-A / M6b Guard-B; M11 asymmetric 5/1 tally). Two Codex rounds:
+  Round 1 REJECT (M6 + M11 not discriminating; numeric in instruction) → Round 2
+  APPROVE. All three mutation probes RED-confirmed.
+
+**Prior (Phase 8B-0):** New Data Source Ingestion Layer (merge `69d7c9f`)
 - Greenfield ingestion + processed-signal layer for two paid sources (Quiver
   Quantitative, Massive Options = Polygon). **3 new lib modules, 3 new test
   files, 1-line `signal_engine.py` comment, `.env.example` key rename; no other
@@ -73,9 +102,9 @@ Codex-APPROVED (three review rounds), merged to `main` via `--no-ff` @ `69d7c9f`
 `5a57850`, UI-verified EN + 中文 2026-06-19). Phase 7C / 7B / Anchor Intelligence
 v2 series history below and in `PROJECT_STATE.md`.
 
-**Next:** Phase 8B — Foundation Agent Implementation (MacroRegimeAgent
-production wiring first, then MoneyFlowAgent — the latter consumes the Phase
-8B-0 GEX/DEX + dark-pool signals).
+**Next:** Phase 8B continued — MoneyFlowAgent implementation (consumes the Phase
+8B-0 GEX/DEX + dark-pool signals). MacroRegimeAgent production wiring is now
+COMPLETE (merge `eabf0c2d`).
 
 > **Thesis Ingestion MVP — CLOSED (Codex-approved, 2026-06-14) + UI verification batch
 > COMPLETE (2026-06-15, 16 fix commits, 80 tests passing).** UI batch fixes: sidebar nav,

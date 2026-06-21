@@ -1,5 +1,62 @@
 # AI Investment Agent — Project State
 
+## Phase 8B — MacroRegimeAgent Production Implementation (COMPLETE — merged to `main` @ `eabf0c2d`, 2026-06-20)
+
+Upgrades the first concrete agent from the Phase 8A **smoke test** to a
+**production agent**: it turns the deterministic macro regime classification into
+a horizon-aware, evidence-backed `AgentOutput` for the PM layer. Every NUMBER the
+LLM may cite (three confidence metrics, the vote tally, the regime-stability
+count) is computed in code and persisted as evidence BEFORE the LLM runs — the
+numeric firewall holds. **4 files changed** (2 modified lib, 1 Cockpit hook, 1
+new test); **24 tests**; **Phase 6A live macro suite 337/337 GREEN** after the
+`macro_regime.py` change. Two Codex review rounds (REJECT → APPROVE). Feature
+commit `c25efe1`; `--no-ff` merge `eabf0c2d` (pushed).
+
+- **`lib/macro_regime.py` (additive).** `MacroRegimeResult` gains
+  `votes_risk_on` / `votes_risk_off` / `votes_total` (`int`, default `0`).
+  `classify_regime()` populates them from the existing local vote counters on the
+  main return path; the degraded early-return leaves all three at `0`. No existing
+  field / threshold / logic changed. `macro_state.serialize_regime` is unaffected
+  (it uses an explicit field whitelist, so it silently ignores the new keys).
+- **`lib/agents/macro_regime_agent.py` (full production rewrite).** Three
+  deterministic confidence functions (no LLM): `_compute_short_confidence` =
+  `abs(votes_on − votes_off) / votes_total` (0.0 on degraded / `votes_total==0`);
+  `_compute_mid_confidence` = consecutive same-regime days from snapshot history
+  via `audit_query.load_all_meta()`, mapped through a saturating curve
+  (`_MID_CONFIDENCE_BREAKPOINTS [(0,0.1)(1,0.2)(3,0.4)(5,0.6)(7,0.75)(10,0.9)
+  (14,1.0)]`) with **Guard A** (current regime ∈ {unknown,degraded} → 0.0) and
+  **Guard B** (an unknown/degraded day in history is a hard streak break);
+  `_compute_long_confidence` = `data_coverage × short_confidence`.
+  `run_macro_regime_agent(regime_signals=None, *, horizon, ticker, snapshot_dir,
+  macro_data)` accepts a `MacroRegimeResult` / dict / `None` (fetches +
+  classifies internally when `None`), computes all three confidences, persists
+  **TWO** ToolResults (`classify_regime` + `macro_regime_confidence`), builds a
+  dynamic horizon-aware three-finding instruction (regime label + textual
+  coverage band, **no numeric in the instruction**), and runs `run_llm_agent`
+  inside an **outer fail-closed guard** (a Claude failure yields a rule-based
+  fallback `AgentOutput`, never a raised exception). All `lib.reliability` imports
+  stay lazy.
+- **`pages/7_Investment_Cockpit.py` (additive hook only).** After
+  `save_regime_to_state(regime)` in Step 1 of `_run_refresh`, an **additive**
+  MacroRegimeAgent call **reuses the already-computed regime** (no second
+  `fetch_all_macro`), is **gated on `_has_llm_api_key()`**, wrapped in its **own
+  try/except** (never aborts the refresh), and stores the result under the NEW
+  `st.session_state["macro_regime_agent_output"]` key only. The existing
+  `macro_regime_result` state and every downstream regime consumer are untouched;
+  no UI element added.
+- **Tests** `scripts/test_phase_8b_macro_regime_agent.py` §8B-M1…M11 **24/24**
+  (LLM mocked at the `run_llm_agent` boundary; network mocked at
+  `fetch_all_macro` / `load_all_meta`; fixtures use REAL dataclasses, never
+  fabricated field values). M6 is split into **M6a** (Guard A discriminating —
+  current_regime="unknown" → 0.0) and **M6b** (Guard B discriminating —
+  break-vs-continue on an unknown history day; M5 confirmed GREEN under the M6b
+  mutation, proving independent coverage). M11 uses a real `MacroDataResult`
+  engineered for an **asymmetric 5 risk_on + 1 risk_off** tally so the sum
+  invariant is genuinely discriminating (`votes_total = votes_risk_on*2` → RED).
+  All three mutation probes RED-confirmed then restored.
+
+---
+
 ## Phase 8B-0 — New Data Source Ingestion Layer (COMPLETE — merged to `main` @ `69d7c9f`, 2026-06-20)
 
 Greenfield **ingestion + processed-signal layer** for two paid data sources —
