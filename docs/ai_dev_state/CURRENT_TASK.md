@@ -5,11 +5,38 @@
 > history preserved verbatim). This file keeps only the active phase. The
 > long-form running status remains in `docs/ai_dev_state/PROJECT_STATE.md`.
 
-**Status:** Phase 8A — Agent Framework Foundation: **COMPLETE, Codex-APPROVED
-(two review rounds), merged to `main` via `--no-ff` @ `f6a0f74` (feature commit
-`bfefd4d`) and pushed.**
+**Status:** Phase 8B-0 — New Data Source Ingestion Layer: **COMPLETE,
+Codex-APPROVED (three review rounds), merged to `main` via `--no-ff` @ `69d7c9f`
+(feature commit `b365f25`) and pushed.**
 
-**Last completed:** Phase 8A — Agent Framework Foundation (merge `f6a0f74`)
+**Last completed:** Phase 8B-0 — New Data Source Ingestion Layer (merge `69d7c9f`)
+- Greenfield ingestion + processed-signal layer for two paid sources (Quiver
+  Quantitative, Massive Options = Polygon). **3 new lib modules, 3 new test
+  files, 1-line `signal_engine.py` comment, `.env.example` key rename; no other
+  existing file modified.** 24 tests total (Quiver 6 + Massive 5 + GEX/DEX 13).
+- `lib/quiver_fetcher.py`: `fetch_dark_pool` / `fetch_congress_trades` /
+  `fetch_insider_trades` / `fetch_hedge_fund_positions` — fail-closed,
+  `@st.cache_data` (TTL dark_pool=3600, others=86400); `compute_dark_pool_signal`
+  pure deterministic aggregator (bullish/bearish/neutral thresholds inline;
+  `prev_close` buy/sell proxy with 50/50 degraded fallback when absent).
+- `lib/massive_options_fetcher.py`: `fetch_options_chain(ticker, expiry_filter)`
+  → populates the Phase 2E `OptionContractSnapshot`/`OptionChainSnapshot`
+  (`source="massive"`); paginated ≤5 pages; per-contract `try/except` skips bad
+  contracts with a `contract_skipped:` warning; free-tier graceful
+  (gamma=None + `greeks_unavailable: free tier`). TTL 900.
+- `lib/gex_dex.py`: pure deterministic `GexDexResult` + `compute_gex_dex(chain,
+  expiry_filter, prior_result=None)` (GEX/DEX sums, OI walls, 3-condition gamma
+  squeeze monitor incl. `prior_result` DEX-trend), `find_walls`,
+  `gex_dex_to_signals` (numeric-free `regime_summary`). Zero `lib.reliability`
+  imports; never raises.
+- **Free-tier caveat:** Massive free tier has NO Greeks/OI — live GEX/DEX needs
+  the Starter plan ($29/mo). **Quiver `prev_close` field names need live-API
+  confirmation** (parsers read defensively; fail-closed if absent).
+- **Three Codex review rounds:** REJECT (per-contract guard + `prior_result`
+  missing) → APPROVE WITH FIXES (verbose trigger token, test used `str()`) →
+  APPROVE. All mutation probes RED-confirmed.
+
+**Prior (Phase 8A):** Agent Framework Foundation (merge `f6a0f74`)
 - The connective tissue that activates the dormant World 2 reliability layer.
   **7 new files; no existing file modified.** Two new namespace-only packages
   `lib/agent_framework/` and `lib/agents/`.
@@ -42,12 +69,13 @@
 - **Two Codex review rounds:** REJECT (R4.2 — dataclass normalization missing) →
   fix → APPROVE WITH FIXES (docstring drift) → fix → APPROVE.
 
-**Prior:** Phase 7D Block A — Snapshot Audit Query Interface CLOSED (merge
+**Earlier:** Phase 7D Block A — Snapshot Audit Query Interface CLOSED (merge
 `5a57850`, UI-verified EN + 中文 2026-06-19). Phase 7C / 7B / Anchor Intelligence
 v2 series history below and in `PROJECT_STATE.md`.
 
-**Next:** Phase 8B — Foundation Agent Implementation (first agents:
-MacroRegimeAgent live wiring, MoneyFlowAgent).
+**Next:** Phase 8B — Foundation Agent Implementation (MacroRegimeAgent
+production wiring first, then MoneyFlowAgent — the latter consumes the Phase
+8B-0 GEX/DEX + dark-pool signals).
 
 > **Thesis Ingestion MVP — CLOSED (Codex-approved, 2026-06-14) + UI verification batch
 > COMPLETE (2026-06-15, 16 fix commits, 80 tests passing).** UI batch fixes: sidebar nav,

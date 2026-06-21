@@ -1,5 +1,64 @@
 # AI Investment Agent — Project State
 
+## Phase 8B-0 — New Data Source Ingestion Layer (COMPLETE — merged to `main` @ `69d7c9f`, 2026-06-20)
+
+Greenfield **ingestion + processed-signal layer** for two paid data sources —
+Quiver Quantitative (dark pool, congressional / insider / institutional trades)
+and Massive Options (= Polygon; options chain with Greeks / IV / OI). Fetching
+and computing are strictly separated; the deterministic GEX/DEX calculator does
+**no network, no LLM**. **3 new lib modules + 3 new test files; the only existing
+files touched are a 1-line `signal_engine.py` comment and the `.env.example` key
+rename (POLYGON→MASSIVE, +QUIVER).** Three Codex review rounds (REJECT → APPROVE
+WITH FIXES → APPROVE). Feature commit `b365f25`; `--no-ff` merge `69d7c9f`
+(pushed). **24 tests total: Quiver 6 + Massive 5 + GEX/DEX 13.**
+
+- **`lib/quiver_fetcher.py`** — `fetch_dark_pool` / `fetch_congress_trades` /
+  `fetch_insider_trades` / `fetch_hedge_fund_positions`: fail-closed (key absent
+  or any error → `[]`), `@st.cache_data` (TTL dark_pool=3600, others=86400),
+  defensive title-case key parsing. `compute_dark_pool_signal` is a **pure
+  deterministic aggregator** (no extra network): bullish/bearish/neutral via a
+  documented `buy_ratio` threshold (≥0.65 / ≤0.35), strength by magnitude,
+  `prev_close` price-vs-prior-close buy/sell proxy with a 50/50 + `degraded`
+  fallback when `prev_close` is absent, and `insufficient_data` below 3 records.
+- **`lib/massive_options_fetcher.py`** — `fetch_options_chain(ticker,
+  expiry_filter)` maps the v3 snapshot into the **existing Phase 2E
+  `OptionContractSnapshot` / `OptionChainSnapshot`** (`source="massive"`) so the
+  2E payoff / liquidity / evidence layer works unchanged. `expiry_filter` ∈
+  {this_week, next_week, monthly, all} → server-side date range; paginated via
+  `next_url` up to 5 pages. `_map_contract` wraps its whole body in `try/except`
+  → a bad contract yields a `contract_skipped: {e}` warning and is skipped while
+  the chain continues. `bid≈day.open` / `ask≈day.close` with an ask≥bid swap
+  guard. **Free-tier graceful:** when the `greeks` block is absent, Greeks stay
+  `None` (not `0.0`) and a de-duped `greeks_unavailable: free tier` warning is
+  recorded; fail-closed degraded snapshot on missing key / API error. TTL 900.
+- **`lib/gex_dex.py`** — pure deterministic calculator, **zero `lib.reliability`
+  imports** (duck-typed on the chain), never raises. `GexDexResult` dataclass
+  with a `degraded` sentinel. `compute_gex_dex(chain, expiry_filter,
+  prior_result=None)`: GEX = Σ(γ·OI·100·price²·0.01) (calls +, puts −), DEX =
+  Σ(δ·OI·100·price) (naturally signed); OI-based call/put walls; a 3-condition
+  gamma-squeeze monitor — A (negative GEX) + B (price within 3% above the put
+  wall) + C (`dex_total > prior_result.dex_total`, only when a prior is supplied)
+  → 0–1 low / 2 mid / 3 high; machine-readable trigger tokens (e.g.
+  `dex_trend_rising`). Contracts missing γ or δ are skipped + flagged `degraded`;
+  walls (OI-only) still compute. `find_walls` convenience extractor;
+  `gex_dex_to_signals` flat signal dict whose `regime_summary` carries **no
+  numeric values** (numbers live in the structured wall fields; enforced by
+  §8B0-G7).
+- **Caveats recorded:** Massive **free tier has no Greeks/OI** → live GEX/DEX
+  requires the Starter plan (~$29/mo); the layer degrades gracefully until then.
+  **Quiver `prev_close` field names still need live-API confirmation** — the
+  parser reads several candidate keys defensively and fails closed (50/50
+  degraded) when none is present.
+- **Tests** (hand-rolled `check()` harness, all network mocked via
+  `mock.patch.object`): `scripts/test_phase_8b0_quiver.py` Q1–Q6 (6),
+  `scripts/test_phase_8b0_massive.py` M1–M5 (5),
+  `scripts/test_phase_8b0_gex_dex.py` G1–G9 (13). Real fetch paths are exercised
+  with only the transport stubbed (would fail on a broken parse/map); several
+  cases carry discriminating flips, and the M5 (per-contract guard) and G8
+  (`prior_result` DEX-trend) mutation probes were RED-confirmed then restored.
+
+---
+
 ## Phase 8A — Agent Framework Foundation (COMPLETE — merged to `main` @ `f6a0f74`, 2026-06-19)
 
 The **connective tissue that activates the dormant World 2 reliability layer**:

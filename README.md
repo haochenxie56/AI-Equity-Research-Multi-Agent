@@ -262,6 +262,9 @@ investment-agents/
 │   ├── anchor_migration.py         # 确定性锚迁移读出（方向/速度/跨序列一致性）
 │   ├── anchor_backfill.py          # 离线历史回填引擎（可重算锚 + 披露滞后门控）
 │   ├── valuation_diagnosis.py      # 估值诊断卡（纯确定性组装 + valuation_role 映射）
+│   ├── quiver_fetcher.py           # Phase 8B-0：Quiver 暗池/国会/内部人/机构（fail-closed）+ 暗池信号纯聚合
+│   ├── massive_options_fetcher.py  # Phase 8B-0：Massive(=Polygon) 期权链 → Phase 2E OptionChainSnapshot（source="massive"）
+│   ├── gex_dex.py                  # Phase 8B-0：GEX/DEX 确定性计算器（OI 墙 + gamma 挤压监测；零 lib.reliability 导入）
 │   ├── technical.py / data_fetcher.py / cache_manager.py / sectors.py
 │   ├── valuation.py / financial_tab.py / pv_tab.py / report_writer.py
 │   ├── workflow_state.py / translator.py
@@ -275,6 +278,9 @@ investment-agents/
 │   ├── test_reliability_thesis_ingestion.py  # 71 项 thesis 卡摄入可靠性断言
 │   ├── test_reliability_phase_7d_audit_query.py  # 快照审计查询 §7D.1–§7D.10（含导入图守卫）
 │   ├── test_agent_framework_foundation.py  # Phase 8A Agent 框架 §8A.1–§8A.11（含子进程导入守卫）
+│   ├── test_phase_8b0_quiver.py    # Phase 8B-0 Quiver §8B0-Q1–Q6（网络全 mock）
+│   ├── test_phase_8b0_massive.py   # Phase 8B-0 Massive §8B0-M1–M5（含坏合约跳过判别）
+│   ├── test_phase_8b0_gex_dex.py   # Phase 8B-0 GEX/DEX §8B0-G1–G9（含 prior_result 挤压判别）
 │   ├── backfill_anchors.py         # 估值锚历史离线回填 CLI（可重算锚 + 披露滞后门控）
 │   ├── migrate_anchor_archive_to_shards.py  # 一次性离线：单文件归档 → 按 ticker 分片
 │   ├── daily_scan.py / fetch_financials.py / run_research.py
@@ -313,6 +319,7 @@ investment-agents/
 | Phase 7C — 主题传导映射 | ✅ | 12 个 AI 主题映射资本传导棒次（1–4）+ 传导簇 · 每票角色种子（主导/二阶/供应商/平台/投机/落后；未评估→`unknown`）；复用 `phase5_theme_intelligence` schema（零重复）· **仅展示用、绝不进入排序**；隔离不变量（只依赖 `theme_baskets` + `phase5_theme_intelligence`，不碰 ranker / pages）；Cockpit 主题卡传导行 + Sector 市场主题波次卡片重设计；新增 `theme_transmission` 套件 11 项全过（S1 隔离 / S7 ranker fail-closed / S8 无 `approved_for_execution` / S9 篮子 parity）；feature commit `bbdf5b0`（待审，未合并 main） |
 | Phase 7D Block A — 快照审计查询接口 | ✅ | 只读审计查询层（`lib/audit_query.py`：`load_all_meta` / `load_all_opportunities` / `query_status_transitions` / `compute_actionable_follow_through` / `compute_fragility_series` + 类型化记录包，容忍叠加式 schema 漂移；**无信号引擎 / 无排序 / 无联网，fail-closed**）+ 双语审计回顾页（pages/11，A–E 节：覆盖表 / 脆弱度 Altair 图 / 状态历史 / 跟进分析 / 完整性，全部标签·表头·单元格随中英切换）；§7D.1–§7D.10 全过（tmp_path 内存；§7D.10 AST + 运行时守卫禁止引入 `signal_engine`）；feature `5b14da1`，`--no-ff` 合并 main @ `5a57850` 并推送；UI 验收 EN + 中文通过（2026-06-19） |
 | Phase 8A — Agent Framework Foundation | ✅ | 激活 World 2 可靠性层的连接组织（7 个新文件）：统一 `AgentOutput` dataclass（嵌入校验后的 `AgentResult` + 证据引用从 findings/risks 扁平化 + `judgment` 数值约束守卫）· LLM agent runner（`run_llm_agent` 11 步：tool_results → `EvidenceStore` → 证据包 → 受约束提示 → Claude → 解析+校验 → `AgentOutput` → JSONL 落盘；fail-closed 兜底为 rule-based + 需人工确认，校验 error 抛 `AgentRunError`）· World1→World2 适配器（`llm_output_to_tool_result` / `processed_signals_to_tool_result`，dataclass 自动 `asdict` 归一化）· JSONL 持久化（`data/agent_outputs/<agent_id>/<date>.jsonl`）· **MacroRegimeAgent 端到端冒烟**。所有 `lib.reliability` 导入惰性化（导入 `agent_framework` 绝不触发 52 模块 eager `__init__`，子进程导入守卫验证）；`approved_for_execution` 恒 `False`；不接线既有页面（Phase 8B）。两轮 Codex 审查（REJECT→修复→APPROVE）；§8A.1–§8A.11 **11/11** 通过；`--no-ff` 合并 main @ `f6a0f74` |
+| Phase 8B-0 — 新数据源接入层 | ✅ | 两个付费数据源的接入 + 加工信号层（抓取与计算严格分离）：**Quiver Quantitative**（暗池 / 国会 / 内部人 / 机构持仓——`lib/quiver_fetcher.py`，fail-closed + `@st.cache_data`，`compute_dark_pool_signal` 纯确定性聚合，阈值内联、`prev_close` 买卖代理 + 缺失时 50/50 降级）· **Massive Options（= Polygon）**（期权链含 Greeks/IV/OI——`lib/massive_options_fetcher.py`，映射进既有 Phase 2E `OptionContractSnapshot`/`OptionChainSnapshot`（`source="massive"`，2E 收益/证据层零改动）；`next_url` 分页 ≤5；逐合约 `try/except` 跳过坏合约并记 `contract_skipped` 警告；免费档无 Greeks/OI 时 `gamma=None` + `greeks_unavailable` 优雅降级）· **GEX/DEX 确定性计算器**（`lib/gex_dex.py`，零 `lib.reliability` 导入、绝不抛错：GEX/DEX 求和、OI 墙、A+B+C 三条件 gamma 挤压监测含 `prior_result` DEX 趋势 → low/mid/high；`regime_summary` 无任何数字）。免费档需升级 Starter 方可实时 GEX/DEX；Quiver `prev_close` 字段名待实盘 API 确认。三轮 Codex 审查（REJECT → APPROVE WITH FIXES → APPROVE）；24 项测试（Quiver 6 + Massive 5 + GEX/DEX 13），变异探针 RED 确认；feature `b365f25`，`--no-ff` 合并 main @ `69d7c9f` 并推送 |
 | Phase 7D（其余） | 计划 | 跨层比较 → 反馈环（推荐质量复盘） |
 | Phase 8 — Evidence Infrastructure | 计划 | 证据包 + 反向 DCF + 对抗式估值辩论 + 宏观 LLM 事件/归因 + IPO/流动性日历；首个「章节 agent」在此验证 |
 | Phase 9 — Agent Synthesis Layer | 远期 | 先做人在环 **Judgment Console**（判断收口页：LLM 在证据约束下给建议、人确认/覆写、来源留痕）→ 验证判断质量后逐步提高自动化；终态 = 章节 agent + orchestrator（agent 吃结构化判断、不碰原始数字；orchestrator 做冲突仲裁、不出操作指令） |
