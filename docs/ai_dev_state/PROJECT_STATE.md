@@ -1,5 +1,56 @@
 # AI Investment Agent — Project State
 
+## Step 3 — Narrative Disk Cache (COMPLETE — merged to `main` @ `a2e43cd3`, 2026-06-21)
+
+Disk-backed persistence layer for `llm_narrative_match` (`lib/signal_engine.py`).
+LLM narrative results — stored at
+`data/narrative_cache/<TICKER>/<regime>_<fp>.json` — now survive process
+restarts. The in-memory `@st.cache_data` layer stays the hot path; this disk
+layer sits underneath it as a cold-start fallback, so a debug restart drops from
+~50 LLM calls to near-zero for unchanged tickers. **3 files changed** (1 lib, 1
+.gitignore, 1 new test); **27 tests**; **6b_v3 189/189 + 6b_v2 217/217 GREEN**
+(regression). Three Codex review passes (initial review + two fix rounds for the
+separator collision and the json.dumps field-boundary); **APPROVED** clean on the
+third pass. Feature commit `083e8535`; `--no-ff` merge `a2e43cd3` (pushed).
+
+- **Cache key:** `(ticker, macro_regime, news_fingerprint)` — `macro_regime` is
+  sanitized (spaces / `/` / `\` → `_`, lowercased) for the filename;
+  `news_fingerprint` is the first 8 hex of the md5 over the EXACT prompt-fed news
+  content.
+- **Fingerprint (prompt-aligned):** mirrors the Layer-2 prompt builder verbatim —
+  the `news[:25]` slice, each item's `.strip()`-ed `headline` plus `summary`
+  truncated to `[:160]`, each record serialized with
+  `json.dumps([head, summ], ensure_ascii=False)` and records joined with `"\n"`.
+  Collision-resistant against `|`, `\n`, brackets, and quotes in content (the
+  json.dumps escaping is what closes the field-boundary case). Changes iff the
+  prompt's news content changes — nothing more (a summary edit past char 160, or
+  a change to an item past index 25, does not move the key), nothing less (a
+  summary edit within the prompt window DOES move it).
+- **Helpers** (all private, all fail-closed): `_sanitize_regime` /
+  `_news_fingerprint` / `_narrative_cache_path` / `_read_narrative_cache` /
+  `_write_narrative_cache`. `NARRATIVE_CACHE_DIR` + `NARRATIVE_CACHE_TTL_HOURS`
+  constants.
+- **Wiring:** the disk read runs **before** the `_has_llm_api_key()` gate (a
+  fresh, fingerprint-matched hit is served even with no key); the atomic write
+  (temp file + `os.replace`) runs after a successful live call. The
+  `@st.cache_data` decorator and the `(ticker, macro_regime)` signature are
+  untouched. **Only `data_source="live"` results are persisted** — neutral
+  fallbacks are never written. **TTL 24h**: a hit older than 24h is treated as a
+  miss. Every disk op is wrapped in `try/except Exception` and silently degrades
+  to the live LLM call (corrupt JSON, permission error, etc. never block or alter
+  a refresh).
+- **Tests** `scripts/test_narrative_disk_cache.py` **27/27** (network + LLM fully
+  mocked; cache dir redirected to a tmp dir via the module global): §NC-1
+  miss→write, §NC-2 fresh hit bypasses LLM, §NC-3 TTL expiry, §NC-4 fingerprint
+  mismatch (internal + path), §NC-5 corrupt-JSON fallthrough, §NC-6
+  write-permission swallow, §NC-7 mutation probe (cached value, not a coincidental
+  LLM match), §NC-8a–8f fingerprint collision/scope cases (record + field
+  separators, summary-in-key, past-slice no-op, past-160 no-op, literal-`|`
+  no-collision). Codex APPROVED (3 passes). Phase doc:
+  `docs/reliability_narrative_disk_cache.md`.
+
+---
+
 ## Phase 8B — MacroRegimeAgent Production Implementation (COMPLETE — merged to `main` @ `eabf0c2d`, 2026-06-20)
 
 Upgrades the first concrete agent from the Phase 8A **smoke test** to a

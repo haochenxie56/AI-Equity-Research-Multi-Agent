@@ -5,15 +5,34 @@
 > history preserved verbatim). This file keeps only the active phase. The
 > long-form running status remains in `docs/ai_dev_state/PROJECT_STATE.md`.
 
-**Status:** Phase 8B — MacroRegimeAgent production implementation: **COMPLETE,
-Codex-APPROVED (two review rounds), merged to `main` via `--no-ff` @ `eabf0c2d`
-(feature commit `c25efe1`) and pushed.**
+**Status:** Step 3 — Narrative Disk Cache: **COMPLETE, Codex-APPROVED (three
+review passes — initial + two fix rounds), merged to `main` via `--no-ff` @
+`a2e43cd3` (feature commit `083e8535`) and pushed.**
 
-**Current task:** Phase 8B continued — **MoneyFlowAgent** implementation (consumes
-the Phase 8B-0 Quiver dark-pool + Massive Options GEX/DEX processed signals,
-following the same evidence-first MacroRegimeAgent pattern).
+**Current task / Next:** **Cockpit cold-start hydration (冷启动快照水化)** — on app
+restart with an empty `session_state`, load the latest daily snapshot from
+`data/snapshots/` to populate Sections A and C **without** requiring a manual
+refresh. Sections B/D/E show degraded placeholders. Show a banner indicating the
+snapshot date. Requires an `audit_query` import in `pages/7_Investment_Cockpit.py`.
 
-**Last completed:** Phase 8B — MacroRegimeAgent production implementation (merge
+**Last completed:** Step 3 — Narrative Disk Cache (merge `a2e43cd3`)
+- Disk-backed persistence for `llm_narrative_match` (`lib/signal_engine.py`): LLM
+  narrative results (`data/narrative_cache/<TICKER>/<regime>_<fp>.json`) survive
+  process restarts; a fresh hit skips the LLM entirely. In-memory `@st.cache_data`
+  stays the hot path; disk is the cold-start fallback underneath.
+- Cache key `(ticker, macro_regime, news_fingerprint)`. Fingerprint =
+  `json.dumps([head, summ])` per record over `news[:25]` with `.strip()` +
+  `summary[:160]`, joined `"\n"` — exact alignment with the LLM prompt input;
+  collision-resistant. TTL 24h. Atomic write (temp + `os.replace`). All disk ops
+  fail-closed; only `data_source="live"` results persisted (neutral fallbacks
+  never written). `@st.cache_data` decorator + `(ticker, macro_regime)` signature
+  untouched.
+- Tests `scripts/test_narrative_disk_cache.py` **27/27** (§NC-1–7 + §NC-8a–8f;
+  network/LLM fully mocked). Regression: 6b_v3 189/189, 6b_v2 217/217 GREEN.
+  Three Codex passes (separator-collision + json.dumps field-boundary fix rounds)
+  → APPROVED. Phase doc `docs/reliability_narrative_disk_cache.md`.
+
+**Prior:** Phase 8B — MacroRegimeAgent production implementation (merge
 `eabf0c2d`)
 - Upgrades the first concrete agent from the Phase 8A smoke test to a production
   agent: deterministic macro regime classification → horizon-aware,
@@ -102,9 +121,12 @@ following the same evidence-first MacroRegimeAgent pattern).
 `5a57850`, UI-verified EN + 中文 2026-06-19). Phase 7C / 7B / Anchor Intelligence
 v2 series history below and in `PROJECT_STATE.md`.
 
-**Next:** Phase 8B continued — MoneyFlowAgent implementation (consumes the Phase
-8B-0 GEX/DEX + dark-pool signals). MacroRegimeAgent production wiring is now
-COMPLETE (merge `eabf0c2d`).
+**Next:** Cockpit cold-start hydration (冷启动快照水化) — load the latest
+`data/snapshots/` daily snapshot into Sections A/C on restart with empty
+`session_state` (B/D/E degraded placeholders + a snapshot-date banner; needs an
+`audit_query` import in `pages/7_Investment_Cockpit.py`). Phase 8B continued
+(MoneyFlowAgent, consuming the 8B-0 GEX/DEX + dark-pool signals) remains queued
+after it.
 
 > **Thesis Ingestion MVP — CLOSED (Codex-approved, 2026-06-14) + UI verification batch
 > COMPLETE (2026-06-15, 16 fix commits, 80 tests passing).** UI batch fixes: sidebar nav,
