@@ -30,8 +30,9 @@ Architecture (full pipeline orchestrated in ``lib/candidate_generator.py``):
 Design rules / guardrails (Phase 6B):
 
 * **Free sources only.** yfinance (no key) + Finnhub free tier (reuses the
-  existing ``FINNHUB_API_KEY``). No paid API; Quiver Quantitative / Unusual
-  Whales are NOT used.
+  existing ``FINNHUB_API_KEY``). Paid alt-data (Quiver Quantitative, Massive
+  Options) are in separate modules: lib/quiver_fetcher.py,
+  lib/massive_options_fetcher.py. This module uses free sources only.
 * **Fail-closed.** Every network fetch is wrapped in its own ``try/except`` and
   returns a deterministic neutral/fixture fallback on *any* error. Functions
   never raise to the caller.
