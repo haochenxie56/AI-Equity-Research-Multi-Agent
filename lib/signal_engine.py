@@ -54,8 +54,10 @@ working; new code uses the dual-track contracts.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -99,6 +101,17 @@ _FINNHUB_INSIDER = "https://finnhub.io/api/v1/stock/insider-transactions"
 _CACHE_TTL = 1800
 _LLM_CACHE_TTL = 3600
 _HTTP_TIMEOUT = 10
+
+# ----- Layer-2 LLM narrative DISK cache (Step 3) ---------------------------
+# A disk-backed cold-start fallback UNDER the in-memory ``@st.cache_data`` hot
+# path: LLM narrative results survive process restarts. The in-memory layer
+# stays the hot path; this disk layer is an acceleration-only cold-start cache
+# that NEVER blocks or alters a normal refresh (every disk op is fail-closed and
+# silently degrades to the live LLM call). Layout mirrors the per-ticker
+# sharding used elsewhere:
+#   data/narrative_cache/<TICKER>/<macro_regime>_<news_fingerprint>.json
+NARRATIVE_CACHE_DIR = _Path("data/narrative_cache")
+NARRATIVE_CACHE_TTL_HOURS = 24
 
 _LIVE = "live"
 _FIXTURE = "fixture"
@@ -846,6 +859,105 @@ def _has_llm_api_key() -> bool:
         return False
 
 
+# ----- Layer-2 narrative disk cache helpers (Step 3, all fail-closed) -------
+
+
+def _sanitize_regime(macro_regime: str) -> str:
+    """Filesystem-safe form of a macro_regime string: spaces and slashes (both
+    ``/`` and ``\\``) become underscores, then lowercased."""
+    s = macro_regime or "unknown"
+    for ch in (" ", "/", "\\"):
+        s = s.replace(ch, "_")
+    return s.lower()
+
+
+def _news_fingerprint(news: list) -> str:
+    """First 8 hex chars of the md5 over the EXACT prompt-fed news content.
+
+    Mirrors the Layer-2 prompt builder below verbatim — same ``news[:25]`` slice
+    and the same per-item content it consumes: the stripped ``headline`` plus the
+    stripped ``summary`` truncated to 160 chars. Each record is serialized with
+    ``json.dumps([head, summ])`` (unambiguous regardless of content — brackets,
+    quotes, and commas inside the field strings are escaped, so a literal ``"|"``
+    or any other delimiter in a headline/summary can never cause a field-boundary
+    collision), then records are joined with ``"\\n"``. The fingerprint changes
+    iff the prompt's news content changes — nothing more, nothing less: a summary
+    edit beyond char 160, or a change to an item past index 25, does not affect
+    the prompt and so must not affect the key.
+    """
+    records = []
+    for item in (news or [])[:25]:
+        head = (item.get("headline") or "").strip()
+        summ = (item.get("summary") or "").strip()[:160]
+        records.append(json.dumps([head, summ], ensure_ascii=False))
+    blob = "\n".join(records)
+    return hashlib.md5(blob.encode("utf-8")).hexdigest()[:8]
+
+
+def _narrative_cache_path(ticker: str, macro_regime: str, fingerprint: str) -> _Path:
+    """Disk path for a cached narrative:
+    ``<NARRATIVE_CACHE_DIR>/<TICKER>/<macro_regime>_<fingerprint>.json``.
+
+    Reads ``NARRATIVE_CACHE_DIR`` from the module global at call time so tests can
+    monkeypatch it to a tmp dir.
+    """
+    return (
+        NARRATIVE_CACHE_DIR
+        / ticker.upper()
+        / f"{_sanitize_regime(macro_regime)}_{fingerprint}.json"
+    )
+
+
+def _read_narrative_cache(
+    ticker: str, macro_regime: str, fingerprint: str
+) -> Optional[NarrativeResult]:
+    """Return a fresh, fingerprint-matched cached :class:`NarrativeResult`, or
+    ``None`` on any miss (no file / expired TTL / fingerprint mismatch / corrupt
+    JSON / any error). Fail-closed: never raises, never alters the live path.
+    """
+    try:
+        path = _narrative_cache_path(ticker, macro_regime, fingerprint)
+        if not path.exists():
+            return None
+        with open(path, "r", encoding="utf-8") as fh:
+            entry = json.load(fh)
+        if entry.get("news_fingerprint") != fingerprint:
+            return None  # news changed (defensive; path already encodes it)
+        cached_at = datetime.fromisoformat(entry["cached_at"])
+        if datetime.utcnow() - cached_at >= timedelta(hours=NARRATIVE_CACHE_TTL_HOURS):
+            return None  # expired -> treat as a miss
+        result = entry.get("result")
+        if not isinstance(result, dict):
+            return None
+        return NarrativeResult(**result)
+    except Exception:  # noqa: BLE001 — fail-closed (silent miss)
+        return None
+
+
+def _write_narrative_cache(
+    ticker: str, macro_regime: str, fingerprint: str, result: NarrativeResult
+) -> None:
+    """Atomically persist ``result`` (temp file + ``os.replace``). Fail-closed:
+    any error (permission / disk / serialization) is silently swallowed so the
+    cache never blocks or alters the returned result."""
+    try:
+        path = _narrative_cache_path(ticker, macro_regime, fingerprint)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        entry = {
+            "ticker": ticker.upper(),
+            "macro_regime": macro_regime,
+            "news_fingerprint": fingerprint,
+            "cached_at": datetime.utcnow().isoformat(),
+            "result": asdict(result),
+        }
+        tmp = path.parent / f"{path.name}.tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(entry, fh)
+        os.replace(tmp, path)
+    except Exception:  # noqa: BLE001 — fail-closed (silent; never raises)
+        pass
+
+
 @st.cache_data(ttl=_LLM_CACHE_TTL, show_spinner=False)
 def llm_narrative_match(ticker: str, macro_regime: str) -> NarrativeResult:
     """Layer 2 — one LLM call judging the narrative for ``ticker``.
@@ -865,6 +977,18 @@ def llm_narrative_match(ticker: str, macro_regime: str) -> NarrativeResult:
         news = fetch_company_news(ticker, days=30)
         if not news:
             return neutral_narrative()
+
+        # Disk cache cold-start fallback (Step 3) — sits UNDER the in-memory
+        # @st.cache_data hot path. Fingerprint the exact news list that feeds the
+        # prompt, then try the disk read BEFORE the LLM call. A fresh, matching
+        # hit returns the persisted result directly (even with no API key), so a
+        # restarted process serves cold instead of re-calling Claude. Any disk
+        # failure silently returns None and falls through to the live path.
+        news_fingerprint = _news_fingerprint(news)
+        cached = _read_narrative_cache(ticker, macro_regime, news_fingerprint)
+        if cached is not None:
+            return cached
+
         if not _has_llm_api_key():
             return neutral_narrative()
 
@@ -956,7 +1080,7 @@ def llm_narrative_match(ticker: str, macro_regime: str) -> NarrativeResult:
             cat_recency = "none"
             already_priced = False
 
-        return NarrativeResult(
+        result = NarrativeResult(
             theme_tags=tags,
             narrative_stage=stage,
             macro_alignment=align,
@@ -968,6 +1092,10 @@ def llm_narrative_match(ticker: str, macro_regime: str) -> NarrativeResult:
             catalyst_recency=cat_recency,
             already_priced_in=already_priced,
         )
+        # Persist atomically for cold-start reuse. Fail-closed inside the helper:
+        # a write failure never affects the returned result.
+        _write_narrative_cache(ticker, macro_regime, news_fingerprint, result)
+        return result
     except Exception:  # noqa: BLE001 — fail-closed to a neutral narrative
         return neutral_narrative()
 
