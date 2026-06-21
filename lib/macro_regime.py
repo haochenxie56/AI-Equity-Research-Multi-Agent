@@ -57,6 +57,14 @@ class MacroRegimeResult:
     # Structured, localizable signals parallel to key_signals:
     #   [{"code": "vix_low", "values": {"vix": 15.0}}, ...]
     signals: list = field(default_factory=list)
+    # Phase 8B — directional vote tally exposed for downstream confidence
+    # computation (MacroRegimeAgent.short_confidence). These count only the
+    # decisive risk_on / risk_off votes cast by the six rules below; neutral /
+    # mid-range signals cast no vote and are excluded. On the degraded path all
+    # three remain 0. Defaults of 0 keep every existing consumer unaffected.
+    votes_risk_on: int = 0
+    votes_risk_off: int = 0
+    votes_total: int = 0
 
 
 def _bias(short: str, mid: str, long: str) -> dict:
@@ -279,4 +287,8 @@ def classify_regime(data: "MacroDataResult") -> MacroRegimeResult:
         opportunity_posture=posture,
         data_coverage=coverage,
         signals=signals,
+        # Phase 8B — expose the decisive vote tally (degraded path stays 0).
+        votes_risk_on=risk_on,
+        votes_risk_off=risk_off,
+        votes_total=risk_on + risk_off,
     )

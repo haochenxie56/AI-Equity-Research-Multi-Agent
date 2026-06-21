@@ -217,6 +217,26 @@ def _run_refresh() -> None:
         save_regime_to_state(regime)
         _macro_obj = get_regime_dict()
         status["macro"] = True
+
+        # Phase 8B — MacroRegimeAgent: additive, fail-closed horizon synthesis.
+        # Reuses the regime already computed above (NO second fetch_all_macro);
+        # writes only the NEW "macro_regime_agent_output" key and never touches
+        # the existing macro_regime_result state. Gated on an LLM key so a keyless
+        # run is a clean no-op rather than a guaranteed fallback write. Its own
+        # try/except guarantees an agent failure never aborts the refresh.
+        try:
+            from lib.agents.macro_regime_agent import run_macro_regime_agent
+            from lib.llm_orchestrator import _has_llm_api_key
+
+            if _has_llm_api_key():
+                agent_output = run_macro_regime_agent(
+                    regime,                    # pass MacroRegimeResult directly
+                    snapshot_dir="data/snapshots",
+                )
+                st.session_state["macro_regime_agent_output"] = agent_output
+        except Exception as _e:  # noqa: BLE001 — additive; never abort the refresh
+            import logging
+            logging.warning("MacroRegimeAgent failed: %s", _e)
     except Exception:  # noqa: BLE001 — fail-closed; do not abort other steps
         pass
     prog.progress(25, text=t("cockpit_hub_stage_themes"))
