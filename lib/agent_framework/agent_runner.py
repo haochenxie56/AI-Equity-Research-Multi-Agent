@@ -97,6 +97,57 @@ def _call_llm(system: str, user: str, max_tokens: int) -> str:
     return resp.content[0].text
 
 
+def _repair_llm_response(data: dict, run_id: str, agent_id: str) -> dict:
+    """
+    Attempt to coerce a flat LLM response into AgentResult shape.
+    Called only when the raw parsed dict lacks a "findings" key,
+    indicating the LLM flattened the structure.
+
+    Handles two observed failure patterns:
+      Pattern A: top-level "text" and "evidence" (single finding)
+      Pattern B: top-level "text" and "evidence" are absent but
+                 "findings" is missing entirely
+
+    Never raises. Returns the (possibly repaired) dict.
+    The caller still runs parse_agent_result_json after this,
+    so any remaining schema errors will be caught there.
+    """
+    if "findings" in data:
+        # already has findings array — only fix confidence if needed
+        repaired = dict(data)
+    else:
+        # Pattern A/B: findings are at top level, wrap them
+        finding = {}
+        if "text" in data:
+            finding["text"] = data["text"]
+        if "evidence" in data:
+            finding["evidence"] = data["evidence"]
+        repaired = {k: v for k, v in data.items()
+                    if k not in ("text", "evidence")}
+        if finding:
+            repaired["findings"] = [finding]
+        else:
+            repaired["findings"] = []
+
+    # Always inject agent_name and run_id if missing
+    if "agent_name" not in repaired or not repaired["agent_name"]:
+        repaired["agent_name"] = agent_id
+    if "run_id" not in repaired or not repaired["run_id"]:
+        repaired["run_id"] = run_id
+
+    # Coerce float confidence to AgentConfidence object
+    if isinstance(repaired.get("confidence"), (int, float)):
+        score = float(repaired["confidence"])
+        level = "high" if score >= 0.7 else "medium" if score >= 0.4 else "low"
+        repaired["confidence"] = {
+            "level": level,
+            "rationale": "Confidence coerced from float by repair layer.",
+            "score": score,
+        }
+
+    return repaired
+
+
 def _extract_json_obj(text: str) -> dict:
     """
     Extract the first decodable JSON object from an LLM response, tolerating
@@ -272,6 +323,10 @@ def run_llm_agent(
 
     try:
         obj = _extract_json_obj(raw)
+        # Structural repair: coerce a flattened LLM response (top-level
+        # text/evidence, float confidence, missing agent_name/run_id) into the
+        # AgentResult shape before the extra="forbid" schema bind rejects it.
+        obj = _repair_llm_response(obj, run_id=run_id, agent_id=agent_id)
         agent_result, report = parse_and_validate_agent_result(obj, store)
     except Exception as exc:  # noqa: BLE001 — malformed LLM output, fail-closed
         _log.warning(

@@ -383,5 +383,154 @@ def test_8A_11_processed_signals_accepts_dataclass():
     assert tr.outputs["score"] == 0.72
 
 
+# ---------------------------------------------------------------------------
+# §8A.12 — repair: flat text/evidence wrapped into findings
+# ---------------------------------------------------------------------------
+
+def test_8A_12_repair_wraps_flat_text_evidence():
+    data = {"text": "Buy tech.", "evidence": [], "confidence": 0.8}
+    result = agent_runner._repair_llm_response(
+        data, run_id="r1", agent_id="TestAgent"
+    )
+    assert result["findings"] == [{"text": "Buy tech.", "evidence": []}]
+    assert "text" not in result  # moved into findings
+    assert "evidence" not in result  # moved into findings
+    assert result["agent_name"] == "TestAgent"
+    assert isinstance(result["confidence"], dict)
+    assert result["confidence"]["score"] == 0.8
+
+
+# ---------------------------------------------------------------------------
+# §8A.13 — repair: existing findings array is preserved unchanged
+# ---------------------------------------------------------------------------
+
+def test_8A_13_repair_preserves_existing_findings():
+    data = {
+        "findings": [{"text": "Hold.", "evidence": []}],
+        "agent_name": "X",
+        "run_id": "r1",
+        "confidence": {"level": "high", "rationale": "ok", "score": 0.9},
+    }
+    result = agent_runner._repair_llm_response(data, run_id="r1", agent_id="X")
+    assert result["findings"] == [{"text": "Hold.", "evidence": []}]
+    # confidence is already an object — must NOT be re-coerced.
+    assert result["confidence"]["score"] == 0.9
+    assert result["confidence"]["rationale"] == "ok"
+
+    # DISCRIMINATING CHECK: a float confidence DOES get coerced to a dict.
+    data_float = dict(data)
+    data_float["confidence"] = 0.9
+    result_float = agent_runner._repair_llm_response(
+        data_float, run_id="r1", agent_id="X"
+    )
+    assert isinstance(result_float["confidence"], dict)
+    assert result_float["confidence"]["score"] == 0.9
+
+
+# ---------------------------------------------------------------------------
+# §8A.14 — repair: agent_name and run_id injected when missing
+# ---------------------------------------------------------------------------
+
+def test_8A_14_repair_injects_agent_name_and_run_id():
+    data = {
+        "findings": [],
+        "confidence": {"level": "low", "rationale": "x", "score": 0.3},
+    }
+    result = agent_runner._repair_llm_response(
+        data, run_id="run-abc", agent_id="MyAgent"
+    )
+    assert result["agent_name"] == "MyAgent"
+    assert result["run_id"] == "run-abc"
+
+    # DISCRIMINATING CHECK: an existing agent_name is preserved, not overwritten.
+    data_existing = {
+        "findings": [],
+        "agent_name": "Existing",
+        "confidence": {"level": "low", "rationale": "x", "score": 0.3},
+    }
+    result_existing = agent_runner._repair_llm_response(
+        data_existing, run_id="run-abc", agent_id="MyAgent"
+    )
+    assert result_existing["agent_name"] == "Existing"
+
+
+# ---------------------------------------------------------------------------
+# §8A.15 — end-to-end: flat LLM response flows through run_llm_agent
+#          to a valid non-fallback AgentOutput
+# ---------------------------------------------------------------------------
+
+def test_8a_15_repair_wired_end_to_end(tmp_path):
+    """
+    Monkeypatch _call_llm to return a flat (unreformed) JSON response
+    of the shape the LLM has been producing in production.
+    Assert that run_llm_agent returns a non-fallback AgentOutput
+    (judgment_source == "llm_proposed", agent_result not None).
+    """
+    import json
+    from lib.agent_framework import agent_runner
+    from lib.reliability.schemas import EvidenceRef
+    from lib.agent_framework.world_adapter import processed_signals_to_tool_result
+
+    # Build a minimal ToolResult so run_llm_agent has evidence to work with
+    run_id = "TEST_20260101_000000_abcd1234"
+    tr = processed_signals_to_tool_result(
+        {"regime": "risk_on", "data_coverage": 0.8},
+        run_id=run_id,
+        tool_name="classify_regime",
+        target="MACRO",
+        metric_group="regime_classification",
+    )
+
+    # Use the REAL evidence_id from the ToolResult: a placeholder id is not in
+    # the EvidenceStore, which is a severity=="error" binding issue that raises
+    # AgentRunError (not a fallback). The real id keeps the end-to-end path on
+    # the non-fallback branch this test asserts on.
+    real_evidence_id = tr.evidence_id
+
+    # The flat response shape the LLM has been producing
+    flat_response = json.dumps({
+        "text": "In the current risk-on regime, ShortTermPM should add "
+                "exposure to cyclical sectors on pullbacks.",
+        "evidence": [
+            {
+                "evidence_id": real_evidence_id,
+                "excerpt": "regime: risk_on",
+                "tool_name": "classify_regime",
+                "metric": "regime",
+                "field_path": "regime",
+            }
+        ],
+        "confidence": 0.75,
+    })
+
+    # Monkeypatch _call_llm to return the flat response
+    original = agent_runner._call_llm
+    agent_runner._call_llm = lambda system, user, max_tokens: flat_response
+
+    try:
+        result = agent_runner.run_llm_agent(
+            agent_id="MacroRegimeAgent",
+            horizon="cross",
+            task_instruction="Synthesize macro regime signals.",
+            tool_results=[tr],
+            supporting_data={"regime": "risk_on"},
+            requires_human_confirmation=True,
+            judgment_source="llm_proposed",
+            valid_until="2026-12-31T23:59:59+00:00",
+            run_id=run_id,
+        )
+    finally:
+        agent_runner._call_llm = original
+
+    assert result.judgment_source == "llm_proposed", (
+        f"Expected llm_proposed, got {result.judgment_source}. "
+        "Repair layer may not be wired correctly."
+    )
+    assert result.agent_result is not None, (
+        "agent_result is None — repair did not produce a valid AgentResult."
+    )
+    assert len(result.evidence_refs) > 0, "evidence_refs must not be empty."
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))
