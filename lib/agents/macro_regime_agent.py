@@ -257,7 +257,46 @@ def _build_task_instruction(regime_dict: dict) -> str:
         "does this regime affect long-term thesis validity?\n\n"
         "Each finding must cite at least one evidence_id from the packet. No "
         "numeric values in finding text. No vague statements. Specific sector "
-        "names, time windows, and conditions required."
+        "names, time windows, and conditions required.\n\n"
+        # REQUIRED OUTPUT FORMAT — a concrete fill-in example so the model nests
+        # finding-level fields inside findings[] and emits confidence as an object
+        # (not a top-level {text, evidence, confidence:float}). Plain (NON-f)
+        # string literals: the braces below are literal, never .format() fields.
+        # 4-space indentation, NOT triple-backtick fences (fences confuse the
+        # JSON extractor in agent_runner).
+        "REQUIRED OUTPUT FORMAT — you must respond with ONLY valid JSON\n"
+        "matching this exact structure. No prose, no markdown fences.\n\n"
+        "    {\n"
+        "      \"agent_name\": \"MacroRegimeAgent\",\n"
+        "      \"run_id\": \"<use the run_id from the evidence packet header>\",\n"
+        "      \"findings\": [\n"
+        "        {\n"
+        "          \"text\": \"<SHORT-TERM one-sentence judgment — no numbers>\",\n"
+        "          \"evidence\": [{\"evidence_id\": \"<id from packet>\", \"excerpt\": \"<brief>\"}]\n"
+        "        },\n"
+        "        {\n"
+        "          \"text\": \"<MID-TERM one-sentence judgment — no numbers>\",\n"
+        "          \"evidence\": [{\"evidence_id\": \"<id from packet>\", \"excerpt\": \"<brief>\"}]\n"
+        "        },\n"
+        "        {\n"
+        "          \"text\": \"<LONG-TERM one-sentence judgment — no numbers>\",\n"
+        "          \"evidence\": [{\"evidence_id\": \"<id from packet>\", \"excerpt\": \"<brief>\"}]\n"
+        "        }\n"
+        "      ],\n"
+        "      \"confidence\": {\n"
+        "        \"level\": \"<high|medium|low>\",\n"
+        "        \"rationale\": \"<one sentence explaining confidence level>\",\n"
+        "        \"score\": <float between 0.0 and 1.0>\n"
+        "      }\n"
+        "    }\n\n"
+        "Rules:\n"
+        "- agent_name must be exactly \"MacroRegimeAgent\"\n"
+        "- run_id must be copied verbatim from the evidence packet\n"
+        "- findings must be a list, never a flat object\n"
+        "- each finding must have \"text\" and \"evidence\" keys\n"
+        "- confidence must be an object with level/rationale/score, never a float\n"
+        "- evidence_id must be an id from the provided evidence packet\n"
+        "- no numeric values in any finding text field"
     )
 
 

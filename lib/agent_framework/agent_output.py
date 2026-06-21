@@ -39,7 +39,7 @@ _log = logging.getLogger("agent_framework.agent_output")
 # Judgment constraint
 # ---------------------------------------------------------------------------
 
-_JUDGMENT_MAX_LEN = 200
+_JUDGMENT_MAX_LEN = 400
 
 # Metric-name tokens that would trip validate_agent_result's _is_numeric_claim
 # regex when present in findings[0].text (the judgment). Numeric specifics
@@ -94,7 +94,7 @@ class AgentOutput:
         Return a list of human-readable violation descriptions for *text*
         as a judgment string. An empty list means the judgment is clean.
 
-        A clean judgment is a single sentence of <= 200 characters that
+        A clean judgment is a single sentence of <= 400 characters that
         contains no digits, no '%' / '$', and no metric-name tokens that
         would trigger validate_agent_result's numeric-claim detector.
         """
@@ -167,6 +167,18 @@ def agent_result_to_agent_output(
             "defaulting AgentOutput.confidence to 0.5.",
             agent_result.agent_name,
         )
+
+    # Extract the judgment as the first COMPLETE sentence of findings[0].text
+    # (capped at 400 chars) instead of hard-truncating mid-sentence. This keeps
+    # the PM-layer judgment a whole sentence even when the first finding runs
+    # long; it supersedes any pre-truncated value the caller passed in.
+    findings = agent_result.findings
+    raw_text = findings[0].text if findings and findings[0].text else ""
+    first_dot = raw_text.find(".")
+    if first_dot != -1 and first_dot < 400:
+        judgment = raw_text[: first_dot + 1].strip()
+    else:
+        judgment = raw_text[:400].strip()
 
     violations = AgentOutput.validate_judgment(judgment)
     if violations:
