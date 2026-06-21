@@ -6,6 +6,7 @@
 
 # ── 缓存数据（运行时自动生成）────────────────
 data/
+data/narrative_cache/   # LLM narrative disk cache (Step 3; already under data/)
 *.parquet
 
 # ── Python ────────────────────────────────────
