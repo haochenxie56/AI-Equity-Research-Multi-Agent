@@ -396,7 +396,10 @@ def _run_refresh() -> None:
         write_daily_snapshot(_cards, themes=_themes_list, macro_regime=_regime_str(),
                              horizon_bias=_bias, fragility=_frag_meta,
                              clock_suspect=_clk_suspect,
-                             clock_suspect_reason=_clk_reason)
+                             clock_suspect_reason=_clk_reason,
+                             key_signals=get_regime_field("key_signals", []),
+                             opportunity_posture=get_regime_field("opportunity_posture", ""),
+                             confidence=get_regime_field("confidence", ""))
         status["opportunities"] = True
     except Exception:  # noqa: BLE001 — fail-closed; Section C falls back gracefully
         pass

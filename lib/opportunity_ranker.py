@@ -1376,6 +1376,9 @@ def write_daily_snapshot(cards: list, *, themes=None, macro_regime: str = "unkno
                          fragility: Optional[dict] = None,
                          clock_suspect: bool = False,
                          clock_suspect_reason: str = "",
+                         key_signals: Optional[list] = None,
+                         opportunity_posture: str = "",
+                         confidence: str = "",
                          date_str: Optional[str] = None,
                          refreshed_at: Optional[str] = None,
                          base_dir: Optional[Path] = None) -> str:
@@ -1385,7 +1388,23 @@ def write_daily_snapshot(cards: list, *, themes=None, macro_regime: str = "unkno
     Line 1 is a ``{"_meta": true, ...}`` header (date, refreshed_at, regime,
     horizon_bias, per-theme momentum map); each subsequent line is one ticker
     record. Returns the file path written. Fail-closed -> "".
+
+    Precondition (LOUD, not fail-closed): a ``fragility`` dict must never carry a
+    key that would silently overwrite the macro-regime ``_meta`` fields. That is a
+    caller programming error, so it raises ``ValueError`` here — BEFORE the
+    best-effort ``try`` below — rather than being swallowed into a ``""`` return.
     """
+    # Collision guard for the macro-regime _meta keys (see precondition note above).
+    # ``meta.update(fragility)`` runs inside the try; fragility_snapshot never carries
+    # these keys today, so a hit means a real bug at the call site — fail immediately.
+    _PROTECTED_META_KEYS = {"key_signals", "opportunity_posture", "confidence"}
+    if fragility:
+        _collision = _PROTECTED_META_KEYS & set(fragility.keys())
+        if _collision:
+            raise ValueError(
+                f"write_daily_snapshot: fragility dict contains keys that would "
+                f"overwrite protected _meta fields: {sorted(_collision)}"
+            )
     try:
         date_str = date_str or date.today().strftime("%Y-%m-%d")
         refreshed_at = refreshed_at or datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
@@ -1407,6 +1426,12 @@ def write_daily_snapshot(cards: list, *, themes=None, macro_regime: str = "unkno
             # a suspect system clock is flagged so mis-dated snapshots are visible.
             "clock_suspect": bool(clock_suspect),
             "clock_suspect_reason": clock_suspect_reason or "",
+            # Macro regime context (deterministic classify_regime outputs) persisted
+            # for cold-start hydration. Canonical ENGLISH is stored — translation is a
+            # view concern. key_signals: list[str]; opportunity_posture / confidence: str.
+            "key_signals": key_signals or [],
+            "opportunity_posture": opportunity_posture,
+            "confidence": confidence,
         }
         # Phase 7B Task 3 — fragility level + every component value live in the
         # _meta header (the snapshot is the memory; hysteresis reads it back).
