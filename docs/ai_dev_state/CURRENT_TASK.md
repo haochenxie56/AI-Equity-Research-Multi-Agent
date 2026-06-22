@@ -5,17 +5,38 @@
 > history preserved verbatim). This file keeps only the active phase. The
 > long-form running status remains in `docs/ai_dev_state/PROJECT_STATE.md`.
 
-**Status:** Step 3 — Narrative Disk Cache: **COMPLETE, Codex-APPROVED (three
-review passes — initial + two fix rounds), merged to `main` via `--no-ff` @
-`a2e43cd3` (feature commit `083e8535`) and pushed.**
+**Status:** _meta Extension (key_signals / opportunity_posture / confidence):
+**COMPLETE, Codex-APPROVED (2 passes — meta-extension + collision guard, 0
+findings), merged to `main` via `--no-ff` @ `ffe9e1e2` (feature commit `7a76bcb3`)
+and pushed.**
 
-**Current task / Next:** **Cockpit cold-start hydration (冷启动快照水化)** — on app
+**Current task / Next:** **Cockpit cold-start hydration (冷启动快照水化)** — _meta
+extension complete; all three Section A fields now live in the snapshot. On app
 restart with an empty `session_state`, load the latest daily snapshot from
-`data/snapshots/` to populate Sections A and C **without** requiring a manual
-refresh. Sections B/D/E show degraded placeholders. Show a banner indicating the
-snapshot date. Requires an `audit_query` import in `pages/7_Investment_Cockpit.py`.
+`data/snapshots/` to populate **Section A** (full: regime + fragility +
+`key_signals` + `opportunity_posture` + `confidence`) and **Section C**
+(opportunity cards; `why_now` degrades to code-based text) **without** a manual
+refresh. Sections B/D/E show degraded placeholders. Top banner shows the snapshot
+date and prompts a refresh. Requires an `audit_query` import in
+`pages/7_Investment_Cockpit.py`. **Bilingual banner required** (`bi()` handling).
 
-**Last completed:** Step 3 — Narrative Disk Cache (merge `a2e43cd3`)
+**Last completed:** _meta Extension — key_signals / opportunity_posture /
+confidence (merge `ffe9e1e2`)
+- Three deterministic `classify_regime` outputs persisted in the daily snapshot
+  `_meta` block for cold-start hydration. `write_daily_snapshot` gains three
+  kwargs (safe defaults) + a **pre-`try` collision guard** (`ValueError` on a
+  `fragility` dict carrying a protected key — placed before the best-effort
+  `try/except` so it propagates, not swallowed).
+- `MetaRecord` gains three `.get()`-defaulted fields declared **after `raw`**
+  (dataclass field-ordering); old snapshots missing the keys parse cleanly.
+  Cockpit call site wired via `get_regime_field()`; lib stays Streamlit-free.
+  Canonical ENGLISH persisted (no translation at write); no LLM values.
+- **7 new parity checks** (`18.24` live-path + `§18-meta-new-1..6`). Mutation
+  probe on `new-1` confirmed discriminating. Regression: 7b 226/226, 7a 115/115,
+  7d 10/10, anchor_archive 77/77. Codex APPROVED (2 passes, 0 findings). Phase
+  doc `docs/reliability_meta_extension.md`.
+
+**Prior (recent):** Step 3 — Narrative Disk Cache (merge `a2e43cd3`)
 - Disk-backed persistence for `llm_narrative_match` (`lib/signal_engine.py`): LLM
   narrative results (`data/narrative_cache/<TICKER>/<regime>_<fp>.json`) survive
   process restarts; a fresh hit skips the LLM entirely. In-memory `@st.cache_data`

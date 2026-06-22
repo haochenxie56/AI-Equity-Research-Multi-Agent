@@ -1,5 +1,31 @@
 # AI Investment Agent — Project State
 
+## _meta Extension — key_signals / opportunity_posture / confidence (COMPLETE — merged to `main` @ `ffe9e1e2`, 2026-06-21)
+
+Three deterministic `classify_regime` outputs now persisted in the daily snapshot
+`_meta` block (line-1 header of `data/snapshots/opportunities_YYYYMMDD.jsonl`),
+the prerequisite for full Section A cold-start hydration. `write_daily_snapshot`
+gains three kwargs (`key_signals=None`, `opportunity_posture=""`, `confidence=""`)
+with safe defaults, plus a **pre-`try` collision guard** that raises `ValueError`
+(naming the offending key) if a `fragility` dict ever carries one of the three
+protected keys — placed BEFORE the function's best-effort `try/except` so the
+error propagates loudly instead of being swallowed into a `""` return.
+`MetaRecord` gains three fields (`key_signals: list` via `field(default_factory=
+list)`, `opportunity_posture: str`, `confidence: str`) declared **after `raw`** to
+satisfy dataclass field-ordering without touching any existing non-default field;
+`from_dict` reads them with `.get()` defaults so old snapshots missing the keys
+parse cleanly. The Cockpit call site (`pages/7_Investment_Cockpit.py::_run_refresh`
+Step 4) wires the three values via `get_regime_field(...)` — the lib stays
+Streamlit-free (values passed as kwargs). All three are rule-based; **no LLM
+values**. Canonical ENGLISH persisted (translation is a view concern). **7 new
+parity checks** (`18.24` live-path via the real `_run_refresh` + `§18-meta-new-1..5`
+value/round-trip/old-snapshot + `§18-meta-new-6` collision guard); mutation probe
+on `new-1` confirmed discriminating (corrupting the written value turned `new-1`
++ `new-4` RED). **Codex APPROVED (2 passes: meta-extension + guard), 0 findings.**
+Regression: **7b 226/226 · 7a 115/115 · 7d 10/10 · anchor_archive 77/77**. Feature
+commit `7a76bcb3`; `--no-ff` merge `ffe9e1e2` (pushed). Phase doc
+`docs/reliability_meta_extension.md`.
+
 ## Step 3 — Narrative Disk Cache (COMPLETE — merged to `main` @ `a2e43cd3`, 2026-06-21)
 
 Disk-backed persistence layer for `llm_narrative_match` (`lib/signal_engine.py`).
