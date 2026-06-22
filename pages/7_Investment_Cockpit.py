@@ -240,6 +240,22 @@ def _run_refresh() -> None:
         except Exception as _e:  # noqa: BLE001 — additive; never abort the refresh
             import logging
             logging.warning("MacroRegimeAgent failed: %s", _e)
+
+        # Phase 8B — MoneyFlowAgent: additive, fail-closed money-flow synthesis.
+        # Fetches its own GEX/DEX + dark-pool signals for the index proxy (SPY);
+        # writes only the NEW "money_flow_agent_output" key and never touches any
+        # existing state. Gated on an LLM key so a keyless run is a clean no-op.
+        # Its own try/except guarantees an agent failure never aborts the refresh.
+        try:
+            from lib.agents.money_flow_agent import run_money_flow_agent
+            from lib.llm_orchestrator import _has_llm_api_key
+
+            if _has_llm_api_key():
+                _mf_output = run_money_flow_agent(ticker="SPY")
+                st.session_state["money_flow_agent_output"] = _mf_output
+        except Exception as _e:  # noqa: BLE001 — additive; never abort the refresh
+            import logging
+            logging.warning("MoneyFlowAgent failed: %s", _e)
     except Exception:  # noqa: BLE001 — fail-closed; do not abort other steps
         pass
     prog.progress(25, text=t("cockpit_hub_stage_themes"))
