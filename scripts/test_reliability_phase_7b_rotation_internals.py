@@ -1875,6 +1875,24 @@ try:
           and str(_RA.meta.get("data_vintage")) in _RA.macro,
           f"src={_RA.meta.get('hysteresis_source')} vintage={_RA.meta.get('data_vintage')} "
           + _RA.macro[:160])
+    # LIVE-PATH corroboration for the macro-regime _meta extension: the REAL refresh
+    # threads classify_regime's key_signals / opportunity_posture / confidence into the
+    # _meta header. The harness seeds macro_regime_result with confidence="low",
+    # key_signals=[], opportunity_posture="" (see _run_parity); the offline macro step
+    # PRESERVES that seed, so write_daily_snapshot persists exactly it. Presence proves
+    # the call site actually wires the fields through (the field would be ABSENT, not
+    # defaulted, if the wiring were dropped). Strong value discrimination lives in the
+    # direct-drive §18-meta-new-* block below.
+    check("18.24 LIVE: _meta carries key_signals / opportunity_posture / confidence "
+          "from the seeded regime (real refresh path)",
+          "key_signals" in _RA.meta and "opportunity_posture" in _RA.meta
+          and "confidence" in _RA.meta
+          and _RA.meta.get("key_signals") == []
+          and _RA.meta.get("opportunity_posture") == ""
+          and _RA.meta.get("confidence") == "low",
+          f"ks={_RA.meta.get('key_signals')!r} "
+          f"posture={_RA.meta.get('opportunity_posture')!r} "
+          f"conf={_RA.meta.get('confidence')!r}")
 
     # --- Scenario B: earnings DARK (empty calendar) → no_reports_in_window ---
     _dark_cal = lambda *a, **k: []  # call OK, nothing in window → no_reports_in_window
@@ -1963,6 +1981,81 @@ except Exception as _e:  # noqa: BLE001 — AppTest unavailable counts as a fail
     import traceback as _tb_p
     check("18.1 banner↔_meta parity harness ran", False,
           f"{_e} :: {_tb_p.format_exc()[-400:]}")
+
+
+# ---------------------------------------------------------------------------
+# §18-meta-new — macro-regime _meta fields (key_signals / opportunity_posture /
+# confidence). These are deterministic classify_regime outputs persisted for
+# cold-start hydration. Driven DIRECTLY through write_daily_snapshot with KNOWN
+# non-empty values (strong value discrimination + the mutation-probe target),
+# then read back from the persisted _meta line and through MetaRecord.from_dict.
+# Canonical ENGLISH is persisted — translation is a view concern, not asserted
+# here. Independent of the AppTest harness above so it runs even if AppTest is
+# unavailable.
+# ---------------------------------------------------------------------------
+import lib.audit_query as _aq  # noqa: E402
+
+_meta_tmp = _P(_tf.mkdtemp())
+_KS = ["vix_low — risk appetite firm", "breadth_broad — participation wide"]
+_POS = "lean into offense; scale on pullbacks to support"
+_CONF = "medium"
+_meta_path = orr.write_daily_snapshot(
+    [], macro_regime="risk_on", date_str="2026-06-18", base_dir=_meta_tmp,
+    key_signals=_KS, opportunity_posture=_POS, confidence=_CONF)
+_meta_written = (_json.loads(_P(_meta_path).read_text(encoding="utf-8").splitlines()[0])
+                 if _meta_path else {})
+
+check("18-meta-new-1 _meta.key_signals equals the value passed to write_daily_snapshot",
+      _meta_written.get("key_signals") == _KS,
+      f"got={_meta_written.get('key_signals')!r} expected={_KS!r}")
+check("18-meta-new-2 _meta.opportunity_posture equals the value passed",
+      _meta_written.get("opportunity_posture") == _POS,
+      f"got={_meta_written.get('opportunity_posture')!r} expected={_POS!r}")
+check("18-meta-new-3 _meta.confidence equals the value passed",
+      _meta_written.get("confidence") == _CONF,
+      f"got={_meta_written.get('confidence')!r} expected={_CONF!r}")
+
+_mr_parsed = _aq.MetaRecord.from_dict(_meta_written)
+check("18-meta-new-4 MetaRecord.from_dict round-trips the three new fields",
+      _mr_parsed.key_signals == _KS
+      and _mr_parsed.opportunity_posture == _POS
+      and _mr_parsed.confidence == _CONF,
+      f"ks={_mr_parsed.key_signals!r} pos={_mr_parsed.opportunity_posture!r} "
+      f"conf={_mr_parsed.confidence!r}")
+
+# Old-snapshot simulation: a _meta dict predating these keys must parse cleanly
+# with the documented defaults ([] / "" / ""). Strip the three keys from a REAL
+# written header (not a hand-built stand-in) so the fixture cannot misrepresent
+# production shape; assert they are genuinely absent before parsing.
+_old_meta = {k: v for k, v in _meta_written.items()
+             if k not in ("key_signals", "opportunity_posture", "confidence")}
+_mr_old = _aq.MetaRecord.from_dict(_old_meta)
+check("18-meta-new-5 MetaRecord.from_dict defaults the three fields on an old "
+      "snapshot missing them ([] / '' / '')",
+      "key_signals" not in _old_meta and "opportunity_posture" not in _old_meta
+      and "confidence" not in _old_meta
+      and _mr_old.key_signals == [] and _mr_old.opportunity_posture == ""
+      and _mr_old.confidence == "",
+      f"ks={_mr_old.key_signals!r} pos={_mr_old.opportunity_posture!r} "
+      f"conf={_mr_old.confidence!r}")
+
+# Collision guard: a fragility dict carrying one of the protected macro-regime keys
+# would silently overwrite it via meta.update(fragility). The guard turns that
+# data-corruption bug into a LOUD ValueError at the call site. It is raised BEFORE
+# the function's best-effort try/except, so it propagates (is NOT swallowed into "").
+_guard_raised = False
+_guard_msg = ""
+try:
+    orr.write_daily_snapshot(
+        [], macro_regime="risk_on", date_str="2026-06-18", base_dir=_meta_tmp,
+        fragility={"fragility_level": "normal", "confidence": "high"})
+except ValueError as _gexc:
+    _guard_raised = True
+    _guard_msg = str(_gexc)
+check("18-meta-new-6 fragility dict colliding with a protected _meta key raises "
+      "ValueError naming the colliding key",
+      _guard_raised and "confidence" in _guard_msg,
+      f"raised={_guard_raised} msg={_guard_msg!r}")
 
 
 # ---------------------------------------------------------------------------

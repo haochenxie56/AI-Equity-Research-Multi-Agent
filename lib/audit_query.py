@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
@@ -115,6 +115,13 @@ class MetaRecord:
     n_candidates: int
     earnings_skipped: list         # default [] if missing (absent in 20260605)
     raw: dict
+    # Macro regime context (deterministic classify_regime outputs). Additive — old
+    # snapshots predating these keys parse cleanly via the from_dict defaults below.
+    # Declared after ``raw`` so the defaults satisfy dataclass field-ordering without
+    # touching any existing (non-default) field.
+    key_signals: list = field(default_factory=list)
+    opportunity_posture: str = ""
+    confidence: str = ""
 
     @classmethod
     def from_dict(cls, d: dict) -> "MetaRecord":
@@ -133,6 +140,9 @@ class MetaRecord:
             n_candidates=d.get("n_candidates", 0),
             earnings_skipped=d.get("earnings_skipped", []),
             raw=d,
+            key_signals=d.get("key_signals", []),
+            opportunity_posture=d.get("opportunity_posture", ""),
+            confidence=d.get("confidence", ""),
         )
 
 
