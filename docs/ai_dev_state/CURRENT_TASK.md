@@ -5,22 +5,40 @@
 > history preserved verbatim). This file keeps only the active phase. The
 > long-form running status remains in `docs/ai_dev_state/PROJECT_STATE.md`.
 
-**Status:** _meta Extension (key_signals / opportunity_posture / confidence):
-**COMPLETE, Codex-APPROVED (2 passes — meta-extension + collision guard, 0
-findings), merged to `main` via `--no-ff` @ `ffe9e1e2` (feature commit `7a76bcb3`)
-and pushed.**
+**Status:** Cockpit cold-start hydration: **COMPLETE, Codex-APPROVED (1 pass, 0
+findings), merged to `main` via `--no-ff` @ `3eb4a8912` (feature commit
+`cbe2ae880`) and pushed.**
 
-**Current task / Next:** **Cockpit cold-start hydration (冷启动快照水化)** — _meta
-extension complete; all three Section A fields now live in the snapshot. On app
-restart with an empty `session_state`, load the latest daily snapshot from
-`data/snapshots/` to populate **Section A** (full: regime + fragility +
-`key_signals` + `opportunity_posture` + `confidence`) and **Section C**
-(opportunity cards; `why_now` degrades to code-based text) **without** a manual
-refresh. Sections B/D/E show degraded placeholders. Top banner shows the snapshot
-date and prompts a refresh. Requires an `audit_query` import in
-`pages/7_Investment_Cockpit.py`. **Bilingual banner required** (`bi()` handling).
+**Next:** **Phase 8B — MoneyFlowAgent (STEP 0 first)**
+— Consumes Phase 8B-0 GEX/DEX (Massive) + dark pool (Quiver). Follow the
+MacroRegimeAgent pattern exactly: deterministic signals → two+ ToolResults →
+constrained prompt (`REQUIRED OUTPUT FORMAT`) → `_repair_llm_response` → validated
+`AgentOutput`. Three horizon findings. Agent-specific confidence formulas.
+`valid_until = end_of_today_iso()`. Additive fail-closed Cockpit hook. **STEP 0
+must map the data/access matrix and define the confidence formulas before any
+implementation.**
 
-**Last completed:** _meta Extension — key_signals / opportunity_posture /
+**Last completed:** Cockpit cold-start hydration (merge `3eb4a8912`)
+- New Streamlit-free `lib/cockpit_hydration.py::hydrate_cockpit_from_snapshot`
+  (injected loaders, default `audit_query`). Gated on absence of
+  `macro_regime_result` AND `cockpit_hydrated_from_snapshot` → runs at most once;
+  takes `metas[-1]` (most recent), filters opportunities to that date only.
+- Hydrates **Section A** (`macro_regime_result` as a raw dict — regime /
+  confidence / `key_signals` / `opportunity_posture` / `horizon_bias` /
+  `fragility_level`; NOT via `save_regime_to_state` which would strip
+  `fragility_level`) + `cockpit_fragility` (rebuilt from `MetaRecord.raw`, only
+  when present) and **Section C** (`cockpit_opportunities` from `raw`, latest date;
+  `why_now` non-dict reason-code strings dropped so the render can't crash).
+- **Atomic** `session_state` commit, **fail-closed** (`try/except → None`), **no
+  `st.rerun()`**. `cockpit_last_refresh = snapshot date` (hook before header).
+  `macro_regime_agent_output` (valid_until=EOD) + Sections B/D/E **not** populated.
+  Bilingual banner (`bi()`, EN+ZH) shown only on success.
+- **10 tests** (`§CS-1..7` + 3 extra; injected loaders, no `AppTest`); `§CS-7`
+  mutation probe confirmed discriminating. Regression: audit-query 10/10,
+  cockpit-rebuild 47/47. Codex APPROVED (1 pass, 0 findings). UI verified. Phase
+  doc `docs/reliability_cockpit_cold_start.md`.
+
+**Prior:** _meta Extension — key_signals / opportunity_posture /
 confidence (merge `ffe9e1e2`)
 - Three deterministic `classify_regime` outputs persisted in the daily snapshot
   `_meta` block for cold-start hydration. `write_daily_snapshot` gains three

@@ -1,5 +1,48 @@
 # AI Investment Agent — Project State
 
+## Cockpit Cold-start Hydration (COMPLETE — merged to `main` @ `3eb4a8912`, 2026-06-22)
+
+On app restart with an empty `session_state`, the Cockpit now re-reads the latest
+daily snapshot from disk and populates **Section A** (regime / confidence /
+`key_signals` / `opportunity_posture` / `horizon_bias` / fragility) and
+**Section C** (opportunity cards) **without** a manual refresh — closing the debug
+UX gap and avoiding repeated LLM calls on every restart. New **Streamlit-free**
+`lib/cockpit_hydration.py::hydrate_cockpit_from_snapshot(session_state, load_meta,
+load_opportunities)` (loaders injected for testability; default to
+`audit_query.load_all_meta` / `load_all_opportunities`). Gated on the **absence of
+both** `macro_regime_result` AND `cockpit_hydrated_from_snapshot` so a manual
+refresh and a second same-session call are both no-ops (runs **at most once**).
+Takes `metas[-1]` (most recent date; `load_all_meta` sorts ascending) and filters
+opportunities to **that date only**. **Atomic commit** — every value is built in
+locals and `session_state` is mutated only after all succeed, so a mid-way failure
+leaves it untouched. Fully **fail-closed** (whole body in `try/except Exception →
+None`; no `st.error`/`st.warning`; **no `st.rerun()`**). **`why_now` crash guard:**
+the snapshot persists `why_now` as reason-CODE strings but Section C iterates it
+calling `r.get("text_..")`; hydration drops non-dict elements so the render cannot
+raise on a string and **no placeholder text is injected** (the LLM-polished
+sentence was never persisted → graceful empty fallback).
+`macro_regime_result` is written as a **raw dict** (NOT via `save_regime_to_state`,
+whose serializer would strip the non-canonical `fragility_level`); Section A still
+reads its canonical fields through `get_regime_field`. `cockpit_fragility` is
+rebuilt by lifting the flat fragility keys back out of `MetaRecord.raw`, and only
+when the snapshot actually carried fragility. `cockpit_last_refresh` is set to the
+snapshot date and the hydration call runs **before** the header so the timestamp
+shows the snapshot date instead of "Never"; `cockpit_status` is left as-is (badges
+honestly read "stale"). **Deliberately NOT populated:** `macro_regime_agent_output`
+(its `valid_until` = end of day; an expired agent output must not show as current)
+and the Section B/D/E keys (`theme_momentum_results` / `cockpit_all_signals` /
+`equity_research_results`) — those sections render their existing placeholders.
+Bilingual banner via `bi()` (EN + ZH, shown only on successful hydration). **10
+tests** (`§CS-1..7` + 3 extra; real `MetaRecord`/`OpportunityRecord` fixtures,
+injected loaders, no `AppTest`); **`§CS-7` mutation probe confirmed
+discriminating** (sentinel `__PROBE_SIGNAL_42__` → `§CS-2` + `§CS-7` RED when the
+`key_signals` mapping is removed). **Codex APPROVED (1 pass, 0 findings).** UI
+verified: cold-start shows Section A + C content + bilingual banner + snapshot date
+in header; Sections B/D/E show placeholders; banner disappears after a manual
+refresh. Regression: **audit-query 10/10 · cockpit-rebuild 47/47**. Feature commit
+`cbe2ae880`; `--no-ff` merge `3eb4a8912` (pushed). Phase doc
+`docs/reliability_cockpit_cold_start.md`.
+
 ## _meta Extension — key_signals / opportunity_posture / confidence (COMPLETE — merged to `main` @ `ffe9e1e2`, 2026-06-21)
 
 Three deterministic `classify_regime` outputs now persisted in the daily snapshot
