@@ -36,12 +36,15 @@ if str(_REPO_ROOT / "lib") not in sys.path:
 
 import streamlit as st
 
-from ui_utils import apply_theme, render_sidebar, load_info, t, frag_reason_gloss
+from ui_utils import apply_theme, render_sidebar, load_info, t, bi, frag_reason_gloss
 # Phase 6C-B — single macro-regime session-state boundary (stores a plain dict;
 # reads via dict .get()). lib/macro_regime.py stays frozen.
 from lib.macro_state import (
     save_regime_to_state, get_regime_field, get_regime_str, get_regime_dict,
 )
+# Cold-start hydration — re-read the latest daily snapshot into session_state on
+# app restart (Streamlit-free, fail-closed; see lib/cockpit_hydration.py).
+from lib.cockpit_hydration import hydrate_cockpit_from_snapshot
 
 st.set_page_config(page_title="Investment Cockpit", page_icon="🧭", layout="wide")
 apply_theme()
@@ -479,6 +482,24 @@ def _run_equity_research(tickers: list) -> dict:
     st.session_state["cockpit_debate_fallbacks"] = summary["fallbacks"]
     st.session_state["cockpit_debate_error"] = summary["error"]
     return summary
+
+
+# ---------------------------------------------------------------------------
+# Cold-start hydration (runs BEFORE the header so the last-refresh timestamp can
+# reflect the snapshot date instead of "Never"). On an empty session_state this
+# re-reads the latest daily snapshot into Sections A & C; fully fail-closed (a
+# failure leaves session_state untouched and the page renders placeholders).
+# ---------------------------------------------------------------------------
+
+_hydrated_date = hydrate_cockpit_from_snapshot(st.session_state)
+if _hydrated_date:
+    _hydr_lang = st.session_state.get("language", "en")
+    _hydr_banner = {
+        "msg_en": (f"📁 Showing snapshot data from {_hydrated_date} · "
+                   f"Click refresh for live data"),
+        "msg_zh": f"📁 显示 {_hydrated_date} 快照数据 · 点击刷新获取最新",
+    }
+    st.info(bi(_hydr_banner, "msg", _hydr_lang))
 
 
 # ---------------------------------------------------------------------------
