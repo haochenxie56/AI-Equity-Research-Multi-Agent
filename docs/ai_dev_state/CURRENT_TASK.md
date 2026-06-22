@@ -5,20 +5,46 @@
 > history preserved verbatim). This file keeps only the active phase. The
 > long-form running status remains in `docs/ai_dev_state/PROJECT_STATE.md`.
 
-**Status:** Cockpit cold-start hydration: **COMPLETE, Codex-APPROVED (1 pass, 0
-findings), merged to `main` via `--no-ff` @ `3eb4a8912` (feature commit
-`cbe2ae880`) and pushed.**
+**Status:** Phase 8B MoneyFlowAgent: **COMPLETE, Codex-APPROVED (2 passes:
+initial + fix round, 0 findings remaining), merged to `main` via `--no-ff` @
+`760f356a3` (feature commit `1c32d40a7`) and pushed.**
 
-**Next:** **Phase 8B — MoneyFlowAgent (STEP 0 first)**
-— Consumes Phase 8B-0 GEX/DEX (Massive) + dark pool (Quiver). Follow the
-MacroRegimeAgent pattern exactly: deterministic signals → two+ ToolResults →
-constrained prompt (`REQUIRED OUTPUT FORMAT`) → `_repair_llm_response` → validated
-`AgentOutput`. Three horizon findings. Agent-specific confidence formulas.
-`valid_until = end_of_today_iso()`. Additive fail-closed Cockpit hook. **STEP 0
-must map the data/access matrix and define the confidence formulas before any
-implementation.**
+**Next:** **Phase 8B — MarketStructureAgent (STEP 0 first)**
+— Wraps the existing `market_internals` deterministic producer. Follows the
+MacroRegimeAgent + MoneyFlowAgent pattern: deterministic signals → ToolResults →
+constrained prompt (`REQUIRED OUTPUT FORMAT`) → validated `AgentOutput`;
+deterministic confidences computed before the LLM; additive, key-gated,
+fail-closed Cockpit hook; `valid_until = end_of_today_iso()`;
+`approved_for_execution` never `True`. **STEP 0 recon first** — map the
+`market_internals` output schema, confirm the relevant `session_state` keys, and
+design the confidence formulas before any implementation.
 
-**Last completed:** Cockpit cold-start hydration (merge `3eb4a8912`)
+**Last completed:** Phase 8B MoneyFlowAgent (merge `760f356a3`)
+- New `lib/agents/money_flow_agent.py`: GEX/DEX (`compute_gex_dex`) + dark pool
+  (`compute_dark_pool_signal`) → evidence-backed `AgentOutput`. Three
+  deterministic confidences before the LLM: `short = signals_agree_count/3`
+  (degraded→0), `mid = strength_map × direction_valid` (strong 1.0/moderate
+  0.6/weak 0.3), `long = 0.0` (intraday-to-3-week signal). Three ToolResults
+  (`gex_dex_signals` / `dark_pool_signal` / `money_flow_confidence`).
+- `_load_prior_gex_dex_result`: newest `MoneyFlowAgent` JSONL → `GexDexResult`
+  for squeeze condition C; validates an 11-key `_REQUIRED_PRIOR_FIELDS` frozenset
+  (missing field → `None`); fail-closed on unreadable/invalid file (`None`, no
+  fall-through to older files). `supporting_data` carries all `GexDexResult`
+  fields for next-run reconstruction.
+- Prompt `REQUIRED OUTPUT FORMAT` (4-space indent, no fences); neutral GEX must
+  name an options-structure strategy; no numbers in findings. All
+  `lib.reliability`/`lib.agent_framework` imports lazy; outer fail-closed guard;
+  `valid_until = end_of_today_iso()`.
+- Cockpit hook: additive (`money_flow_agent_output`), key-gated, fail-closed,
+  `ticker="SPY"`, no second fetch — immediately after the MacroRegimeAgent hook.
+- **34 tests** (`§8B-MF1..11` + `§8B-MF8b/8c`; LLM/network mocked); `§8B-MF1`
+  and `§8B-MF11` mutation probes confirmed discriminating. Codex 2 passes; fix
+  round resolved 2 findings (required-field validation + unreadable-file
+  fail-closed). Regression: MoneyFlow 34, MacroRegime 24, AgentFramework 15,
+  gex_dex 13, quiver 6, reliability-foundation green. Phase doc
+  `docs/reliability_money_flow_agent.md`.
+
+**Prior:** Cockpit cold-start hydration (merge `3eb4a8912`)
 - New Streamlit-free `lib/cockpit_hydration.py::hydrate_cockpit_from_snapshot`
   (injected loaders, default `audit_query`). Gated on absence of
   `macro_regime_result` AND `cockpit_hydrated_from_snapshot` → runs at most once;

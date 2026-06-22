@@ -1,5 +1,48 @@
 # AI Investment Agent — Project State
 
+## Phase 8B MoneyFlowAgent (COMPLETE — merged to `main` @ `760f356a3`, 2026-06-22)
+
+**Second production foundation agent.** Consumes GEX/DEX (Massive Options via
+`compute_gex_dex`) + dark pool (Quiver via `compute_dark_pool_signal`) processed
+signals and emits a horizon-aware, evidence-backed `AgentOutput`. Mirrors the
+MacroRegimeAgent pattern exactly. **Three deterministic confidences are computed
+in code BEFORE the LLM call** and persisted as evidence (numeric firewall):
+`short_confidence = signals_agree_count / 3` (GEX directional + DEX directional +
+dark-pool direction, each gated on not-degraded; fully degraded → 0.0);
+`mid_confidence = strength_map × direction_valid` (strong 1.0 / moderate 0.6 /
+weak 0.3; degraded or neutral/insufficient_data → 0.0, anchored on the multi-day
+dark-pool read); `long_confidence = 0.0` always (GEX/DEX and dark pool are
+intraday-to-3-week signals, not meaningful beyond one month — rationale recorded
+in the confidence ToolResult). **Three ToolResults** built via
+`processed_signals_to_tool_result` (`gex_dex_signals` / `dark_pool_signal` /
+`money_flow_confidence`), all before the LLM. **prior_result plumbing:**
+`_load_prior_gex_dex_result` reads the newest `MoneyFlowAgent` JSONL, validates an
+**11-key `_REQUIRED_PRIOR_FIELDS` frozenset** (missing any field → `None`, never a
+fabricated prior), and reconstructs a `GexDexResult` so `compute_gex_dex` squeeze
+condition C (DEX-trend rising) can evaluate; **fail-closed** — an unreadable /
+invalid-JSON file returns `None` immediately (no fall-through to an older, stale
+file). `supporting_data` carries every `GexDexResult` field needed for next-run
+prior reconstruction. **Prompt:** `REQUIRED OUTPUT FORMAT` block (4-space indent,
+no backtick fences); only qualitative context interpolated; **a neutral GEX
+environment MUST still name an options-structure strategy** (never "wait and
+see"); no numbers / `$` / `%` in finding text. All `lib.reliability` /
+`lib.agent_framework` imports lazy; outer fail-closed guard →
+`_fallback_agent_output` on any exception; `valid_until = end_of_today_iso()`;
+`approved_for_execution` never `True`. **Cockpit hook** (`_run_refresh` Step 1,
+immediately after the MacroRegimeAgent hook): additive (writes only
+`money_flow_agent_output`), `_has_llm_api_key()`-gated, own try/except
+(fail-closed, never aborts the refresh), `ticker="SPY"`, no second fetch. **34
+tests** (`§8B-MF1..11` + `§8B-MF8b/8c`; all LLM/network mocked, real
+`GexDexResult` dataclass + real dark-pool-schema fixtures); two mutation probes
+confirmed discriminating — `§8B-MF1` (flip one signal → confidence drops below
+1.0) and `§8B-MF11` (signals_agree_count==2 → neither 0.0 nor 1.0). **Codex
+APPROVED across 2 passes** (initial + fix round); the fix round addressed two
+findings — required-field validation (the 11-key frozenset) and unreadable-file
+fail-closed (return `None` instead of `continue`). Regression: MoneyFlow 34/34 ·
+MacroRegime 24/24 · AgentFramework 15/15 · gex_dex 13/13 · quiver 6/6 ·
+reliability-foundation green. Feature commit `1c32d40a7`; `--no-ff` merge
+`760f356a3` (pushed). Phase doc `docs/reliability_money_flow_agent.md`.
+
 ## Cockpit Cold-start Hydration (COMPLETE — merged to `main` @ `3eb4a8912`, 2026-06-22)
 
 On app restart with an empty `session_state`, the Cockpit now re-reads the latest
