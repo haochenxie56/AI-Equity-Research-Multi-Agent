@@ -420,6 +420,27 @@ def _run_refresh() -> None:
                              opportunity_posture=get_regime_field("opportunity_posture", ""),
                              confidence=get_regime_field("confidence", ""))
         status["opportunities"] = True
+
+        # Phase 8B — MarketStructureAgent: additive, fail-closed structural-caution
+        # synthesis. REUSES the _fragility reading already computed above (NO second
+        # compute_market_fragility call, so banner and agent share one vintage);
+        # writes only the NEW "market_structure_agent_output" key and never touches
+        # any existing state. Gated on an LLM key so a keyless run is a clean no-op.
+        # Its own try/except guarantees an agent failure never aborts the refresh.
+        try:
+            from lib.agents.market_structure_agent import run_market_structure_agent
+            from lib.llm_orchestrator import _has_llm_api_key
+
+            if _has_llm_api_key() and _fragility is not None:
+                _ms_output = run_market_structure_agent(
+                    reading=_fragility,
+                    fragility_series=list(_fragility.rolling_raw_series),
+                    clock_suspect=(_clk_suspect, _clk_reason),
+                )
+                st.session_state["market_structure_agent_output"] = _ms_output
+        except Exception as _e:  # noqa: BLE001 — additive; never abort the refresh
+            import logging
+            logging.warning("MarketStructureAgent failed: %s", _e)
     except Exception:  # noqa: BLE001 — fail-closed; Section C falls back gracefully
         pass
     prog.progress(100, text=t("cockpit_hub_refresh_complete"))
