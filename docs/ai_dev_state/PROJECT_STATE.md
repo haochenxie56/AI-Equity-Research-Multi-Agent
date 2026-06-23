@@ -1,5 +1,57 @@
 # AI Investment Agent — Project State
 
+## Phase 8B MarketStructureAgent (COMPLETE — merged to `main` @ `8792343f9`, feature commit `2dfbd563a`, 2026-06-22)
+
+**Third production foundation agent.** Wraps the `market_internals` deterministic
+producer (`compute_market_fragility` → `FragilityReading`) and emits a
+horizon-aware, evidence-backed `AgentOutput`. Mirrors the MacroRegimeAgent and
+MoneyFlowAgent patterns exactly. **The `FragilityReading` is INJECTED from Cockpit
+Step 4** (where fragility is already computed for the banner) — the agent NEVER
+calls `compute_market_fragility`, so there is no second compute and no vintage
+divergence between the banner and the agent. **Three deterministic confidences are
+computed in code BEFORE the LLM call** and persisted as evidence (numeric
+firewall): `short_confidence = coverage × clarity` where `coverage = 1 −
+degraded_core/5` (the five CORE data components — distribution_days, breadth,
+earnings_reaction, offense_defense, leading_theme_volume; `leading_theme_breadth_
+narrowing` is EXCLUDED from the denominator because it is permanently scaffolded /
+always degraded) and `clarity = min(points, 4)/4` (saturates at the high
+threshold); `points==0` or all-core-degraded → 0.0. `mid_confidence` = the
+trailing run of sessions at/above ELEVATED in `rolling_raw_series`, interpolated
+through `[(0,0.0),(2,0.4),(4,0.7),(6,1.0)]`; **`vintage_mismatch` or
+`hysteresis_source != "rolling"` → `min(interpolated, 0.1)` (a CAP, not a floor —
+a flat normal trail still yields 0.0)**; empty series → 0.0. `long_confidence =
+0.0` always (internals are short-to-mid caution signals, not meaningful beyond ~1
+month — rationale recorded in the confidence ToolResult). **`signal_basis`
+three-way classifier** (`signal_present` / `degraded_insufficient` /
+`full_data_no_signal`) carried in TR2 so the prompt can speak honestly and never
+read a `normal`-but-degraded state as "market healthy". **Three ToolResults** via
+`processed_signals_to_tool_result`: `market_fragility_signals` /
+`market_fragility_health` (carries `signal_basis`) / `market_structure_confidence`,
+all before the LLM. **Prompt:** `REQUIRED OUTPUT FORMAT` block (4-space indent, no
+backtick fences); only qualitative context interpolated; **tighten-only
+prohibitions explicit** — never bullish/add-exposure/loosen, never override the
+(frozen) macro regime, never imply normal+degraded means healthy, internals tighten
+only the SHORT horizon, cite evidence_ids only; no numbers in finding text. All
+`lib.reliability` / `lib.agent_framework` imports lazy; outer fail-closed guard →
+`_fallback_agent_output` on any exception; `valid_until = end_of_today_iso()`;
+`approved_for_execution` never `True`. **Cockpit hook** (`_run_refresh`, AFTER Step
+4 once `cockpit_fragility` / `cockpit_fragility_series` are written): additive
+(writes only `market_structure_agent_output`), `_has_llm_api_key()`-gated, guarded
+on `_fragility is not None`, reuses the in-scope `_fragility` reading + the
+`(_clk_suspect, _clk_reason)` clock tuple (no second compute), own try/except
+(fail-closed, never aborts the refresh). **44 tests** (`§8B-MS1..MS13` +
+`§8B-MS6a..6e` boundary cases; all LLM/network mocked, real `FragilityReading` /
+`FragilityComponents` dataclass fixtures kept physically plausible). Mutation
+probes confirmed discriminating — `§8B-MS2` (removing a degrade code changes
+coverage → short_confidence) and `§8B-MS13` (points=2 → neither 0.0 nor 1.0); the
+`mid_confidence` cap-vs-floor boundary is fully covered (6a–6e). **Codex APPROVED
+across 2 passes** (initial + fix round); the fix round addressed Finding 1
+(`mid_confidence` 0.1 was a floor, now a cap via `min(interpolated, 0.1)`);
+Finding 2 (TR1 prefixed field names) APPROVED AS-IS. Regression: MarketStructure
+44/44 · MacroRegime 24/24 · MoneyFlow 34/34 · AgentFramework 15/15 · gex_dex 13/13
+· massive 5/5 · quiver 6/6 · 7B rotation 226/226. Phase doc
+`docs/reliability_market_structure_agent.md`.
+
 ## Phase 8B MoneyFlowAgent (COMPLETE — merged to `main` @ `760f356a3`, 2026-06-22)
 
 **Second production foundation agent.** Consumes GEX/DEX (Massive Options via

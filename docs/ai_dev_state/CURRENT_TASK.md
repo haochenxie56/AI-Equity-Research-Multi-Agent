@@ -5,21 +5,50 @@
 > history preserved verbatim). This file keeps only the active phase. The
 > long-form running status remains in `docs/ai_dev_state/PROJECT_STATE.md`.
 
-**Status:** Phase 8B MoneyFlowAgent: **COMPLETE, Codex-APPROVED (2 passes:
+**Status:** Phase 8B MarketStructureAgent: **COMPLETE, Codex-APPROVED (2 passes:
 initial + fix round, 0 findings remaining), merged to `main` via `--no-ff` @
-`760f356a3` (feature commit `1c32d40a7`) and pushed.**
+`8792343f9` (feature commit `2dfbd563a`) and pushed.**
 
-**Next:** **Phase 8B — MarketStructureAgent (STEP 0 first)**
-— Wraps the existing `market_internals` deterministic producer. Follows the
-MacroRegimeAgent + MoneyFlowAgent pattern: deterministic signals → ToolResults →
-constrained prompt (`REQUIRED OUTPUT FORMAT`) → validated `AgentOutput`;
-deterministic confidences computed before the LLM; additive, key-gated,
-fail-closed Cockpit hook; `valid_until = end_of_today_iso()`;
-`approved_for_execution` never `True`. **STEP 0 recon first** — map the
-`market_internals` output schema, confirm the relevant `session_state` keys, and
-design the confidence formulas before any implementation.
+**Next:** **Phase 8B — SectorRotationAgent (STEP 0 first)**
+— Wraps the existing `rotation` + `theme_baskets` deterministic producers.
+Follows the established agent pattern (MacroRegimeAgent / MoneyFlowAgent /
+MarketStructureAgent): deterministic signals → ToolResults → constrained prompt
+(`REQUIRED OUTPUT FORMAT`) → validated `AgentOutput`; deterministic confidences
+computed before the LLM; additive, key-gated, fail-closed Cockpit hook;
+`valid_until = end_of_today_iso()`; `approved_for_execution` never `True`.
+**STEP 0 recon first** — map the rotation / theme output schema, confirm the
+relevant `session_state` keys, and design the confidence formulas before any
+implementation.
 
-**Last completed:** Phase 8B MoneyFlowAgent (merge `760f356a3`)
+**Last completed:** Phase 8B MarketStructureAgent (merge `8792343f9`)
+- New `lib/agents/market_structure_agent.py`: `FragilityReading` INJECTED from
+  Cockpit Step 4 (never calls `compute_market_fragility` — no second compute, no
+  vintage divergence). Three deterministic confidences before the LLM:
+  `short = coverage × clarity` (coverage = 1 − degraded_core/5,
+  `leading_theme_breadth_narrowing` excluded as permanently scaffolded;
+  clarity = min(points,4)/4); `mid` = trailing elevated+ run via saturating curve
+  `[(0,0.0),(2,0.4),(4,0.7),(6,1.0)]`, `vintage_mismatch`/snapshot fallback →
+  `min(interpolated, 0.1)` cap (NOT floor), empty series → 0.0; `long = 0.0`.
+  `signal_basis` three-way classifier (signal_present / degraded_insufficient /
+  full_data_no_signal) in TR2. Three ToolResults (`market_fragility_signals` /
+  `market_fragility_health` / `market_structure_confidence`).
+- Prompt `REQUIRED OUTPUT FORMAT` (4-space indent, no fences); tighten-only
+  prohibitions explicit (no bullish/add/loosen, never override regime,
+  normal+degraded ≠ healthy, SHORT-only tighten, evidence_ids only); no numbers
+  in findings. All `lib.reliability`/`lib.agent_framework` imports lazy; outer
+  fail-closed guard; `valid_until = end_of_today_iso()`.
+- Cockpit hook: additive (`market_structure_agent_output`), key-gated,
+  fail-closed, AFTER Step 4 (reuses `_fragility` + `(_clk_suspect, _clk_reason)`,
+  no second compute).
+- **44 tests** (`§8B-MS1..MS13` + `§8B-MS6a..6e`; LLM/network mocked, real
+  `FragilityReading` fixtures); `§8B-MS2` and `§8B-MS13` mutation probes
+  discriminating; cap-vs-floor boundary fully covered. Codex 2 passes; fix round
+  resolved 1 finding (`mid_confidence` floor → cap), Finding 2 approved AS-IS.
+  Regression: MarketStructure 44, MacroRegime 24, MoneyFlow 34, AgentFramework 15,
+  gex_dex 13, massive 5, quiver 6, 7B rotation 226. Phase doc
+  `docs/reliability_market_structure_agent.md`.
+
+**Prior:** Phase 8B MoneyFlowAgent (merge `760f356a3`)
 - New `lib/agents/money_flow_agent.py`: GEX/DEX (`compute_gex_dex`) + dark pool
   (`compute_dark_pool_signal`) → evidence-backed `AgentOutput`. Three
   deterministic confidences before the LLM: `short = signals_agree_count/3`
