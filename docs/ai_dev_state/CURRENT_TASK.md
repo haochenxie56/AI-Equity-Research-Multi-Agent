@@ -5,20 +5,26 @@
 > history preserved verbatim). This file keeps only the active phase. The
 > long-form running status remains in `docs/ai_dev_state/PROJECT_STATE.md`.
 
-**Status:** Phase 8B MarketStructureAgent: **COMPLETE, Codex-APPROVED (2 passes:
-initial + fix round, 0 findings remaining), merged to `main` via `--no-ff` @
-`8792343f9` (feature commit `2dfbd563a`) and pushed.**
+**Status:** FragilityReading offense_defense extension: **COMPLETE,
+Codex-APPROVED (1 pass, 0 findings), merged to `main` via `--no-ff` @
+`bb77ee28e` (feature commit `e4569c10d`) and pushed.** Full O/D reading
+(`avg_diff` / `by_window` / `n_windows` / `confirming_windows`) now lives on
+`FragilityReading.offense_defense`; `fragility_snapshot()` untouched; 7B 229/229.
 
-**Next:** **Phase 8B — SectorRotationAgent (STEP 0 first)**
-— Wraps the existing `rotation` + `theme_baskets` deterministic producers.
-Follows the established agent pattern (MacroRegimeAgent / MoneyFlowAgent /
-MarketStructureAgent): deterministic signals → ToolResults → constrained prompt
+**Next:** **Phase 8B — SectorRotationAgent**
+— offense_defense extension complete; the full O/D reading now lives on
+`FragilityReading.offense_defense`. Wraps the `theme_baskets` +
+`theme_transmission` deterministic producers. Follows the established agent
+pattern (MacroRegimeAgent / MoneyFlowAgent / MarketStructureAgent):
+deterministic signals → ToolResults → constrained prompt
 (`REQUIRED OUTPUT FORMAT`) → validated `AgentOutput`; deterministic confidences
 computed before the LLM; additive, key-gated, fail-closed Cockpit hook;
 `valid_until = end_of_today_iso()`; `approved_for_execution` never `True`.
-**STEP 0 recon first** — map the rotation / theme output schema, confirm the
-relevant `session_state` keys, and design the confidence formulas before any
-implementation.
+**Reuses** `_themes_list` (Cockpit Step 2) + `get_diffusion_context` (pure
+arithmetic) + the injected `_fragility.offense_defense`; **hook placed after the
+MarketStructureAgent hook inside the Step 4 `try` block**, writing
+`sector_rotation_agent_output`. **STEP 0 recon already complete** — proceed
+directly to the implementation prompt.
 
 **Last completed:** Phase 8B MarketStructureAgent (merge `8792343f9`)
 - New `lib/agents/market_structure_agent.py`: `FragilityReading` INJECTED from

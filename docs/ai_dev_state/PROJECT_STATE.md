@@ -1,5 +1,26 @@
 # AI Investment Agent — Project State
 
+## FragilityReading offense_defense extension (COMPLETE — merged to `main` via `--no-ff` @ `bb77ee28e`, feature commit `e4569c10d`, 2026-06-22)
+
+**Small enabler change (not a standalone phase).** Surfaces the full
+`offense_defense` reading — `avg_diff` / `by_window` / `n_windows` /
+`confirming_windows` — onto `FragilityReading.offense_defense`. Previously
+`compute_market_fragility` computed `offense_defense_reading()` in full but
+`compute_fragility()` kept only `direction` / `magnitude` on
+`FragilityComponents` and discarded the rest. **Two-line change to
+`lib/market_internals.py`:** a new `offense_defense: dict =
+field(default_factory=dict)` on the `FragilityReading` dataclass (NOT
+`FragilityComponents`) + the constructor passes `dict(offense_defense or {})`
+(fail-closed: `None`/`{}`/falsy → `{}`). **`fragility_snapshot()` is untouched**,
+so the test's code-derived `_SNAP_KEYS` structural check and the
+`FIELD_RENDER`/`EXCLUSIONS` classification are unaffected; the scorer/hysteresis
+path and the `direction`/`magnitude` component fields are not displaced. **Three
+new tests** (`§9-OD-1` mutation probe — confirmed it fails on pre-fix code with
+`AttributeError` via a revert test; `§9-OD-2` fail-closed defaults; `§9-OD-3`
+back-compat). **7B suite 229/229** (226 prior + 3 new). **Codex APPROVED (1 pass,
+0 findings).** No snapshot/audit/agent surface ripple. **Enables
+SectorRotationAgent** to consume the full O/D data without recomputing.
+
 ## Phase 8B MarketStructureAgent (COMPLETE — merged to `main` @ `8792343f9`, feature commit `2dfbd563a`, 2026-06-22)
 
 **Third production foundation agent.** Wraps the `market_internals` deterministic
