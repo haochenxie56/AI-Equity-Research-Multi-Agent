@@ -441,6 +441,28 @@ def _run_refresh() -> None:
         except Exception as _e:  # noqa: BLE001 — additive; never abort the refresh
             import logging
             logging.warning("MarketStructureAgent failed: %s", _e)
+
+        # Phase 8B — SectorRotationAgent: additive, fail-closed rotation synthesis.
+        # REUSES _themes_list (Step 2) + the injected _fragility.offense_defense
+        # (now carried whole after the O/D extension); get_diffusion_context inside
+        # the agent is pure arithmetic — NO new fetch. Writes only the NEW
+        # "sector_rotation_agent_output" key and never touches any existing state.
+        # Gated on an LLM key AND a non-empty theme list so a keyless / theme-less
+        # run is a clean no-op. Its own try/except guarantees an agent failure
+        # never aborts the refresh.
+        try:
+            from lib.agents.sector_rotation_agent import run_sector_rotation_agent
+            from lib.llm_orchestrator import _has_llm_api_key
+
+            if _has_llm_api_key() and _themes_list:
+                _sr_output = run_sector_rotation_agent(
+                    themes=_themes_list,
+                    offense_defense=getattr(_fragility, "offense_defense", {}),
+                )
+                st.session_state["sector_rotation_agent_output"] = _sr_output
+        except Exception as _e:  # noqa: BLE001 — additive; never abort the refresh
+            import logging
+            logging.warning("SectorRotationAgent failed: %s", _e)
     except Exception:  # noqa: BLE001 — fail-closed; Section C falls back gracefully
         pass
     prog.progress(100, text=t("cockpit_hub_refresh_complete"))
