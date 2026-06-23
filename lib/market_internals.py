@@ -192,6 +192,10 @@ class FragilityReading:
     # replaying a different-vintage market.
     data_vintage: str = ""
     vintage_mismatch: bool = False
+    # Full offense/defense reading (direction/magnitude already on
+    # components; avg_diff/by_window/n_windows/confirming_windows
+    # surfaced here so consumers need not recompute). {} when absent.
+    offense_defense: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         d = asdict(self)
@@ -720,6 +724,7 @@ def compute_fragility(*, components: Optional[FragilityComponents] = None,
         degraded=degraded_list,
         consecutive_raw=consec,
         adjacency_degraded=adjacency_degraded,
+        offense_defense=dict(offense_defense or {}),
     )
 
 
