@@ -461,6 +461,39 @@ check("9.5 card snapshot carries theme_stage",
       _rec.get("theme_stage") == "rotating_in" and _rec.get("theme_stage_confirmed") is True)
 
 
+# ── §9-OD: full offense/defense reading surfaced on FragilityReading ─────────
+# The producer keeps direction/magnitude on components and SCORES from them, but
+# avg_diff/by_window/n_windows/confirming_windows used to be discarded. They are
+# now surfaced whole on reading.offense_defense so SectorRotationAgent need not
+# recompute. §9-OD-1 is a genuine mutation probe: it FAILS on pre-fix code.
+_OD_FULL = {
+    "direction": "defense", "magnitude": "moderate",
+    "avg_diff": -3.1,
+    "by_window": {"1m": {"offense": 1.0, "defense": 4.1, "diff": -3.1}},
+    "confirming_windows": ["1m", "3m"],
+    "n_windows": 4,
+}
+_od_reading = mi.compute_fragility(
+    breadth_above_sma20=0.40, offense_defense=_OD_FULL,
+    prior_level="normal", recent_raw_levels=[])
+check("9-OD-1 full offense_defense reading surfaced whole (mutation probe)",
+      _od_reading.offense_defense == _OD_FULL,
+      f"got {_od_reading.offense_defense!r}")
+
+check("9-OD-2 offense_defense fails closed to {} (default / None / empty)",
+      mi.FragilityReading().offense_defense == {}
+      and mi.compute_fragility(offense_defense=None,
+                               prior_level="normal", recent_raw_levels=[]
+                               ).offense_defense == {}
+      and mi.compute_fragility(offense_defense={},
+                               prior_level="normal", recent_raw_levels=[]
+                               ).offense_defense == {})
+
+check("9-OD-3 existing component fields not displaced by the new field",
+      _od_reading.components.offense_defense_direction == "defense"
+      and _od_reading.components.offense_defense_magnitude == "moderate")
+
+
 # ===========================================================================
 # 10. Structural — no network / LLM on computation paths
 # ===========================================================================
