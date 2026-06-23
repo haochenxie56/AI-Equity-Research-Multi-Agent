@@ -5,26 +5,27 @@
 > history preserved verbatim). This file keeps only the active phase. The
 > long-form running status remains in `docs/ai_dev_state/PROJECT_STATE.md`.
 
-**Status:** FragilityReading offense_defense extension: **COMPLETE,
-Codex-APPROVED (1 pass, 0 findings), merged to `main` via `--no-ff` @
-`bb77ee28e` (feature commit `e4569c10d`) and pushed.** Full O/D reading
-(`avg_diff` / `by_window` / `n_windows` / `confirming_windows`) now lives on
-`FragilityReading.offense_defense`; `fragility_snapshot()` untouched; 7B 229/229.
+**Status:** Phase 8B SectorRotationAgent: **COMPLETE, Codex-APPROVED (1 pass,
+0 findings), merged to `main` via `--no-ff` @ `fbf0cc41d` (feature commit
+`b3ffd88b9`) and pushed.** Fourth production foundation agent; themes (Step 2) +
+`FragilityReading.offense_defense` (Step 4) injected, no new fetches;
+`short = coverage × clarity`, `mid = coverage × dispersion × wave_clear`,
+`long = 0.0`; `signal_basis` three-way (`no_clear_leadership` = neutral/wait);
+TR1 carries the full O/D dict; 34 tests, 2 mutation probes confirmed.
 
-**Next:** **Phase 8B — SectorRotationAgent**
-— offense_defense extension complete; the full O/D reading now lives on
-`FragilityReading.offense_defense`. Wraps the `theme_baskets` +
-`theme_transmission` deterministic producers. Follows the established agent
-pattern (MacroRegimeAgent / MoneyFlowAgent / MarketStructureAgent):
-deterministic signals → ToolResults → constrained prompt
-(`REQUIRED OUTPUT FORMAT`) → validated `AgentOutput`; deterministic confidences
-computed before the LLM; additive, key-gated, fail-closed Cockpit hook;
-`valid_until = end_of_today_iso()`; `approved_for_execution` never `True`.
-**Reuses** `_themes_list` (Cockpit Step 2) + `get_diffusion_context` (pure
-arithmetic) + the injected `_fragility.offense_defense`; **hook placed after the
-MarketStructureAgent hook inside the Step 4 `try` block**, writing
-`sector_rotation_agent_output`. **STEP 0 recon already complete** — proceed
-directly to the implementation prompt.
+**Completed:** Phase 8B SectorRotationAgent (merge `fbf0cc41d`).
+
+**Next:** **Phase 8B — ThemeIntelligenceAgent (STEP 0 first)**
+— Wraps the `theme_transmission` wave / cluster intelligence (transmission order,
+cluster membership, per-ticker chain role) into a horizon-aware, evidence-backed
+`AgentOutput`. Follows the established agent pattern (MacroRegimeAgent /
+MoneyFlowAgent / MarketStructureAgent / SectorRotationAgent): deterministic
+signals → ToolResults → constrained prompt (`REQUIRED OUTPUT FORMAT`) → validated
+`AgentOutput`; deterministic confidences computed before the LLM; additive,
+key-gated, fail-closed Cockpit hook; `valid_until = end_of_today_iso()`;
+`approved_for_execution` never `True`. **STEP 0 recon first** — map the
+`theme_transmission` snapshot / query schema and design the confidence formulas
+before any implementation.
 
 **Last completed:** Phase 8B MarketStructureAgent (merge `8792343f9`)
 - New `lib/agents/market_structure_agent.py`: `FragilityReading` INJECTED from

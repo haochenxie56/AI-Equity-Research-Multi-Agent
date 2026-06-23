@@ -1,5 +1,51 @@
 # AI Investment Agent — Project State
 
+## Phase 8B SectorRotationAgent (COMPLETE — merged to `main` via `--no-ff` @ `fbf0cc41d`, feature commit `b3ffd88b9`, 2026-06-22)
+
+**Fourth production foundation agent.** Wraps the `theme_baskets` +
+`theme_transmission` deterministic producers and the injected GICS offense/defense
+reading (now carried whole on `FragilityReading.offense_defense` after the prior
+O/D extension) into a horizon-aware, evidence-backed `AgentOutput`. Mirrors
+MacroRegimeAgent / MoneyFlowAgent / MarketStructureAgent exactly. **No new
+fetches:** `themes` is the already-computed Step-2 `list[ThemeMomentumResult]` and
+`offense_defense` is injected from Step 4; `get_diffusion_context` is pure
+arithmetic over the momentum scores. **Three deterministic confidences computed in
+code BEFORE the LLM call** and persisted as evidence (numeric firewall):
+`short = theme_coverage × short_clarity` (coverage = live themes / all themes,
+live = `data_source != "fixture"`; short_clarity = breadth-`stage_confirmed` live
+themes / live; fixture-only → 0.0, no confirmed stage → 0.0);
+`mid = theme_coverage × dispersion × wave_clear` (dispersion = `max(momentum_score)
+− mean(momentum_score)` over live themes, wave_clear = 1.0 iff diffusion
+`active_order` is set; no active_order → 0.0, flat momentum field → 0.0);
+`long = 0.0` always (theme rotation is a tactical short-to-mid signal — defers to
+MacroRegimeAgent). **`signal_basis` three-way classifier**: `signal_present`
+(confirmed stage AND a leading wave) / `degraded_insufficient` (no live themes, or
+fewer than half live) / `no_clear_leadership` (data present but neither a confirmed
+stage nor a clear wave — **a neutral / wait state, never presented as
+directional**). **Three ToolResults** via `processed_signals_to_tool_result`:
+`sector_rotation_signals` (TR1 — carries the full O/D fields `od_avg_diff` /
+`od_confirming_windows` / `od_n_windows` taken straight from
+`FragilityReading.offense_defense`, proving the O/D extension is the source, not a
+recompute) / `sector_rotation_health` (carries `signal_basis` + `od_available`) /
+`sector_rotation_confidence`, all before the LLM. **Prompt:** `REQUIRED OUTPUT
+FORMAT` block (4-space indent, no backtick fences); only qualitative context
+interpolated (theme/cluster names, stage words, direction/magnitude, signal_basis)
+— never a number; `no_clear_leadership` explicitly forbidden from being framed
+bullish/bearish. All `lib.reliability` / `lib.agent_framework` /
+`theme_transmission` imports lazy; outer fail-closed guard → `_fallback_agent_output`
+on any exception; `valid_until = end_of_today_iso()`; `approved_for_execution` never
+`True`. **Cockpit hook** (`_run_refresh`, immediately AFTER the MarketStructureAgent
+hook inside the Step 4 `try`): additive (writes only `sector_rotation_agent_output`),
+dual-gated on `_has_llm_api_key()` AND a non-empty `_themes_list`, reuses
+`_themes_list` + `getattr(_fragility, "offense_defense", {})` (no new fetch), own
+try/except so it never aborts the refresh. **34 tests** (`§8B-SR1..SR14`; LLM/network
+mocked, real `ThemeMomentumResult` fixtures); `§8B-SR3c` (fixture flip 1.0 → 0.667)
+and `§8B-SR6c` (active_order None 0.4 → 0.0) are discriminating mutation probes.
+**Codex APPROVED (1 pass, 0 findings).** Regression: SectorRotation 34 ·
+MarketStructure 44 · MoneyFlow 34 · MacroRegime 24 · AgentFramework 15 · 7B
+rotation 229 · 8B-0 gex_dex 13 / massive 5 / quiver 6. Phase doc
+`docs/reliability_sector_rotation_agent.md`.
+
 ## FragilityReading offense_defense extension (COMPLETE — merged to `main` via `--no-ff` @ `bb77ee28e`, feature commit `e4569c10d`, 2026-06-22)
 
 **Small enabler change (not a standalone phase).** Surfaces the full
