@@ -77,25 +77,72 @@
 
 ## 🏗️ 系统架构 / Architecture
 
+> **目标形态 = AI Fund 工作流 / Target shape = an AI Fund workflow.** 系统不是「Streamlit 页面直接消费确定性模块」的仪表盘，而是 **数据 → Foundation Agents → PM 层 → MasterPM → UI** 的投研团队流水线。**UI 是 AI-PM 的汇报与人工复核界面，不是做核心决策的地方**；确定性代码计算所有数字（数值防火墙），Foundation Agent 在证据约束下综合含义，PM 做时间维度内的冲突仲裁，MasterPM 做跨时间维度与组合层综合。**全程 review-only，永不下单。**
+>
+> The system is **not** a dashboard where Streamlit pages consume deterministic modules directly. It is an AI-fund pipeline: **Data → Foundation Agents → PM layer → MasterPM → UI**. The UI is the AI-PM **reporting + human-review surface, never where core decisions are made**. Deterministic code computes every number; Foundation Agents synthesize implications from evidence; PMs arbitrate conflicts within a horizon; MasterPM synthesizes across horizons and at portfolio level. **Review-only throughout — the system never places an order.**
+
 ```
-┌────────────────────────── Investment Cockpit（主入口）──────────────────────────┐
-│                                                                                  │
-│  宏观层                 主题层                  信号/排序层          执行参考层    │
-│  macro_regime (frozen)  theme_baskets           signal_engine        order_advisor│
-│  market_internals  ──►  rotation (两环)    ──►  candidate_generator  (entry v4)  │
-│  (tighten-only,         阶段标签+广度确认       opportunity_ranker   thesis_     │
-│   只收紧短线门槛)                               (三周期独立状态)      monitor     │
-│                                                                                  │
-│        ▼                       ▼                       ▼                  ▼      │
-│  ┌──────────────────────────────────────────────────────────────────────────┐  │
-│  │   每日快照 data/snapshots/*.jsonl   ·   锚缓存 data/anchor_cache.json    │  │
-│  │   （审计轨：系统当天说了什么）          （估值锚跨页共享）                  │  │
-│  └──────────────────────────────────────────────────────────────────────────┘  │
-└──────────────────────────────────────────────────────────────────────────────────┘
-   排序/刷新路径 network-free（缓存行情纯函数）· 每步：代码层（数字）+ LLM 层（语言）
+┌──────────────────────────────────────────────────────────────────────────────┐
+│  数据层 / Data Layer                                          ✅ 已上线 / live  │
+│  原始源 raw:  yfinance · FRED · Finnhub · Quiver · Massive Options             │
+│  确定性加工信号 processed signals（代码算所有数字 / numeric firewall）:        │
+│  macro_regime · market_internals · rotation / theme_baskets / theme_transmission│
+│  relative_strength · opportunity_ranker · equity_valuation / anchor_* · gex_dex │
+└───────────────────────────────┬──────────────────────────────────────────────┘
+                                ▼  证据化 evidence-bound AgentOutput
+┌──────────────────────────────────────────────────────────────────────────────┐
+│  Foundation Agent 层 / Foundation Agents  (lib/agents/)   🟡 逐个推进 / rolling │
+│  ✅ MacroRegime · MoneyFlow · MarketStructure · SectorRotation                 │
+│  📋 ThemeIntelligence · CandidateScreening · StockResearch ·                   │
+│     ValuationDebate · TechnicalEntry · SectorResearch · RiskOverlay            │
+│  代码算数字 → LLM 在证据约束下综合含义、引用 evidence_id（绝不发明数字）        │
+│  每个 agent 输出三时间维度 finding + 三 confidence；valid_until = 当日           │
+└───────────────────────────────┬──────────────────────────────────────────────┘
+                                ▼  按时间维度消费 finding + confidence
+┌──────────────────────────────────────────────────────────────────────────────┐
+│  PM 层 / PM Layer                                          📋 计划 / planned    │
+│  ShortTermPM · MidTermPM · LongTermPM —— 各自做时间维度内冲突仲裁（非简单汇总）  │
+└───────────────────────────────┬──────────────────────────────────────────────┘
+                                ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│  MasterPM                                                 📋 计划 / planned     │
+│  跨时间维度 + 组合层冲突仲裁、组合级综合；绝不发出任何下单指令                    │
+└───────────────────────────────┬──────────────────────────────────────────────┘
+                                ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│  UI 层 / UI Layer  (Streamlit)                               ✅ 已上线 / live  │
+│  AI-PM 汇报 · 证据检视 · 人工复核确认 —— 仅供审阅，永不下单 / review-only       │
+│  当前主入口 Investment Cockpit 已附加式接入 4 个 foundation agent 钩子           │
+└──────────────────────────────────────────────────────────────────────────────┘
+   排序/刷新路径 network-free（缓存行情纯函数）· Foundation Agent 之前的确定性栈
+   即上方「加工信号层」· PM / MasterPM 为计划层，尚未生产化
 ```
 
 ### 各 Agent 职责 / Agent Responsibilities
+
+系统中存在**三类**「agent」，必须区分，切勿混淆：
+
+**A. 运行时 Foundation Agents / Runtime production agents（`lib/agents/`）** — 生产路径的真正 agent：包裹一个确定性加工信号生产者，代码先算好所有数字并落为证据，再让 LLM 在证据约束下综合三时间维度含义（绝不发明数字）。这是 **AI Fund 工作流**的 Foundation Agent 层（路线图规范 roster，见下表）。
+
+| Foundation Agent | 分组 / Group | 确定性输入（代码算）| 状态 / Status |
+|---|---|---|---|
+| **MacroRegimeAgent** | 市场环境 Market env | `macro_regime.classify_regime`（regime/票数/coverage）+ 快照 regime 历史 | ✅ 已实现 `eabf0c2d` |
+| **MarketStructureAgent** | 市场环境 Market env | `market_internals` 脆弱度读数（Cockpit Step 4 注入，不二次计算）| ✅ 已实现 `8792343f9` |
+| **MoneyFlowAgent** | 市场环境 Market env | `gex_dex`（Massive）+ `compute_dark_pool_signal`（Quiver）| ✅ 已实现 `760f356a3` |
+| **SectorRotationAgent** | 机会发现 Opportunity | `theme_baskets` + `theme_transmission` + 完整攻守 O/D reading | ✅ 已实现 `fbf0cc41d` |
+| **ThemeIntelligenceAgent** | 机会发现 Opportunity | `theme_transmission`（传导棒次/簇/每票角色）| 📋 计划（下一个，STEP 0）|
+| **CandidateScreeningAgent** | 机会发现 Opportunity | `opportunity_ranker` + `candidate_generator` / `signal_engine` | 📋 计划 |
+| **StockResearchAgent** | 个股研究 Stock research | `thesis_monitor` + 个股研究产物 | 📋 计划 |
+| **ValuationDebateAgent** | 个股研究 Stock research | `equity_valuation` / `valuation_router` / `valuation_diagnosis` / `anchor_migration` + 反向 DCF（Phase 8D）| 📋 计划（Phase 8D）|
+| **TechnicalEntryAgent** | 个股研究 Stock research | `technical` 指标 + 支撑压力 + `order_advisor` 入场策略 | 📋 计划 |
+| **SectorResearchAgent** | 个股研究 Stock research | 行业研究（宏观/政策/产业链/景气度）| 📋 计划 |
+| **RiskOverlayAgent** | 风险控制 Risk control | 组合/仓位/脆弱度风险叠加 | 📋 计划 |
+
+> 部分历史临时命名（MarketInternalsAgent / RotationAgent / RelativeStrengthAgent / CandidateAgent / OpportunityAgent / ValuationAgent / TechnicalAgent / ThesisAgent / AnchorHistoryAgent）已并入上面的规范 roster。其中 `relative_strength`、`opportunity_ranker`、`thesis_monitor`、`anchor_migration` 等**不是**独立 agent，而是上表对应 agent 的**确定性输入**（加工信号层）。
+
+**B. PM 层 agents / Future PM agents（计划）** — `ShortTermPM` / `MidTermPM` / `LongTermPM` 各自消费每个 Foundation Agent 对应时间维度的 finding + confidence，做**冲突仲裁**（非简单汇总）；`MasterPM` 做跨时间维度与组合层综合。**尚未生产化。**
+
+**C. 旧版 `.claude/agents` 研究工作流定义 / Legacy developer-research workflow** — 下表是项目最初的多 Agent 研究工作流定义，由 **Claude Code 在对话模式下**调用，用于「AI 工作流 / Overview」研究层页面；它们**不是** `lib/agents/` 的运行时生产 Foundation Agents，也不是 PM 层。Streamlit 应用通过 `lib/llm_orchestrator.py` 直接调用 Claude API 驱动该五步工作流。
 
 | Agent 定义文件 | 名称 | 核心职责 |
 |---|---|---|
@@ -105,8 +152,6 @@
 | `equity-research.md` | Equity Research | 商业模式、护城河、管理层、竞争格局 |
 | `financial-analyst.md` | Financial Analyst | 三张表、DCF/相对估值、盈利质量分析 |
 | `price-volume-analyst.md` | Price & Volume | 技术形态、资金流、RSI/MACD/ATR、情绪 |
-
-> Agent 定义文件位于 `.claude/agents/`，由 Claude Code 在对话模式下调用。Streamlit 应用通过 `lib/llm_orchestrator.py` 直接调用 Claude API 执行自动化工作流。
 
 ---
 
@@ -130,7 +175,7 @@
 |---|---|
 | **AI** | [Anthropic Claude API](https://www.anthropic.com/) (`claude-sonnet-4-6`) · `lib/llm_orchestrator.py` |
 | **Web UI** | [Streamlit](https://streamlit.io/) 1.35+ · CSS Variables (dark/light theming) |
-| **数据 / Data** | [yfinance](https://github.com/ranaroussi/yfinance) (primary) · [Finnhub](https://finnhub.io/)（财报日历/预估）· [polygon.io](https://polygon.io/) (fallback) |
+| **数据 / Data** | [yfinance](https://github.com/ranaroussi/yfinance) (primary, 行情/财务) · [FRED](https://fred.stlouisfed.org/)（利率/信用/流动性宏观）· [Finnhub](https://finnhub.io/)（财报日历/新闻）· [Quiver](https://www.quiverquant.com/)（暗池/国会/内部人/机构）· Massive Options（期权链 Greeks/IV/OI → GEX/DEX；曾用名 / formerly Polygon.io）|
 | **可视化 / Charts** | [Plotly](https://plotly.com/python/) |
 | **技术分析 / TA** | [ta](https://github.com/bukosabino/ta) (SMA/EMA/RSI/MACD/ADX/Bollinger Bands) |
 | **存储 / Storage** | Apache Parquet (pyarrow) · JSONL 快照 · `lib/cache_manager.py` |
@@ -200,22 +245,40 @@ streamlit run app.py
 参考 `.env.example`：
 
 ```env
-# Anthropic API Key（AI 工作流必需 / Required for AI workflow）
+# Anthropic API Key（AI 工作流 + Foundation Agents 必需 / Required for AI workflow + agents）
 ANTHROPIC_API_KEY=your_anthropic_api_key_here
 
-# Finnhub API Key（财报日历 → 「利好遭抛」组件；预估数据。强烈建议 / Strongly recommended）
+# Finnhub API Key（财报日历 → 「利好遭抛」组件 + 新闻。强烈建议 / Strongly recommended）
 FINNHUB_API_KEY=your_finnhub_api_key_here
 
-# polygon.io API Key（备用数据源，可选 / Fallback data source, optional）
-POLYGON_API_KEY=your_polygon_api_key_here
+# FRED API Key（利率/信用/广义美元/流动性等宏观序列，可选 / Macro series, optional）
+FRED_API_KEY=your_fred_api_key_here
+
+# Quiver Quantitative API Key（暗池/国会/内部人/机构持仓，可选 / Alt-data, optional）
+QUIVER_API_KEY=your_quiver_api_key_here
+
+# Massive Options API Key（期权链 Greeks/IV/OI → GEX/DEX，可选 / Options chain, optional）
+MASSIVE_API_KEY=your_massive_api_key_here
 ```
+
+**各 Key 用途与降级 / Key purpose & graceful degradation：**
+
+| Key | 用途 / Purpose | 必需性 / Requirement | 缺失时 / When absent |
+|---|---|---|---|
+| `ANTHROPIC_API_KEY` | Claude API：五步研究工作流 + Foundation Agent 的 LLM 综合 | AI 工作流与 agent 必需 | 确定性页面照常；agent 钩子按 `_has_llm_api_key()` 门控为 no-op，刷新不中断 |
+| `FINNHUB_API_KEY` | 财报日历（「利好遭抛」组件）+ 新闻 | 强烈建议 | 财报反应组件按降级词汇表诚实降级（`finnhub_unavailable`），其余不受影响 |
+| `FRED_API_KEY` | 宏观序列：利率 / 信用（HY OAS）/ 广义美元 / 货币市场流动性 | 可选 | 相关宏观读数回退到内置 fixture（per-series 隔离、fail-closed）|
+| `QUIVER_API_KEY` | 暗池 / 国会 / 内部人 / 机构持仓（Phase 8B-0；喂 MoneyFlowAgent 暗池信号）| 可选 | 抓取 fail-closed 返回空；`compute_dark_pool_signal` 标 `insufficient_data` |
+| `MASSIVE_API_KEY` | 期权链 Greeks / IV / OI → GEX/DEX（Phase 8B-0；喂 MoneyFlowAgent；曾用名 Polygon.io）| 可选 | 无 key → 降级快照；免费档无 Greeks/OI（`greeks_unavailable`），实时 GEX/DEX 需 Starter 档 |
 
 **获取 API Key / Getting API Keys：**
 - Anthropic API → [console.anthropic.com](https://console.anthropic.com/)
 - Finnhub（免费）→ [finnhub.io/register](https://finnhub.io/register)
-- Polygon.io（免费套餐）→ [polygon.io/dashboard](https://polygon.io/dashboard)
+- FRED（免费）→ [fred.stlouisfed.org](https://fred.stlouisfed.org/)
+- Quiver Quantitative → [quiverquant.com](https://www.quiverquant.com/)
+- Massive Options（曾用名 Polygon.io）→ 供应商控制台
 
-> yfinance 为主数据源，**无需任何 API Key** 即可运行基础页面。AI 工作流需要 `ANTHROPIC_API_KEY`；缺少 `FINNHUB_API_KEY` 时财报反应组件按降级词汇表诚实降级，其余功能不受影响。
+> yfinance 为主数据源，**无需任何 API Key** 即可运行基础页面。AI 工作流与 Foundation Agent 需要 `ANTHROPIC_API_KEY`；其余 key 均为可选，缺失时对应组件按降级词汇表诚实降级，不影响其它功能。
 
 ---
 
@@ -270,7 +333,7 @@ investment-agents/
 │   ├── workflow_state.py / translator.py
 │   ├── reliability/                # 可靠性基础设施（适配器层 / World 2）
 │   ├── agent_framework/            # Phase 8A：AgentOutput / agent_runner（含 _repair_llm_response 扁平响应结构修复层）/ world_adapter（lib.reliability 全惰性导入）
-│   └── agents/                     # 具体 agent 实现（macro_regime_agent —— MacroRegimeAgent 生产版：三时间维度置信度 + 投票计数证据；money_flow_agent —— MoneyFlowAgent：GEX/DEX + 暗池双数据源，三置信度 + prior_result 挤压条件 C；market_structure_agent —— MarketStructureAgent：注入 FragilityReading，short=coverage×clarity / mid=连续恶化天数 / long=0.0，signal_basis 三值分类器）
+│   └── agents/                     # 运行时 Foundation Agents（4 个已生产化）：macro_regime_agent —— MacroRegimeAgent（三时间维度置信度 + 投票计数证据）；money_flow_agent —— MoneyFlowAgent（GEX/DEX + 暗池双数据源，三置信度 + prior_result 挤压条件 C）；market_structure_agent —— MarketStructureAgent（注入 FragilityReading，short=coverage×clarity / mid=连续恶化天数 / long=0.0，signal_basis 三值分类器）；sector_rotation_agent —— SectorRotationAgent（theme_baskets + theme_transmission + 完整攻守 O/D，short=coverage×stage_confirmed率 / mid=coverage×动量分散×wave清晰度，signal_basis 三值含 no_clear_leadership）。下一个：ThemeIntelligenceAgent
 │
 ├── scripts/
 │   ├── test_reliability_*.py       # 69 个可靠性测试套件（数千条断言）
@@ -331,10 +394,13 @@ investment-agents/
 | Step 3 Narrative Disk Cache | ✅ | LLM narrative 结果磁盘持久化（data/narrative_cache/）；重启后命中跳过 LLM；指纹对齐 prompt 输入（news[:25] + headline + summary[:160]，json.dumps 序列化）；TTL 24h；原子写；27 项测试，Codex 三轮审查通过 |
 | _meta 扩展（key_signals / opportunity_posture / confidence） | ✅ | 三个确定性 classify_regime 字段写入每日快照 _meta 块，为冷启动水化做准备；冲突守卫（ValueError，置于 try 之外确保不被吞掉）；MetaRecord 对应加字段（旧快照容忍缺失）；7 项断言含 mutation probe + 守卫判别性验证，Codex 两轮通过；feature `7a76bcb3`，`--no-ff` 合并 main @ `ffe9e1e2` 并推送 |
 | Cockpit 冷启动水化 | ✅ | 重启后自动从最新日快照填充 Section A（含 key_signals / posture / confidence）和 Section C；双语 banner（bi()）；原子提交 + fail-closed；why_now crash guard；MacroRegimeAgent output / B / D / E 不从快照恢复；10 项测试，Codex 一轮通过，UI 人工验收 |
-| Phase 7D（其余） | 计划 | 跨层比较 → 反馈环（推荐质量复盘） |
-| Phase 8 — Evidence Infrastructure | 计划 | 证据包 + 反向 DCF + 对抗式估值辩论 + 宏观 LLM 事件/归因 + IPO/流动性日历；首个「章节 agent」在此验证 |
-| Phase 9 — Agent Synthesis Layer | 远期 | 先做人在环 **Judgment Console**（判断收口页：LLM 在证据约束下给建议、人确认/覆写、来源留痕）→ 验证判断质量后逐步提高自动化；终态 = 章节 agent + orchestrator（agent 吃结构化判断、不碰原始数字；orchestrator 做冲突仲裁、不出操作指令） |
-| 另类数据接入 | 远期 | 期权流/暗池作为**新增正交组件**叠加进脆弱度复合（非替换）；以快照对照验证领先性/误报率改善 |
+| **Phase 8B — Foundation Agent 实现（逐个推进）** | 🔄 进行中 | 已上线 MacroRegime / MoneyFlow / MarketStructure / SectorRotation 四个；**下一个 ThemeIntelligenceAgent（STEP 0）**；其后 CandidateScreening · StockResearch · TechnicalEntry · SectorResearch · RiskOverlay。每个：确定性信号 → ToolResult → 受约束提示（`REQUIRED OUTPUT FORMAT`）→ `_repair_llm_response` → 校验 `AgentOutput`；附加式 Cockpit 钩子 |
+| **Phase 8C — PM 层** | 📋 计划 | `ShortTermPM` / `MidTermPM` / `LongTermPM` 按时间维度消费各 Foundation Agent 的 finding+confidence 做冲突仲裁（非汇总）→ `MasterPM` 跨时间维度 + 组合层综合、绝不出下单指令。**依赖：8B roster 足够填充** |
+| **Phase 8D — ValuationDebateAgent / 证据基建** | 📋 计划 | 反向 DCF + 对抗式估值辩论 + 证据包；锚历史/迁移作为确定性输入。**依赖：估值基建 + 8B 个股研究组** |
+| **Phase 9 — Judgment Console（人在环）** | 📋 远期 | 判断收口与人工确认工作流：LLM 在证据约束下给建议、人确认/覆写、判断来源留痕（provenance）、审计轨。**下游 gating 政策（自动化程度）仍待显式架构决策，尚未定型；依赖 8C/8D 累积输出** |
+| **Phase 7D Block B — 判断绩效与校准** | 📋 计划 | 跨层比较 → 反馈环（推荐质量复盘）、判断绩效、PM 历史权重——**待足够 agent/PM 输出在快照中累积后**进行 |
+| **Phase 6D — 持仓侧复核** | 📋 计划 | 按路线图既定顺序推进的 holdings-side review |
+| 另类数据接入（持续）| 📋 远期 | 期权流/暗池作为**新增正交组件**叠加进脆弱度复合（非替换）；以快照对照验证领先性/误报率改善 |
 
 ---
 
