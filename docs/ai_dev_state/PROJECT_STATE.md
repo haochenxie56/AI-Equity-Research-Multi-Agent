@@ -1,5 +1,53 @@
 # AI Investment Agent — Project State
 
+## constituent_rs + label lift (COMPLETE — ThemeIntelligenceAgent enabler — merged to `main` via `--no-ff` @ `107e0f09e`, feature commit `626107a5c`, 2026-06-24)
+
+**Three additive changes enabling the upcoming ThemeIntelligenceAgent.**
+**(1) Label lift (single source of truth):** `CLUSTER_LABELS` (8 keys) and
+`ROLE_LABELS` (7 keys) — `{en, zh}` bilingual dicts — lifted into
+`lib/theme_transmission.py` (inserted after `THEME_TRANSMISSION_ORDER`, before
+`TICKER_ROLE_MAP`). `pages/2_Sector.py` and `pages/7_Investment_Cockpit.py` delete
+their local copies and import lazily from `lib.theme_transmission` (lazy-import
+pattern preserved; the Sector page's nested card renderers resolve the labels by
+**closure** — capture verified via `co_freevars`: `_render_card_body` captures
+`ROLE_LABELS`, `_render_card` captures `CLUSTER_LABELS`). The Cockpit had only
+`CLUSTER_LABELS`; `ROLE_LABELS` not added there.
+**(2) `ThemeMomentumResult.constituent_rs`:** new `dict = field(default_factory=dict)`
+field appended **last** (matches the existing `excess` field idiom; no existing
+field reordered; `_REQUIRED_RESULT_FIELDS` in the test unchanged — the field check
+is a subset assertion so the addition is non-breaking).
+**(3) Population in `_enrich_excess_stage_breadth` ONLY** — NOT in
+`compute_theme_breadth` (which iterates `.values()` and has no ticker key) and NOT
+in the equal-weight loop in `compute_theme_momentum` (which is pre-benchmark and
+discards ticker identity). Reuses the `constituent_closes` already loaded there for
+breadth → **zero new network calls**. Stores
+`{ticker: {"1m", "3m", "active": excess_float}}` where excess =
+`round(_pct_return(close, n) − bench_win[window], 4)`; `None` values filtered (only
+present windows carry a float). Fixture-fallback themes hit the `used==0` /
+ETF-miss early return BEFORE enrichment so they keep `constituent_rs = {}`; ETF
+themes populate uniformly (constituent OHLCV is fetched for breadth on the ETF path
+too). Active-window excess stored under a literal `"active"` key (may duplicate the
+`"1m"`/`"3m"` value when they match — kept separate by design).
+**Tests `§TB-CR1..CR5` (9 checks).** `§TB-CR3` is a selective-inclusion probe
+(NVDA valid close → entry produced; INTC `None` close → excluded; NVDA entry has a
+float window). **Discrimination verified empirically:** Exp B1 (drop the population
+assignment) → CR3 RED (154/3); Exp B2 (remove guard + store unconditionally → INTC
+leaks in as `{}`) → CR3 RED (156/1). **Honest finding:** the `if _close is None:
+continue` guard is *redundant* with `_pct_return`'s own `None` check — commenting it
+out alone keeps all green; the real None-leak protection is the final
+`if _ticker_excess:` conditional. The original review's claimed "TypeError on guard
+removal" mechanism was inaccurate and is documented as such.
+**Codex APPROVED (1 pass; P1 not a code issue; P2 the CR3 discrimination, fixed with
+the honest report above).** Regression: theme_baskets **157/157** ·
+sector_rotation **34/34**. Phase doc `docs/reliability_theme_constituent_rs.md`.
+**Next: Phase 8B ThemeIntelligenceAgent** (all enablers now complete).
+
+> **Merge-topology note (2026-06-24):** the feature branch was based on
+> `docs/align-agent-architecture-roadmap` (2 docs commits ahead of `main`), so the
+> `--no-ff` merge also landed `821c39069` (docs: align agent architecture) and
+> `c4f5f17b0` (docs: add ROADMAP_v12). Surfaced before push; user approved shipping
+> all three together.
+
 ## Phase 8B SectorRotationAgent (COMPLETE — merged to `main` via `--no-ff` @ `fbf0cc41d`, feature commit `b3ffd88b9`, 2026-06-22)
 
 **Fourth production foundation agent.** Wraps the `theme_baskets` +

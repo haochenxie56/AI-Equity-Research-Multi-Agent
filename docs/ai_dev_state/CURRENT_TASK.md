@@ -5,27 +5,42 @@
 > history preserved verbatim). This file keeps only the active phase. The
 > long-form running status remains in `docs/ai_dev_state/PROJECT_STATE.md`.
 
-**Status:** Phase 8B SectorRotationAgent: **COMPLETE, Codex-APPROVED (1 pass,
-0 findings), merged to `main` via `--no-ff` @ `fbf0cc41d` (feature commit
-`b3ffd88b9`) and pushed.** Fourth production foundation agent; themes (Step 2) +
-`FragilityReading.offense_defense` (Step 4) injected, no new fetches;
-`short = coverage × clarity`, `mid = coverage × dispersion × wave_clear`,
-`long = 0.0`; `signal_basis` three-way (`no_clear_leadership` = neutral/wait);
-TR1 carries the full O/D dict; 34 tests, 2 mutation probes confirmed.
+**Status:** **constituent_rs + label lift: COMPLETE, Codex-APPROVED (1 pass),
+merged to `main` via `--no-ff` @ `107e0f09e` (feature commit `626107a5c`) and
+pushed.** ThemeIntelligenceAgent enabler — three additive changes:
+`CLUSTER_LABELS`/`ROLE_LABELS` lifted into `lib/theme_transmission.py` (single
+source of truth; both page copies deleted, lazy import preserved, closure capture
+verified via `co_freevars`); `ThemeMomentumResult.constituent_rs: dict` added
+(`default_factory=dict`, last field); populated in `_enrich_excess_stage_breadth`
+only (reuses `constituent_closes`, **zero new network**), storing
+`{ticker: {"1m","3m","active"}}` with `None` filtered. ETF themes populate
+uniformly; fixture themes keep `{}`. `§TB-CR3` discrimination honest: the
+`if _close is None` guard is redundant with `_pct_return`; real protection is the
+`if _ticker_excess` conditional (Exp B1/B2 verified RED). **157/157** theme_baskets
+· **34/34** sector_rotation.
 
-**Completed:** Phase 8B SectorRotationAgent (merge `fbf0cc41d`).
+**Completed:** constituent_rs + label lift (merge `107e0f09e`).
+— All ThemeIntelligenceAgent enablers now complete: `constituent_rs`, label lift,
+the prior `FragilityReading.offense_defense` extension, and the SectorRotationAgent
+pattern to mirror.
 
-**Next:** **Phase 8B — ThemeIntelligenceAgent (STEP 0 first)**
-— Wraps the `theme_transmission` wave / cluster intelligence (transmission order,
-cluster membership, per-ticker chain role) into a horizon-aware, evidence-backed
-`AgentOutput`. Follows the established agent pattern (MacroRegimeAgent /
-MoneyFlowAgent / MarketStructureAgent / SectorRotationAgent): deterministic
-signals → ToolResults → constrained prompt (`REQUIRED OUTPUT FORMAT`) → validated
-`AgentOutput`; deterministic confidences computed before the LLM; additive,
-key-gated, fail-closed Cockpit hook; `valid_until = end_of_today_iso()`;
-`approved_for_execution` never `True`. **STEP 0 recon first** — map the
-`theme_transmission` snapshot / query schema and design the confidence formulas
-before any implementation.
+**Next:** **Phase 8B — ThemeIntelligenceAgent**
+— STEP 0 recon is COMPLETE (see `docs/reliability_theme_constituent_rs.md` and the
+prior recon). Proceed to the implementation prompt. Design lines:
+- **SHORT finding:** intra-theme ticker ranking via `constituent_rs` ×
+  `get_ticker_role(theme, ticker)` — names which live-strongest tickers carry each
+  confirmed-leading theme by chain role (the role × live-strength join no existing
+  agent/page performs).
+- **MID finding:** wave / cluster asymmetry via `get_diffusion_context`
+  (recompute in-agent, pure arithmetic) + `get_theme_transmission_summary` — the
+  cross-wave "structurally-early order, early stage" asymmetric-opportunity read.
+- **LONG:** `0.0`, defer to the macro / StockResearchAgent layer.
+- **Hook:** additive, key-gated, fail-closed, immediately AFTER the
+  SectorRotationAgent hook inside the Step 4 `try`; writes only
+  `theme_intelligence_agent_output`; reuses `_themes_list` (still in scope), no new
+  fetch. Follows the established agent pattern (deterministic confidences before the
+  LLM; `REQUIRED OUTPUT FORMAT`; `valid_until = end_of_today_iso()`;
+  `approved_for_execution` never `True`).
 
 **Last completed:** Phase 8B MarketStructureAgent (merge `8792343f9`)
 - New `lib/agents/market_structure_agent.py`: `FragilityReading` INJECTED from
