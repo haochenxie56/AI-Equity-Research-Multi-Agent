@@ -69,16 +69,8 @@ def _badge(text: str, color: str) -> str:
 
 
 # Phase 7C — bilingual labels for transmission cluster strings (display i18n).
-CLUSTER_LABELS = {
-    "compute_core":        {"en": "Compute Core",       "zh": "核心算力"},
-    "supply_chain":        {"en": "Supply Chain",        "zh": "供应链"},
-    "demand_application":  {"en": "Demand / App Layer",  "zh": "需求/应用层"},
-    "infrastructure":      {"en": "Infrastructure",      "zh": "基础设施"},
-    "defense_security":    {"en": "Defense / Security",  "zh": "安全防御"},
-    "physical_buildout":   {"en": "Physical Build-out",  "zh": "实体基建"},
-    "endpoint_diffusion":  {"en": "Endpoint Diffusion",  "zh": "终端普及"},
-    "adjacent_cycle":      {"en": "Adjacent Cycle",      "zh": "关联赛道"},
-}
+# Lifted to lib/theme_transmission.py (single source of truth); imported lazily
+# at the transmission-row usage site below to preserve the lazy-import pattern.
 
 
 _STRENGTH_COLOR = {"triple": "#d4a017", "double": "#3fb950",
@@ -806,7 +798,9 @@ else:
                 # in-theme leaders and the next-wave (downstream) themes for context.
                 _tx_key = getattr(_th, "theme_key", "") or ""
                 try:
-                    from lib.theme_transmission import get_theme_transmission_summary
+                    from lib.theme_transmission import (
+                        CLUSTER_LABELS, get_theme_transmission_summary,
+                    )
                     _tx = get_theme_transmission_summary(_tx_key) if _tx_key else None
                 except Exception:  # noqa: BLE001 — fail-closed; row simply omitted
                     _tx = None

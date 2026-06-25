@@ -82,6 +82,36 @@ THEME_TRANSMISSION_ORDER: list[dict] = [
     {"theme": "robotics_autonomous", "order": 3, "cluster": "adjacent_cycle"},
 ]
 
+
+# ---------------------------------------------------------------------------
+# 1A-bis — Bilingual display labels (single source of truth)
+# ---------------------------------------------------------------------------
+# Phase 7C — bilingual labels for transmission cluster / role strings (display
+# i18n). Lifted here from pages/2_Sector.py + pages/7_Investment_Cockpit.py so
+# the Streamlit pages and any agent share ONE canonical map. Structure:
+# {key: {"en": str, "zh": str}}.
+CLUSTER_LABELS: dict[str, dict[str, str]] = {
+    "compute_core":        {"en": "Compute Core",       "zh": "核心算力"},
+    "supply_chain":        {"en": "Supply Chain",        "zh": "供应链"},
+    "demand_application":  {"en": "Demand / App Layer",  "zh": "需求/应用层"},
+    "infrastructure":      {"en": "Infrastructure",      "zh": "基础设施"},
+    "defense_security":    {"en": "Defense / Security",  "zh": "安全防御"},
+    "physical_buildout":   {"en": "Physical Build-out",  "zh": "实体基建"},
+    "endpoint_diffusion":  {"en": "Endpoint Diffusion",  "zh": "终端普及"},
+    "adjacent_cycle":      {"en": "Adjacent Cycle",      "zh": "关联赛道"},
+}
+
+ROLE_LABELS: dict[str, dict[str, str]] = {
+    "leader":                        {"en": "Leader",     "zh": "主导"},
+    "second_derivative_beneficiary": {"en": "2nd Wave",   "zh": "二阶受益"},
+    "supplier":                      {"en": "Supplier",   "zh": "供应商"},
+    "platform":                      {"en": "Platform",   "zh": "平台"},
+    "speculative":                   {"en": "Speculative","zh": "投机"},
+    "laggard":                       {"en": "Laggard",    "zh": "落后"},
+    "unknown":                       {"en": "Unassessed", "zh": "未评估"},
+}
+
+
 # Per-(theme, ticker) role within the chain. Roles are exactly the
 # phase5_theme_intelligence.ThemeCandidateRole literals. Tickers absent here
 # fall back to "unknown" (see get_ticker_role).

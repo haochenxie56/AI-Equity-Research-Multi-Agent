@@ -279,6 +279,125 @@ for key in ("theme_tab", "p2_tab_sector", "theme_send_top_btn", "theme_col_score
 
 
 # ---------------------------------------------------------------------------
+# Section TB-CR — per-constituent constituent_rs + label lift
+# ---------------------------------------------------------------------------
+# Helpers: a deterministic Close Series per symbol (same shape _history_close
+# returns) and a benchmark window map, so we can drive compute_theme_momentum's
+# enrichment path directly with controlled loaders (NO real network).
+
+def _fake_series(symbol: str):
+    """A 200-row deterministic Close Series for ``symbol`` (DataFrame -> Close)."""
+    return _FakeTicker(symbol).history()["Close"]
+
+
+if tb is not None:
+    _bench_map = {"QQQ": tb._window_returns(_fake_series("QQQ"))}
+
+    # §TB-CR1 — constituent_rs is populated for at least one theme when
+    # compute_all_themes runs with the fake loader (every constituent resolves).
+    _cr_any = False
+    for _r in (all_results or []):
+        _crs = getattr(_r, "constituent_rs", None)
+        if isinstance(_crs, dict) and _crs:
+            for _tkr, _wd in _crs.items():
+                if isinstance(_wd, dict) and ({"1m", "3m", "active"} & set(_wd)):
+                    _cr_any = True
+                    break
+        if _cr_any:
+            break
+    check("TB-CR1 constituent_rs populated for >=1 theme with 1m/3m/active",
+          _cr_any)
+
+    # §TB-CR2 — keys are ticker strings; values are dicts with >=1 of
+    # 1m/3m/active as FLOATS; no None values are ever stored.
+    _cr2_ok = True
+    _cr2_detail = ""
+    for _r in (all_results or []):
+        _crs = getattr(_r, "constituent_rs", {}) or {}
+        for _tkr, _wd in _crs.items():
+            if not isinstance(_tkr, str) or not isinstance(_wd, dict):
+                _cr2_ok = False
+                _cr2_detail = f"{_r.theme_key}:{_tkr!r}"
+                break
+            if not ({"1m", "3m", "active"} & set(_wd)):
+                _cr2_ok = False
+                _cr2_detail = f"{_r.theme_key}:{_tkr} no window keys"
+                break
+            for _wk, _wv in _wd.items():
+                if _wv is None or not isinstance(_wv, float):
+                    _cr2_ok = False
+                    _cr2_detail = f"{_r.theme_key}:{_tkr}:{_wk}={_wv!r}"
+                    break
+            if not _cr2_ok:
+                break
+        if not _cr2_ok:
+            break
+    check("TB-CR2 constituent_rs structure: str keys, float window values, no None",
+          _cr2_ok, _cr2_detail)
+
+    # §TB-CR3 — selective-inclusion probe (DISCRIMINATING): drive enrichment with a
+    # loader where ONE constituent (NVDA) has a valid close and the rest (incl.
+    # INTC) return None. A valid close MUST produce a constituent_rs entry; a None
+    # close MUST be excluded. Asserting that EXACTLY the valid ticker appears proves
+    # per-ticker filtering and the positive population path — not just an all-empty
+    # result (the prior CR3 was empty-in/empty-out and merely duplicated CR4).
+    def _loader_nvda_valid_intc_none(sym):
+        # ai_chips constituents: NVDA valid; everything else (incl. INTC) -> None.
+        return _fake_series("NVDA") if sym == "NVDA" else None
+
+    _r_cr3 = tb.compute_theme_momentum(
+        "ai_chips", bench_returns_map=_bench_map,
+        close_loader=_loader_nvda_valid_intc_none, active_window="1m")
+    _cr3 = _r_cr3.constituent_rs
+    check("TB-CR3 valid-close constituent (NVDA) produces an entry",
+          isinstance(_cr3, dict) and "NVDA" in _cr3, repr(_cr3))
+    check("TB-CR3 None-close constituent (INTC) is excluded",
+          isinstance(_cr3, dict) and "INTC" not in _cr3, repr(_cr3))
+    check("TB-CR3 NVDA entry has >=1 of 1m/3m/active as float",
+          isinstance(_cr3.get("NVDA"), dict)
+          and any(isinstance(_cr3["NVDA"].get(_w), float)
+                  for _w in ("1m", "3m", "active")),
+          repr(_cr3.get("NVDA")))
+
+    # §TB-CR4 — fixture themes (data_source='fixture') never reach enrichment, so
+    # constituent_rs stays at its {} default. An ETF-less theme whose loader
+    # returns None for ALL constituents takes the used==0 fixture early-return.
+    def _loader_all_none(sym):
+        return None
+
+    _r_cr4 = tb.compute_theme_momentum(
+        "ai_chips", bench_returns_map=_bench_map,
+        close_loader=_loader_all_none, active_window="1m")
+    check("TB-CR4 total-miss ETF-less theme is fixture",
+          _r_cr4.data_source == "fixture", _r_cr4.data_source)
+    check("TB-CR4 fixture theme -> constituent_rs == {} (enrichment not reached)",
+          _r_cr4.constituent_rs == {}, repr(_r_cr4.constituent_rs))
+
+    # §TB-CR5 — label lift: CLUSTER_LABELS (8) + ROLE_LABELS (7) now live in
+    # lib.theme_transmission with {en, zh} on every value.
+    try:
+        _tt = importlib.import_module("lib.theme_transmission")
+        _cl = getattr(_tt, "CLUSTER_LABELS", None)
+        _rl = getattr(_tt, "ROLE_LABELS", None)
+        check("TB-CR5 CLUSTER_LABELS importable, 8 keys",
+              isinstance(_cl, dict) and len(_cl) == 8,
+              f"len={len(_cl) if isinstance(_cl, dict) else 'n/a'}")
+        check("TB-CR5 ROLE_LABELS importable, 7 keys",
+              isinstance(_rl, dict) and len(_rl) == 7,
+              f"len={len(_rl) if isinstance(_rl, dict) else 'n/a'}")
+        check("TB-CR5 every CLUSTER_LABELS value has en+zh",
+              isinstance(_cl, dict) and all(
+                  isinstance(v, dict) and "en" in v and "zh" in v
+                  for v in _cl.values()))
+        check("TB-CR5 every ROLE_LABELS value has en+zh",
+              isinstance(_rl, dict) and all(
+                  isinstance(v, dict) and "en" in v and "zh" in v
+                  for v in _rl.values()))
+    except Exception as exc:  # noqa: BLE001
+        check("TB-CR5 label lift importable", False, repr(exc))
+
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 

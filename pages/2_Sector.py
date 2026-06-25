@@ -107,26 +107,8 @@ def _ai_hint() -> None:
 # ══════════════════════════════════════════════════════════════════════════════
 
 # Phase 7C — bilingual labels for transmission cluster / role strings (i18n).
-CLUSTER_LABELS = {
-    "compute_core":        {"en": "Compute Core",       "zh": "核心算力"},
-    "supply_chain":        {"en": "Supply Chain",        "zh": "供应链"},
-    "demand_application":  {"en": "Demand / App Layer",  "zh": "需求/应用层"},
-    "infrastructure":      {"en": "Infrastructure",      "zh": "基础设施"},
-    "defense_security":    {"en": "Defense / Security",  "zh": "安全防御"},
-    "physical_buildout":   {"en": "Physical Build-out",  "zh": "实体基建"},
-    "endpoint_diffusion":  {"en": "Endpoint Diffusion",  "zh": "终端普及"},
-    "adjacent_cycle":      {"en": "Adjacent Cycle",      "zh": "关联赛道"},
-}
-
-ROLE_LABELS = {
-    "leader":                        {"en": "Leader",     "zh": "主导"},
-    "second_derivative_beneficiary": {"en": "2nd Wave",   "zh": "二阶受益"},
-    "supplier":                      {"en": "Supplier",   "zh": "供应商"},
-    "platform":                      {"en": "Platform",   "zh": "平台"},
-    "speculative":                   {"en": "Speculative","zh": "投机"},
-    "laggard":                       {"en": "Laggard",    "zh": "落后"},
-    "unknown":                       {"en": "Unassessed", "zh": "未评估"},
-}
+# Lifted to lib/theme_transmission.py (single source of truth); imported lazily
+# inside the render functions below to preserve this page's lazy-import pattern.
 
 
 def _theme_ret_cell(v, dark: bool) -> str:
@@ -167,7 +149,9 @@ def _render_theme_transmission(theme_key: str, lang: str) -> None:
     distribution of its constituents. Fail-closed: any error renders nothing so
     the rest of the expander is unaffected."""
     try:
-        from lib.theme_transmission import get_theme_transmission_summary
+        from lib.theme_transmission import (
+            CLUSTER_LABELS, ROLE_LABELS, get_theme_transmission_summary,
+        )
         from theme_baskets import THEME_BASKETS as _TB
         s = get_theme_transmission_summary(theme_key)
     except Exception:  # noqa: BLE001 — fail-closed; omit the transmission section
@@ -215,6 +199,9 @@ def _render_market_themes(lang: str, dark: bool) -> None:
         THEME_BASKETS, compute_all_themes,
         send_top_theme_to_scanner, send_all_themes_to_scanner,
     )
+    # Bilingual labels (single source of truth in lib.theme_transmission). Bound
+    # as locals here so the nested card renderers below resolve them by closure.
+    from lib.theme_transmission import CLUSTER_LABELS, ROLE_LABELS
 
     st.subheader(t("theme_tab"))
     st.caption(t("theme_subtitle"))
