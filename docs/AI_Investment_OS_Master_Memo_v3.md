@@ -1,9 +1,9 @@
 # AI Investment OS — Master Architecture, Roadmap, and Project Memory Memo
 
-**Version:** Master Memo v3 (2026-06-21)
+**Version:** Master Memo v3 (2026-06-21; revised 2026-06-24)
 **Supersedes:** Master Memo v2 (2026-06-17, baseline `79433d5`).
 **Purpose:** Cross-session migration, architecture preservation, roadmap alignment, and phase-planning baseline.
-**Scope:** Consolidates completed work through **Phase 8B — MacroRegimeAgent Production Implementation** and its post-merge fixes (`main @ a19b862`). Records the Phase 8 architectural realignment (World 1 ↔ World 2 activation, the agent map, the PM layer, the confidence framework, and the new alternative-data sources).
+**Scope:** Consolidates completed work through **Phase 8B — SectorRotationAgent** (`main @ 1e389549b`) — the fourth production foundation agent. Records the Phase 8 architectural realignment (World 1 ↔ World 2 activation, the agent map, the PM layer, the confidence framework, and the new alternative-data sources). The 2026-06-24 revision aligns the foundation-agent roster, phase numbering, and baseline with `README.md` and `PROJECT_STATE.md` after MoneyFlowAgent / MarketStructureAgent / SectorRotationAgent shipped.
 **Status convention:** `README.md` and the live phase docs (`docs/ai\_dev\_state/PROJECT\_STATE.md`, `CURRENT\_TASK.md`) are the current authoritative sources. This memo is **P1 context** — it explains and records, but yields to the live docs on any conflict.
 
 > \*\*Disclaimer:\*\* This project is a research and decision-support system. It does not provide investment advice, does not place orders, and must remain review-only unless a future phase explicitly changes the scope under separate safety review.
@@ -31,7 +31,7 @@ This memo solves the project's recurring context-drift problem. Use it as:
 
 ### 0.2 Supersession Notes
 
-* Anything in v1/v2 that contradicts v3 is stale. v2's baseline was `79433d5` (Phase 7C). The current baseline is `a19b862`.
+* Anything in v1/v2 that contradicts v3 is stale. v2's baseline was `79433d5` (Phase 7C). The current baseline is `1e389549b` (Phase 8B SectorRotationAgent docs closeout; last feature merge `fbf0cc41d`). *(Historical: the original v3 was cut at `a19b862`, the MacroRegimeAgent-production baseline.)*
 * v2 framed the system as an "Investment OS / decision-support stack." v3 keeps that, but adds the **Phase 8 realignment**: the long-term shape is an **AI Fund workflow** — foundation agents → a horizon-aware PM layer → a MasterPM — with the Streamlit app as the **AI-PM reporting surface**, not the decision tool.
 * Phases 6A–7C, Valuation Refactor v1, Anchor Intelligence v2–v2.5, Thesis Ingestion MVP, Legacy Red Suite Archival: all closed and merged (see v2 + PROJECT\_STATE.md).
 
@@ -95,7 +95,7 @@ These are enforced by code, tests, and review. New phases must not weaken them.
 
 ## 3\. Agent Map (current confirmed state)
 
-The agent map is the Phase-8 target shape. **Only MacroRegimeAgent is implemented; MoneyFlowAgent is next.** The remaining foundation agents are the **planned wrapping targets** — each wraps an existing deterministic World-1 producer. Their exact names/scoping are confirmed at each agent's STEP 0 (the names below are provisional and map 1:1 to the live module).
+The agent map is the Phase-8 target shape. **Four foundation agents are implemented (MacroRegimeAgent, MoneyFlowAgent, MarketStructureAgent, SectorRotationAgent); ThemeIntelligenceAgent is next.** The remaining foundation agents are **planned wrapping targets** — each wraps an existing deterministic World-1 producer. The roster below is the **canonical target roster** (aligned with `README.md`); a few provisional names from earlier drafts (MarketInternalsAgent / RotationAgent / RelativeStrengthAgent / CandidateAgent / OpportunityAgent / ValuationAgent / TechnicalAgent / ThesisAgent / AnchorHistoryAgent) have been reconciled into it — some of those (relative_strength, opportunity_ranker, thesis_monitor, anchor_migration) are **deterministic inputs** to a canonical agent, not standalone agents.
 
 ### 3.1 Data layer
 
@@ -106,21 +106,21 @@ The agent map is the Phase-8 target shape. **Only MacroRegimeAgent is implemente
 
 ### 3.2 Foundation agents (roster mapped to deterministic producers)
 
-|#|Agent (provisional)|Deterministic input (code computes)|LLM synthesizes|Status|
-|-|-|-|-|-|
-|1|**MacroRegimeAgent**|`classify\_regime` (regime, votes, data\_coverage) + snapshot regime history; 3 confidences|regime implications for positioning across 3 horizons|✅ **built** (`eabf0c2d` + fixes)|
-|2|**MoneyFlowAgent**|`gex\_dex` (GEX/DEX/walls/squeeze) from Massive + `compute\_dark\_pool\_signal` from Quiver|dealer-positioning \& flow implications; squeeze/pin context|⏳ **next** (STEP 0)|
-|3|MarketInternalsAgent|`market\_internals` fragility components + level|deterioration/health read, tighten-only context|📋 planned|
-|4|RotationAgent|`rotation` + `theme\_baskets` + `theme\_transmission` (stage, breadth, wave)|which themes/waves capital is rotating through|📋 planned|
-|5|RelativeStrengthAgent|`relative\_strength` multi-window excess vs SPY/QQQ|leadership/laggard read per horizon|📋 planned|
-|6|CandidateAgent|`candidate\_generator` + `signal\_engine` dual-track|candidate-universe framing|📋 planned|
-|7|OpportunityAgent|`opportunity\_ranker` (3-horizon scores/status)|opportunity-queue narrative|📋 planned|
-|8|ValuationAgent|`equity\_valuation`/`valuation\_router`/`valuation\_diagnosis`|valuation-role implications (no numbers)|📋 planned|
-|9|TechnicalAgent|`technical` indicators + S/R|entry-timing/risk context|📋 planned|
-|10|ThesisAgent|`thesis\_monitor` + thesis card library|thesis intact vs broken; what changed|📋 planned|
-|11|AnchorHistoryAgent|`anchor\_migration` (direction/velocity/consistency)|anchor-migration watch note|📋 planned|
+|#|Group|Agent (canonical)|Deterministic input (code computes)|LLM synthesizes|Status|
+|-|-|-|-|-|-|
+|1|Market env|**MacroRegimeAgent**|`classify\_regime` (regime, votes, data\_coverage) + snapshot regime history; 3 confidences|regime implications for positioning across 3 horizons|✅ **built** (`eabf0c2d` + fixes)|
+|2|Market env|**MarketStructureAgent**|`market\_internals` fragility reading (injected from Cockpit Step 4; no second compute)|deterioration/health read, tighten-only context|✅ **built** (`8792343f9`)|
+|3|Market env|**MoneyFlowAgent**|`gex\_dex` (GEX/DEX/walls/squeeze) from Massive + `compute\_dark\_pool\_signal` from Quiver|dealer-positioning \& flow implications; squeeze/pin context|✅ **built** (`760f356a3`)|
+|4|Opportunity|**SectorRotationAgent**|`theme\_baskets` + `theme\_transmission` + full offense/defense (O/D) reading|which themes/waves capital is rotating through|✅ **built** (`fbf0cc41d`)|
+|5|Opportunity|**ThemeIntelligenceAgent**|`theme\_transmission` (transmission order, cluster, per-ticker chain role)|theme-wave / capital-transmission narrative|⏳ **next** (STEP 0)|
+|6|Opportunity|**CandidateScreeningAgent**|`opportunity\_ranker` (3-horizon scores/status) + `candidate\_generator` / `signal\_engine` dual-track|candidate-universe / opportunity-queue framing|📋 planned|
+|7|Stock research|**StockResearchAgent**|`thesis\_monitor` + thesis card library + equity-research artifacts|business/thesis read; intact vs broken; what changed|📋 planned|
+|8|Stock research|**ValuationDebateAgent**|`equity\_valuation`/`valuation\_router`/`valuation\_diagnosis` + `anchor\_migration` + reverse DCF (Phase 8D)|valuation-role implications, adversarial valuation (no numbers)|📋 planned (Phase 8D)|
+|9|Stock research|**TechnicalEntryAgent**|`technical` indicators + S/R + `order\_advisor` entry strategy|entry-timing / risk context|📋 planned|
+|10|Stock research|**SectorResearchAgent**|sector research (macro/policy/supply-chain/cycle context)|sector positioning / cycle read|📋 planned|
+|11|Risk control|**RiskOverlayAgent**|portfolio / position-sizing / fragility risk overlay|portfolio-level risk caution|📋 planned|
 
-> Caveat: the roster is the \*\*confirmed architecture\*\* ("\~11 foundation agents, one per signal domain"), but only rows 1–2 are committed work. Rows 3–11 are wrapping targets; their names and exact scoping are decided at each agent's STEP 0, not here.
+> Caveat: this is the **canonical target roster** (11 foundation agents across market-environment / opportunity-discovery / stock-research / risk-control). Rows 1–4 are committed, shipped work; row 5 is the next STEP 0; rows 6–11 are wrapping targets whose exact confidence formulas and scoping are decided at each agent's STEP 0, not here. Deterministic producers such as `relative\_strength`, `opportunity\_ranker`, `thesis\_monitor`, and `anchor\_migration` are **evidence inputs** to the agents above, not standalone agents.
 
 ### 3.3 PM layer
 
@@ -135,7 +135,7 @@ Foundation agents already emit **three findings (SHORT / MID / LONG)** with thre
 
 ### 3.4 UI layer
 
-The Investment Cockpit is the AI-PM reporting surface. MacroRegimeAgent is wired in **additively**: after the existing `classify\_regime` step, a key-gated, fail-closed hook runs the agent and stores the result under `st.session\_state\["macro\_regime\_agent\_output"]` — the existing `macro\_regime\_result` state and every downstream consumer are untouched. PM-layer reporting UI is a future phase.
+The Investment Cockpit is the AI-PM reporting surface. **All four shipped foundation agents are wired in additively** via `_run_refresh`: each is a key-gated (`_has\_llm\_api\_key()`), fail-closed hook that reuses already-computed deterministic signals (no second fetch/compute) and stores its result under a dedicated session key — `macro\_regime\_agent\_output` (Step 1), `money\_flow\_agent\_output` (Step 1, after the macro hook), `market\_structure\_agent\_output` (after Step 4, reusing the fragility reading), `sector\_rotation\_agent\_output` (after the MarketStructure hook, reusing the themes list + O/D reading). The existing `macro\_regime\_result` state and every downstream consumer are untouched; no agent aborts the refresh. PM-layer reporting UI is a future phase.
 
 \---
 
@@ -151,13 +151,13 @@ The app currently has 11 pages. Each page is accessible from the sidebar. The UI
 | 4 | `4_Equity.py` | Equity Research (个股研究) | Company deep-dive in four tabs: moat/peers/valuation-diagnosis, financials (DCF/relative), price & volume, news & sentiment. | `equity_valuation` / `valuation_router` / `valuation_diagnosis` / `financial_tab` / `pv_tab`; processed signals + LLM research. No World-2 agent. |
 | 5 | `5_Financial.py` | Financials → Equity | Redirect stub — Financial analysis was merged into Page 4 as a tab; the file is kept to preserve sidebar structure. | Static / no agent. |
 | 6 | `6_PriceVolume.py` | Price & Volume → Equity | Redirect stub — Price & Volume was merged into Page 4 as a tab; the file is kept to preserve sidebar structure. | Static / no agent. |
-| 7 | `7_Investment_Cockpit.py` | Investment Cockpit | ⭐ Main entry. One-click refresh aggregates macro regime, market-internals fragility, theme rotation, and the opportunity queue (20 candidates × 3 horizons); writes the daily snapshot. | **MacroRegimeAgent** (additive, key-gated hook → `macro_regime_agent_output`) + `macro_regime` / `market_internals` / `opportunity_ranker` / `theme_baskets` processed signals. |
+| 7 | `7_Investment_Cockpit.py` | Investment Cockpit | ⭐ Main entry. One-click refresh aggregates macro regime, market-internals fragility, theme rotation, and the opportunity queue (20 candidates × 3 horizons); writes the daily snapshot. | **MacroRegimeAgent · MoneyFlowAgent · MarketStructureAgent · SectorRotationAgent** (four additive, key-gated hooks → `*_agent_output`) + `macro_regime` / `market_internals` / `opportunity_ranker` / `theme_baskets` processed signals. |
 | 8 | `8_Macro_Dashboard.py` | Macro Dashboard | Live macro-regime classification + Market Internals workbench (fragility trend / components) + liquidity / rates / inflation / credit / volatility / breadth tabs. | `macro_data` / `macro_regime` / `market_internals`; processed signals only. |
 | 9 | `9_Trading_Desk.py` | Trading Desk | Holdings thesis monitor, code-computed entry/exit levels (entry v4) with an LLM narrative, opportunity watch. Review-only. | `holdings` / `thesis_monitor` / `order_advisor` / `equity_valuation`; processed signals + LLM narrative. No World-2 agent. |
 | 10 | `10_Thesis_Library.py` | Thesis Library | Curated external research → one-LLM-call-per-argument structured thesis cards → browse / manage. Isolated from scoring / ranking / snapshot / anchor. | `thesis_ingestion` (extraction LLM; isolated). Not a foundation agent. |
 | 11 | `11_Audit_Review.py` | Audit Review | Read-only review of the daily snapshot audit trail: coverage, fragility-level history, per-ticker status timeline, "Actionable Now" follow-through. | `audit_query` (read-only snapshot reads); processed signals only. No agent. |
 
-> Only the Investment Cockpit (page 7) currently consumes a World-2 agent output (MacroRegimeAgent). Every other page consumes deterministic processed signals and/or page-local LLM calls. As the foundation-agent roster (§3.2) fills in, more pages move from "processed signals only" to "agent outputs."
+> Only the Investment Cockpit (page 7) currently consumes World-2 agent outputs — now **four** of them (MacroRegimeAgent, MoneyFlowAgent, MarketStructureAgent, SectorRotationAgent). Every other page consumes deterministic processed signals and/or page-local LLM calls. As the foundation-agent roster (§3.2) fills in, more pages move from "processed signals only" to "agent outputs."
 
 \---
 
@@ -195,9 +195,9 @@ The two ToolResults persisted per run are `classify\_regime` (the regime signals
 * **Excluded: Unusual Whales API (\~$125/mo)** — unnecessary for the GEX strategy; `gex\_dex.py` computes dealer exposure from the Massive chain directly.
 * **Free-tier caveat:** Massive free tier has **no Greeks/OI** → live GEX/DEX needs Starter; the layer degrades gracefully (Greeks `None`, `greeks\_unavailable: free tier`) until then. Quiver `prev\_close` field names still need live-API confirmation (parsers read defensively, fail-closed 50/50 when absent).
 
-### 6.3 MoneyFlowAgent data strategy (next phase)
+### 6.3 MoneyFlowAgent data strategy (shipped — `760f356a3`)
 
-GEX / DEX / OI-walls / gamma-squeeze monitor from **Massive** (`gex\_dex.compute\_gex\_dex`, with `prior\_result` DEX-trend for condition C) + dark-pool buy/sell pressure from **Quiver** (`compute\_dark\_pool\_signal`). Both are pure deterministic aggregators; the agent wraps them as evidence and asks the LLM for the flow/positioning implication.
+GEX / DEX / OI-walls / gamma-squeeze monitor from **Massive** (`gex\_dex.compute\_gex\_dex`, with `prior\_result` DEX-trend for condition C) + dark-pool buy/sell pressure from **Quiver** (`compute\_dark\_pool\_signal`). Both are pure deterministic aggregators; the agent wraps them as evidence and asks the LLM for the flow/positioning implication. MoneyFlowAgent is now the second production foundation agent (three confidences: short = signals-agree count / 3, mid = strength × direction-valid, long = 0.0).
 
 \---
 
@@ -241,22 +241,49 @@ First foundation agent upgraded smoke→production:
   * `a19b862` — **`\_repair\_llm\_response()`** structural repair layer in `agent\_runner.py` (wraps flat `text`/`evidence` into `findings`, injects `agent\_name`/`run\_id`, coerces float `confidence`), wired between `\_extract\_json\_obj` and `parse\_and\_validate\_agent\_result`.
 * Tests: §8B-M1–M11 **24/24** (MacroRegimeAgent suite) + agent framework suite **15/15** (§8A.1–§8A.15, incl. §8A.12–14 repair-unit + §8A.15 end-to-end). Phase 6A regression 337/337.
 
+### 7.5 Step 3 Narrative Disk Cache + `\_meta` extension + Cockpit cold-start hydration (merged `a2e43cd3` / `ffe9e1e2` / `3eb4a8912`)
+
+Three small infrastructure ships between the MacroRegimeAgent production merge and the next agents:
+
+* **Narrative disk cache** (`a2e43cd3`) — `llm\_narrative\_match` results persist at `data/narrative\_cache/<TICKER>/<regime>\_<fp>.json` (prompt-aligned fingerprint, TTL 24h, atomic write, only `data\_source="live"` persisted); the `@st.cache\_data` layer stays the hot path. 27 tests.
+* **`\_meta` extension** (`ffe9e1e2`) — three deterministic `classify\_regime` fields (`key\_signals` / `opportunity\_posture` / `confidence`) persisted into the daily snapshot `\_meta` block, with a pre-`try` collision guard; `MetaRecord` gains the three `.get()`-defaulted fields. 7 parity checks. The prerequisite for full Section-A cold-start hydration.
+* **Cockpit cold-start hydration** (`3eb4a8912`) — `lib/cockpit\_hydration.py::hydrate\_cockpit\_from\_snapshot` re-reads the latest daily snapshot into Section A + Section C on restart with empty `session\_state` (runs at most once, atomic, fail-closed, no `st.rerun()`); `macro\_regime\_agent\_output` (valid\_until=EOD) and Sections B/D/E are deliberately not hydrated. 10 tests.
+
+### 7.6 Phase 8B — MoneyFlowAgent (merged `760f356a3`)
+
+Second production foundation agent. Consumes GEX/DEX (Massive) + dark pool (Quiver) processed signals. Three deterministic confidences before the LLM (short = signals-agree count / 3, mid = strength-map × direction-valid, long = 0.0). `\_load\_prior\_gex\_dex\_result` validates an 11-key `\_REQUIRED\_PRIOR\_FIELDS` frozenset and is fail-closed for squeeze condition C. A neutral GEX environment must still name an options-structure strategy. Additive Cockpit hook (`money\_flow\_agent\_output`, `ticker="SPY"`). 34 tests; Codex 2 passes.
+
+### 7.7 Phase 8B — MarketStructureAgent (merged `8792343f9`)
+
+Third production foundation agent. Wraps `market\_internals` — the `FragilityReading` is **injected from Cockpit Step 4** (no second compute, no vintage divergence). Three confidences (short = coverage × clarity over the 5 core components, with `leading\_theme\_breadth\_narrowing` excluded as permanently scaffolded; mid = trailing elevated+ run via a saturating curve, `vintage\_mismatch`/snapshot fallback → `min(interpolated, 0.1)` **cap not floor**; long = 0.0). `signal\_basis` three-way classifier; tighten-only prohibitions written into the prompt. 44 tests; Codex 2 passes.
+
+### 7.8 FragilityReading O/D extension + Phase 8B — SectorRotationAgent (merged `bb77ee28e` / `fbf0cc41d`)
+
+* **FragilityReading O/D extension** (`bb77ee28e`) — surfaces the full offense/defense reading (`avg\_diff` / `by\_window` / `n\_windows` / `confirming\_windows`) onto `FragilityReading.offense\_defense` (two-line dataclass change; `fragility\_snapshot()` untouched). Enables SectorRotationAgent to consume the O/D data without recomputing. 7B suite 229/229.
+* **SectorRotationAgent** (`fbf0cc41d`) — fourth production foundation agent. Wraps `theme\_baskets` + `theme\_transmission` + the injected full O/D reading. Three confidences (short = theme\_coverage × short\_clarity, mid = theme\_coverage × dispersion × wave\_clear, long = 0.0). `signal\_basis` three-way includes `no\_clear\_leadership` (a neutral / wait state, never presented as directional). TR1 carries the full O/D dict, proving the extension is the source. Additive Cockpit hook (`sector\_rotation\_agent\_output`). 34 tests; Codex APPROVED (1 pass, 0 findings).
+
 \---
 
 ## 8\. Current Baseline \& Next Steps
 
 ```
-Baseline:   main @ a19b862  (fix: structural repair layer for flat LLM AgentResult)
+Baseline:   main @ 1e389549b  (Phase 8B SectorRotationAgent docs closeout;
+            last feature merge fbf0cc41d)
 Test state: 69 test\_reliability\_\* parity suites (GREEN)
             + agent framework suite 15/15 (§8A.1–§8A.15)
             + Phase 8B MacroRegimeAgent 24/24 (§8B-M1–M11)
+            + Phase 8B MoneyFlowAgent 34/34 (§8B-MF\*)
+            + Phase 8B MarketStructureAgent 44/44 (§8B-MS\*)
+            + Phase 8B SectorRotationAgent 34/34 (§8B-SR\*)
             + Phase 8B-0 24 (Quiver 6 / Massive 5 / GEX-DEX 13)
-Built agents: MacroRegimeAgent (production)
+            + 7B rotation 229/229 (after the O/D extension)
+Built agents: MacroRegimeAgent · MoneyFlowAgent · MarketStructureAgent ·
+              SectorRotationAgent (all production)
 ```
 
-**Next: Phase 8B — MoneyFlowAgent (STEP 0 first).** Consumes the Phase 8B-0 GEX/DEX (Massive) + dark-pool (Quiver) processed signals, following the MacroRegimeAgent pattern exactly: deterministic signals → two+ ToolResults → constrained prompt (with REQUIRED OUTPUT FORMAT) → `\_repair\_llm\_response` → validated `AgentOutput`; three horizon findings; agent-specific confidence formulas; additive Cockpit hook. STEP 0 must map the data/access matrix and decide the confidence definitions before coding.
+**Next: Phase 8B — ThemeIntelligenceAgent (STEP 0 first).** Wraps `theme\_transmission` (transmission order, cluster membership, per-ticker chain role) into a horizon-aware, evidence-backed `AgentOutput`, following the established pattern exactly: deterministic signals → ToolResults → constrained prompt (with REQUIRED OUTPUT FORMAT) → `\_repair\_llm\_response` → validated `AgentOutput`; three horizon findings; agent-specific confidence formulas; additive Cockpit hook. STEP 0 must map the `theme\_transmission` snapshot/query schema and decide the confidence definitions before coding. After it: **CandidateScreeningAgent**, then the stock-research group (**StockResearchAgent**, **TechnicalEntryAgent**, **SectorResearchAgent**) and **RiskOverlayAgent**.
 
-After the foundation-agent roster fills in: the **PM layer** (ShortTermPM / MidTermPM / LongTermPM) and **MasterPM**, then the **Evidence Infrastructure / debate** phases (reverse DCF, valuation/macro debate) and the human-in-the-loop **Judgment Console**.
+The canonical phase sequence after the foundation-agent roster fills in: **Phase 8C — PM layer** (ShortTermPM / MidTermPM / LongTermPM → MasterPM); **Phase 8D — ValuationDebateAgent / reverse DCF / adversarial valuation & evidence infrastructure**; **Phase 9 — Judgment Console** (human review/confirmation, judgment provenance, override, audit trail — downstream gating policy still an open architecture decision). Later: **Phase 7D Block B** (judgment performance, calibration, PM historical weighting once outputs accumulate) and **Phase 6D** (holdings-side review).
 
 \---
 
@@ -331,12 +358,12 @@ Every closeout syncs `PROJECT\_STATE.md`, `CURRENT\_TASK.md`, the phase doc, and
 
 ### 10.3 Open design debt
 
-* **Split-brain still partial.** Only MacroRegimeAgent is wired; the live pages still consume deterministic producers directly. Activation proceeds agent-by-agent.
+* **Split-brain still partial.** Four foundation agents are wired (MacroRegime / MoneyFlow / MarketStructure / SectorRotation, all into the Cockpit); the live pages still consume deterministic producers directly. Activation proceeds agent-by-agent.
 * **`llm\_orchestrator.py` lenient JSON scanner** (`\_first\_obj`) shares the silent-inner-object risk that bit the thesis extractor; guarded only by callers' per-key checks. Latent, not yet fixed.
 * **Calibration debt** — fragility thresholds after more snapshots; vol\_shrink/weak-bounce definitions; valuation\_role + peer-match edge cases.
 * **No PM layer yet** — foundation agents emit per-horizon findings, but ShortTermPM/MidTermPM/LongTermPM/MasterPM are unbuilt.
 
-> The authoritative, full collaboration-lessons ledger lives in the live phase docs / ROADMAP; this section reproduces what is current as of `a19b862`. On any conflict, the live docs win.
+> The authoritative, full collaboration-lessons ledger lives in the live phase docs / ROADMAP; this section reproduces what is current as of `1e389549b`. On any conflict, the live docs win.
 
 \---
 
@@ -349,21 +376,26 @@ Authoritative sources: latest README.md + docs/ai\_dev\_state/PROJECT\_STATE.md 
 This memo (Master Memo v3, 2026-06-21) is supplementary P1 context; it yields to the live docs on conflict.
 
 Current baseline:
-- main @ a19b862 (Phase 8B MacroRegimeAgent production + repair-layer/judgment fixes)
-- 69 parity suites + agent framework 15/15 + Phase 8B 24/24 + Phase 8B-0 24
+- main @ 1e389549b (Phase 8B SectorRotationAgent docs closeout; last feature merge fbf0cc41d)
+- 69 parity suites + agent framework 15/15 + Phase 8B MacroRegime 24 / MoneyFlow 34 /
+  MarketStructure 44 / SectorRotation 34 + Phase 8B-0 24 + 7B rotation 229
 
 Architecture (Phase 8 realignment):
 - Two worlds: World 1 (live Streamlit deterministic producers) + World 2 (reliability/evidence stack).
   Phase 8 activates World 2 via lib/agent\_framework/ connective tissue — wrap deterministic
   outputs as evidence → constrained LLM call → validate → AgentOutput. Activate, don't rebuild.
-- Pipeline: data layer → \~11 foundation agents (one per signal domain) → PM layer
-  (ShortTermPM/MidTermPM/LongTermPM) → MasterPM → UI (AI-PM reporting + human confirmation).
+- Pipeline: data layer → 11 foundation agents (market-env / opportunity / stock-research / risk) →
+  PM layer (ShortTermPM/MidTermPM/LongTermPM) → MasterPM → UI (AI-PM reporting + human confirmation).
+- Canonical roster: MacroRegime, MarketStructure, MoneyFlow (market env); SectorRotation,
+  ThemeIntelligence, CandidateScreening (opportunity); StockResearch, ValuationDebate,
+  TechnicalEntry, SectorResearch (stock research); RiskOverlay (risk).
 - LLM boundary: code computes ALL numbers; LLM synthesizes implications and emits NO numeric value.
 
-Built so far:
-- MacroRegimeAgent (production): 3 deterministic confidences (short=vote agreement,
-  mid=consecutive same-regime days, long=data\_coverage\*short), two ToolResults, three
-  horizon findings, additive key-gated Cockpit hook.
+Built so far (4 production foundation agents, all with additive key-gated Cockpit hooks):
+- MacroRegimeAgent: short=vote agreement, mid=consecutive same-regime days, long=data\_coverage\*short.
+- MoneyFlowAgent: GEX/DEX (Massive) + dark pool (Quiver); short=signals-agree/3, mid=strength×dir, long=0.
+- MarketStructureAgent: injected fragility reading; short=coverage×clarity, mid=elevated-run cap, long=0.
+- SectorRotationAgent: theme\_baskets + theme\_transmission + full O/D; short/mid coverage-weighted, long=0.
 - Data sources: + Quiver Quantitative (Hobbyist) + Massive Options (Starter); Unusual Whales excluded.
 
 Non-negotiables:
@@ -374,8 +406,8 @@ Non-negotiables:
 - Append-only audit; tighten-only internals; exclude-not-down-weight; never fabricate a number.
 
 Next task:
-- Phase 8B — MoneyFlowAgent (STEP 0 first): consume Phase 8B-0 GEX/DEX (Massive) + dark pool
-  (Quiver); same pattern as MacroRegimeAgent; agent-specific confidences.
+- Phase 8B — ThemeIntelligenceAgent (STEP 0 first): wrap theme\_transmission (transmission order /
+  cluster / per-ticker chain role); same pattern as the four shipped agents; agent-specific confidences.
 
 Collaboration:
 - Chinese for architecture; English single-code-block prompts (4-space inner JSON, no fences).

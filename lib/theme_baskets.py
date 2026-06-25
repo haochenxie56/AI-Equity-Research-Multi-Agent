@@ -234,6 +234,12 @@ class ThemeMomentumResult:
     breadth_beat_pct: Optional[float] = None       # % constituents beating bench
     breadth_above_sma20_pct: Optional[float] = None  # % constituents above SMA20
     n_constituents_breadth: int = 0
+    # Per-constituent EXCESS vs benchmark (pp/frac, rounded 4dp) by window:
+    #   {ticker: {"1m": .., "3m": .., "active": ..}}. Only present windows with a
+    #   computable value are stored (None filtered). Populated by
+    #   _enrich_excess_stage_breadth (no new fetch — reuses constituent_closes);
+    #   fixture-fallback themes never reach enrichment so this stays {}.
+    constituent_rs: dict = field(default_factory=dict)
 
 
 # ── Deterministic fixture fallback (offline / fail-closed) ────────────────────
@@ -436,6 +442,34 @@ def _enrich_excess_stage_breadth(result: ThemeMomentumResult, cfg: dict,
             constituent_closes[tk] = loader(tk)
         except Exception:  # noqa: BLE001 - fail-closed per ticker
             constituent_closes[tk] = None
+
+    # Per-constituent EXCESS vs benchmark for "1m", "3m", and the active window.
+    # Reuses the constituent_closes already loaded above — NO new fetch. None
+    # values are filtered out, so only present windows carry a float.
+    _const_rs: dict = {}
+    for _tk, _close in constituent_closes.items():
+        if _close is None:
+            continue
+        _ticker_excess: dict = {}
+        for _w in ("1m", "3m"):
+            _days = THEME_WINDOW_DAYS.get(_w)
+            _bench = bench_win.get(_w)
+            if _days is not None and _bench is not None:
+                _raw = _pct_return(_close, _days)
+                if _raw is not None:
+                    _ticker_excess[_w] = round(_raw - _bench, 4)
+        # Active window stored under its own "active" key (may duplicate the
+        # value of "1m"/"3m" when active_window matches — kept separate by design).
+        _a_days = THEME_WINDOW_DAYS.get(active_window)
+        _a_bench = bench_win.get(active_window)
+        if _a_days is not None and _a_bench is not None:
+            _a_raw = _pct_return(_close, _a_days)
+            if _a_raw is not None:
+                _ticker_excess["active"] = round(_a_raw - _a_bench, 4)
+        if _ticker_excess:
+            _const_rs[_tk] = _ticker_excess
+    result.constituent_rs = _const_rs
+
     beat, above, n = compute_theme_breadth(
         constituent_closes, bench_win.get(active_window), active_window)
     result.breadth_beat_pct = beat
