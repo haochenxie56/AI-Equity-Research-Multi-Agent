@@ -1,5 +1,58 @@
 # AI Investment Agent — Project State
 
+## Phase 8B ThemeIntelligenceAgent (COMPLETE — merged to `main` via `--no-ff` @ `5ecfb7875`, feature commit `7b86dcaba`, 2026-06-26)
+
+**Fifth production foundation agent.** Distinct from SectorRotationAgent: TIA's
+lane is (a) **per-ticker role** within each top-momentum theme — the live
+`constituent_rs` active-window excess ranking crossed with the seed
+transmission role (`leader` / `second_derivative_beneficiary` / `supplier` /
+`laggard`), surfacing divergence (a seed-leader showing laggard RS = a
+deterioration signal) — and (b) **cross-wave asymmetry** — themes that are
+structurally early (`wave_order` in {1, 2} **AND** `stage="rotating_in"`) and
+therefore un-crowded. The asymmetry angle is explicitly NOT SectorRotationAgent's
+"lagging WITHIN the active wave"; the prompt prohibits conflating them.
+
+- **`lib/agents/theme_intelligence_agent.py` (new):** `_EARLY_STAGES =
+  frozenset({"rotating_in"})` — the empty string (`""` = data missing) is
+  EXCLUDED by design, so a stage-less theme never counts as early.
+  `_EARLY_WAVE_ORDERS = frozenset({1, 2})`. `_rank_theme_constituents` filters
+  `None` active excess, sorts descending, crosses each ticker with
+  `get_ticker_role`, never raises, returns `[]` on empty/missing
+  `constituent_rs` (fixture-fallback themes always rank to `[]`).
+  `short_confidence = theme_coverage × role_resolution` where the
+  role_resolution DENOMINATOR is ALL constituents across live themes (honest
+  coverage — NOT just the RS-populated ones). `mid_confidence = theme_coverage ×
+  asymmetry_strength` (wave {1,2} AND rotating_in only). `long_confidence = 0.0`
+  (defers to StockResearchAgent). `signal_basis` three-way classifier:
+  `no_role_signal` means the seed map is sparse, NOT that themes are weak — it
+  is prohibited from directional/bearish framing in the prompt. THREE
+  ToolResults: `theme_intelligence_roles` (top themes with `ranked_constituents`
+  + upstream/downstream propagation) / `theme_intelligence_asymmetry`
+  (`asymmetric_themes` sorted wave_order asc then momentum desc, + `late_stage_themes`
+  contrast set + active-wave context) / `theme_intelligence_confidence`
+  (the three scores + their decomposition). `REQUIRED OUTPUT FORMAT` block is
+  4-space-indented, no backtick fences. All `lib.reliability` /
+  `lib.agent_framework` / `lib.theme_transmission` imports LAZY (verified: zero
+  leaked at module load); outer fail-closed guard; `valid_until =
+  end_of_today_iso()`; `approved_for_execution` never `True`.
+- **`pages/7_Investment_Cockpit.py`:** additive hook immediately AFTER the
+  SectorRotationAgent hook (Step 4 `try` block). Key-gated on
+  `_has_llm_api_key()` AND `_themes_list`; passes ONLY `themes=_themes_list`
+  (no `offense_defense` — TIA's lane is role + asymmetry, not O/D); writes only
+  `theme_intelligence_agent_output`; own `try/except`, never aborts the refresh.
+- **`scripts/test_phase_8b_theme_intelligence_agent.py` (new): 39 tests**
+  (§8B-TI1..TI14; LLM/network mocked, real `ThemeMomentumResult` fixtures with
+  `constituent_rs` populated). §8B-TI3 (roles→`unknown`), §8B-TI5
+  (stage→`leading`), §8B-TI13 (sort reversal) confirmed discriminating mutation
+  probes.
+- **Codex APPROVED (1 pass).** P2a (`TYPE_CHECKING` import) approved AS-IS —
+  runtime-safe, standard pattern, matches all other agents. P2b (test
+  module-level imports) approved AS-IS — the lazy-import rule applies to agent
+  modules only, not test scripts.
+- **Regression:** ThemeIntelligence 39/39 · SectorRotation 34/34 ·
+  MarketStructure 44/44 · MoneyFlow 34/34 · MacroRegime 24/24 · AgentFramework
+  15/15 · theme_baskets 157/157 · 7B rotation 229/229.
+
 ## constituent_rs + label lift (COMPLETE — ThemeIntelligenceAgent enabler — merged to `main` via `--no-ff` @ `107e0f09e`, feature commit `626107a5c`, 2026-06-24)
 
 **Three additive changes enabling the upcoming ThemeIntelligenceAgent.**

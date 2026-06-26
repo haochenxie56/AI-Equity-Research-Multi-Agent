@@ -333,7 +333,7 @@ investment-agents/
 │   ├── workflow_state.py / translator.py
 │   ├── reliability/                # 可靠性基础设施（适配器层 / World 2）
 │   ├── agent_framework/            # Phase 8A：AgentOutput / agent_runner（含 _repair_llm_response 扁平响应结构修复层）/ world_adapter（lib.reliability 全惰性导入）
-│   └── agents/                     # 运行时 Foundation Agents（4 个已生产化）：macro_regime_agent —— MacroRegimeAgent（三时间维度置信度 + 投票计数证据）；money_flow_agent —— MoneyFlowAgent（GEX/DEX + 暗池双数据源，三置信度 + prior_result 挤压条件 C）；market_structure_agent —— MarketStructureAgent（注入 FragilityReading，short=coverage×clarity / mid=连续恶化天数 / long=0.0，signal_basis 三值分类器）；sector_rotation_agent —— SectorRotationAgent（theme_baskets + theme_transmission + 完整攻守 O/D，short=coverage×stage_confirmed率 / mid=coverage×动量分散×wave清晰度，signal_basis 三值含 no_clear_leadership）。下一个：ThemeIntelligenceAgent
+│   └── agents/                     # 运行时 Foundation Agents（5 个已生产化）：macro_regime_agent —— MacroRegimeAgent（三时间维度置信度 + 投票计数证据）；money_flow_agent —— MoneyFlowAgent（GEX/DEX + 暗池双数据源，三置信度 + prior_result 挤压条件 C）；market_structure_agent —— MarketStructureAgent（注入 FragilityReading，short=coverage×clarity / mid=连续恶化天数 / long=0.0，signal_basis 三值分类器）；sector_rotation_agent —— SectorRotationAgent（theme_baskets + theme_transmission + 完整攻守 O/D，short=coverage×stage_confirmed率 / mid=coverage×动量分散×wave清晰度，signal_basis 三值含 no_clear_leadership）；theme_intelligence_agent —— ThemeIntelligenceAgent（成分股实时 RS 排名×种子角色 + 跨波次非对称机会 wave {1,2}+rotating_in，short=coverage×role_resolution（全成分股分母）/ mid=coverage×asymmetry_strength / long=0.0，signal_basis 三值含 no_role_signal 非看空）。下一个：CandidateScreeningAgent
 │
 ├── scripts/
 │   ├── test_reliability_*.py       # 69 个可靠性测试套件（数千条断言）
@@ -347,6 +347,8 @@ investment-agents/
 │   ├── test_phase_8b_macro_regime_agent.py  # Phase 8B MacroRegimeAgent §8B-M1–M11（24 项；LLM/网络全 mock，含 Guard A/B 与投票判别）
 │   ├── test_phase_8b_money_flow_agent.py     # Phase 8B MoneyFlowAgent §8B-MF1–MF11（34 项；LLM/网络全 mock，含信号翻转与 agree_count=2 判别）
 │   ├── test_phase_8b_market_structure_agent.py  # Phase 8B MarketStructureAgent §8B-MS1–MS13 + MS6a–6e（44 项；LLM/网络全 mock，含 cap-vs-floor 边界与 coverage 判别）
+│   ├── test_phase_8b_sector_rotation_agent.py  # Phase 8B SectorRotationAgent §8B-SR1–SR14（34 项；LLM/网络全 mock，含 coverage 翻转与 active_order=None 判别）
+│   ├── test_phase_8b_theme_intelligence_agent.py  # Phase 8B ThemeIntelligenceAgent §8B-TI1–TI14（39 项；LLM/网络全 mock，含 roles→unknown / stage→leading / 排序翻转 3 个 mutation probe）
 │   ├── backfill_anchors.py         # 估值锚历史离线回填 CLI（可重算锚 + 披露滞后门控）
 │   ├── migrate_anchor_archive_to_shards.py  # 一次性离线：单文件归档 → 按 ticker 分片
 │   ├── daily_scan.py / fetch_financials.py / run_research.py
@@ -391,6 +393,7 @@ investment-agents/
 | Phase 8B — MarketStructureAgent | ✅ | 注入已算好的 FragilityReading（Step 4 之后，无重复计算）；short=coverage×clarity（5核心组件，永久脚手架组件排除在外）；mid=连续恶化天数饱和曲线（vintage_mismatch→cap 0.1 非 floor）；signal_basis 三值分类器区分信号缺失/数据缺失/有信号；tighten-only 禁令写入 prompt；44 项测试含边界覆盖，Codex 两轮通过 |
 | FragilityReading O/D 扩展 | ✅ | 把完整 offense_defense reading（avg_diff/by_window/n_windows/confirming_windows）透传到 FragilityReading.offense_defense；fragility_snapshot() 不变；mutation probe 确认判别性；229/229，Codex 一轮通过；为 SectorRotationAgent 提供所需数据 |
 | Phase 8B — SectorRotationAgent | ✅ | 主题动量（theme_baskets）+ 传导波次（theme_transmission）+ 完整 O/D reading（avg_diff/confirming_windows）注入；short=coverage×stage_confirmed率；mid=coverage×momentum分散度×wave清晰度；signal_basis 三值含 no_clear_leadership（中性/等待，禁止方向性解读）；34 项测试含 2 个 mutation probe，Codex 一轮通过 |
+| Phase 8B — ThemeIntelligenceAgent | ✅ | 成分股实时 RS 排名×种子角色（leader/2nd-derivative/supplier/laggard）；跨波次非对称机会（wave {1,2} + rotating_in，不含空字符串）；short=coverage×role_resolution（诚实全成分股分母）；mid=coverage×asymmetry_strength；no_role_signal 明确非看空；与 SRA 的波内落后者概念显式区分；39 项测试含 3 个 mutation probe，Codex 一轮通过 |
 | constituent_rs 扩展 + 标签 lift | ✅ | ThemeIntelligenceAgent 前置：`CLUSTER_LABELS`/`ROLE_LABELS` 移入 `lib/theme_transmission.py`（单一事实来源，两个页面删本地 copy，lazy import + closure 经 `co_freevars` 验证）；`ThemeMomentumResult` 加 `constituent_rs` 字段（多窗口成分股超额，`_enrich_excess_stage_breadth` 填充，复用 `constituent_closes`，**零新增网络调用**，存 `{ticker:{"1m","3m","active"}}` 且过滤 None）；ETF 主题统一填充，fixture 主题保持 `{}`；`§TB-CR3` 判别性诚实记录（None 守卫与 `_pct_return` 冗余，真正保护是 `if _ticker_excess`，Exp B1/B2 验证 RED）；157/157，Codex 一轮通过 |
 | Step 3 Narrative Disk Cache | ✅ | LLM narrative 结果磁盘持久化（data/narrative_cache/）；重启后命中跳过 LLM；指纹对齐 prompt 输入（news[:25] + headline + summary[:160]，json.dumps 序列化）；TTL 24h；原子写；27 项测试，Codex 三轮审查通过 |
 | _meta 扩展（key_signals / opportunity_posture / confidence） | ✅ | 三个确定性 classify_regime 字段写入每日快照 _meta 块，为冷启动水化做准备；冲突守卫（ValueError，置于 try 之外确保不被吞掉）；MetaRecord 对应加字段（旧快照容忍缺失）；7 项断言含 mutation probe + 守卫判别性验证，Codex 两轮通过；feature `7a76bcb3`，`--no-ff` 合并 main @ `ffe9e1e2` 并推送 |

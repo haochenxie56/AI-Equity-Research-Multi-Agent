@@ -5,42 +5,30 @@
 > history preserved verbatim). This file keeps only the active phase. The
 > long-form running status remains in `docs/ai_dev_state/PROJECT_STATE.md`.
 
-**Status:** **constituent_rs + label lift: COMPLETE, Codex-APPROVED (1 pass),
-merged to `main` via `--no-ff` @ `107e0f09e` (feature commit `626107a5c`) and
-pushed.** ThemeIntelligenceAgent enabler — three additive changes:
-`CLUSTER_LABELS`/`ROLE_LABELS` lifted into `lib/theme_transmission.py` (single
-source of truth; both page copies deleted, lazy import preserved, closure capture
-verified via `co_freevars`); `ThemeMomentumResult.constituent_rs: dict` added
-(`default_factory=dict`, last field); populated in `_enrich_excess_stage_breadth`
-only (reuses `constituent_closes`, **zero new network**), storing
-`{ticker: {"1m","3m","active"}}` with `None` filtered. ETF themes populate
-uniformly; fixture themes keep `{}`. `§TB-CR3` discrimination honest: the
-`if _close is None` guard is redundant with `_pct_return`; real protection is the
-`if _ticker_excess` conditional (Exp B1/B2 verified RED). **157/157** theme_baskets
-· **34/34** sector_rotation.
+**Status:** **Phase 8B ThemeIntelligenceAgent: COMPLETE, Codex-APPROVED (1 pass),
+merged to `main` via `--no-ff` @ `5ecfb7875` (feature commit `7b86dcaba`) and
+pushed.** Fifth production foundation agent. Distinct from SectorRotationAgent:
+per-ticker role (`constituent_rs` active-window ranking × seed role) +
+cross-wave asymmetry (`wave_order` {1,2} AND `stage="rotating_in"` = structurally
+early, un-crowded). `short = theme_coverage × role_resolution` (all-constituent
+denominator — honest coverage); `mid = theme_coverage × asymmetry_strength`;
+`long = 0.0`. `_EARLY_STAGES = frozenset({"rotating_in"})` excludes `""`.
+`signal_basis` `no_role_signal` = seed map sparse, NOT bearish. TR1
+`ranked_constituents` per top theme; TR2 `asymmetric_themes` + `late_stage_themes`
+contrast. Hook: Step 4, immediately after SectorRotationAgent, `_themes_list`
+only (no `offense_defense`). **39/39** ThemeIntelligence · 3 mutation probes
+(roles→unknown, stage→leading, sort reversal) confirmed. Codex P2a/P2b approved
+AS-IS (TYPE_CHECKING + test-module imports). Phase doc
+`docs/reliability_theme_intelligence_agent.md`.
 
-**Completed:** constituent_rs + label lift (merge `107e0f09e`).
-— All ThemeIntelligenceAgent enablers now complete: `constituent_rs`, label lift,
-the prior `FragilityReading.offense_defense` extension, and the SectorRotationAgent
-pattern to mirror.
+**Completed:** Phase 8B ThemeIntelligenceAgent (merge `5ecfb7875`).
 
-**Next:** **Phase 8B — ThemeIntelligenceAgent**
-— STEP 0 recon is COMPLETE (see `docs/reliability_theme_constituent_rs.md` and the
-prior recon). Proceed to the implementation prompt. Design lines:
-- **SHORT finding:** intra-theme ticker ranking via `constituent_rs` ×
-  `get_ticker_role(theme, ticker)` — names which live-strongest tickers carry each
-  confirmed-leading theme by chain role (the role × live-strength join no existing
-  agent/page performs).
-- **MID finding:** wave / cluster asymmetry via `get_diffusion_context`
-  (recompute in-agent, pure arithmetic) + `get_theme_transmission_summary` — the
-  cross-wave "structurally-early order, early stage" asymmetric-opportunity read.
-- **LONG:** `0.0`, defer to the macro / StockResearchAgent layer.
-- **Hook:** additive, key-gated, fail-closed, immediately AFTER the
-  SectorRotationAgent hook inside the Step 4 `try`; writes only
-  `theme_intelligence_agent_output`; reuses `_themes_list` (still in scope), no new
-  fetch. Follows the established agent pattern (deterministic confidences before the
-  LLM; `REQUIRED OUTPUT FORMAT`; `valid_until = end_of_today_iso()`;
-  `approved_for_execution` never `True`).
+**Next:** **Phase 8B — CandidateScreeningAgent**
+— Wraps the `opportunity_ranker` / `candidate_generator` deterministic
+producers. Follows the established agent pattern (deterministic confidences
+before the LLM; `REQUIRED OUTPUT FORMAT`; `valid_until = end_of_today_iso()`;
+`approved_for_execution` never `True`; additive key-gated fail-closed Cockpit
+hook). **STEP 0 recon first.**
 
 **Last completed:** Phase 8B MarketStructureAgent (merge `8792343f9`)
 - New `lib/agents/market_structure_agent.py`: `FragilityReading` INJECTED from
