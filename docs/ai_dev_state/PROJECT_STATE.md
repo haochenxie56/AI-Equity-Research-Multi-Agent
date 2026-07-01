@@ -1,6 +1,6 @@
 # AI Investment Agent — Project State
 
-## Phase 8B CandidateScreeningAgent — agent body (COMPLETE — SIXTH production foundation agent, Codex-APPROVED — merged to `main` via `--no-ff` @ `PENDING-MERGE`, feature commit `PENDING-FEATURE`; feature branch `phase-8b-candidate-screening-agent` off `main @ f78ef606f`, 2026-07-01)
+## Phase 8B CandidateScreeningAgent — agent body (COMPLETE — SIXTH production foundation agent, Codex-APPROVED — merged to `main` via `--no-ff` @ `e6c5be89a`, feature commit `b6daea492`; feature branch `phase-8b-candidate-screening-agent` off `main @ f78ef606f`, 2026-07-01)
 
 The **sixth production foundation agent** — the LLM agent that CONSUMES the
 already-merged deterministic eligibility gate (`lib/candidate_eligibility.py` @

@@ -1,7 +1,7 @@
 # Phase 8B — CandidateScreeningAgent
 
 **Status:** COMPLETE — Codex arc APPROVE WITH FIXES (6 discriminating test adds) → APPROVED.
-**Merged:** `main` via `--no-ff` @ `PENDING-MERGE` (feature commit `PENDING-FEATURE`), 2026-07-01.
+**Merged:** `main` via `--no-ff` @ `e6c5be89a` (feature commit `b6daea492`), 2026-07-01.
 **Module:** `lib/agents/candidate_screening_agent.py`
 **Enabler (prior, already merged):** `lib/candidate_eligibility.py` (merge `f78ef606f`).
 **Tests:** `scripts/test_phase_8b_candidate_screening_agent.py` (**104 assertions**, §CSA-1..CSA-18), fully offline.
@@ -284,6 +284,6 @@ deviation before implementing) prevented a REJECT; review returned **APPROVE WIT
 missing-signal fail-closed, wrong-ticker no-contamination, unavailable-dim sort guard;
 zero production-code bugs) — then **APPROVED**. No production-code change in the fix round.
 
-- **Feature commit:** `PENDING-FEATURE`.
-- **Merge commit:** `PENDING-MERGE` (`--no-ff`, two-parent topology preserved), pushed to
+- **Feature commit:** `b6daea492`.
+- **Merge commit:** `e6c5be89a` (`--no-ff`, two-parent topology preserved), pushed to
   `origin/main`.
