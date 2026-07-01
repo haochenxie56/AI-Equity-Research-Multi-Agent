@@ -1,6 +1,96 @@
 # AI Investment Agent — Project State
 
-## CandidateScreeningAgent Eligibility Gate (COMPLETE — deterministic enabler, Codex-APPROVED — merging to `main` via `--no-ff`; feature branch `phase-8b-candidate-eligibility` off `main @ 0bcf01f09`; merge/feature hashes in the closeout report, 2026-06-26)
+## Phase 8B CandidateScreeningAgent — agent body (COMPLETE — SIXTH production foundation agent, Codex-APPROVED — merged to `main` via `--no-ff` @ `PENDING-MERGE`, feature commit `PENDING-FEATURE`; feature branch `phase-8b-candidate-screening-agent` off `main @ f78ef606f`, 2026-07-01)
+
+The **sixth production foundation agent** — the LLM agent that CONSUMES the
+already-merged deterministic eligibility gate (`lib/candidate_eligibility.py` @
+`f78ef606f`). Phase doc `docs/reliability_candidate_screening_agent.md`.
+
+- **Strategy identity — v1 is ONE fixed strategy: MOMENTUM / RS-GAP.** The primary
+  ranking key is the per-horizon RS composite gap WITHIN a theme. Future strategies
+  (leader play, high-beta elasticity) will be SEPARATE agents (e.g.
+  `LeaderScreeningAgent`), never parameters of this one — there is NO pluggable
+  strategy interface in v1.
+- **A per-theme RELATIVE screener.** For one active theme: takes its candidates → runs
+  each through the eligibility gate → builds a deterministic **comparison table** over
+  the `eligible` set → computes a deterministic frontrunner per horizon → decides
+  `no_clear_winner` in CODE → asks the LLM ONLY to explain which differences are
+  decisive and translate trade-offs into horizon fit + invalidation conditions. NOT a
+  cross-theme ranker (PM's job), NOT an entry-timing engine, NOT ticker-level MoneyFlow
+  (future Stage-2), NOT StockResearch. Advisory only (`requires_human_confirmation`
+  always `True`; no execution field). Tone: "worth ADVANCING to trade construction,"
+  never "buy X."
+- **Comparison table — A/B dimension typing + tradability guard** (`lib/agents/candidate_screening_agent.py`,
+  frozen `CandidateProfile`): **A dims** `relative_strength` (per-horizon RS composite,
+  raw excess into evidence) / `valuation_elasticity` (provenance-gated via the gate's
+  `_valuation_missing`) / `short_crowding` (UNAVAILABLE). **B dims** `theme_role`
+  (`get_ticker_role`) / `volume_confirmation` / `options_structure` (UNAVAILABLE) /
+  `catalyst_proximity` (reuses the gate's earnings-window constants) / `tradability`.
+  **Cross-cutting tradability `quality_capped` guard** (penny-stock guard): `market_cap_tier`
+  (usually `unknown`) + `liquidity_tier` (FUNNEL/BOTH ample, ALT_SIGNAL marginal) →
+  `quality_capped` attached to every A-dim; **exclude-not-down-weight** (discrete labels,
+  the gate does exclusion, tradability only annotates).
+- **Code decides frontrunner + `no_clear_winner`; LLM cannot override.** `_sort_key`
+  order: `-RS` → volume_confirmation → valuation (lower better; unknown last) →
+  `quality_capped` (False first) → ticker. `no_clear_winner[h]` set by code when (a)
+  empty eligible set, (b) lead < `_RS_GAP_DECISIVE_PCT`, or (c) capped frontrunner
+  without a decisive lead (a lone capped name is refused; a capped name WITH a decisive
+  lead is allowed-but-flagged). Short and mid frontrunners MAY differ.
+- **Deterministic slate skeleton persists in `supporting_data`** (no second file, not
+  through the `extra="forbid"` `AgentResult`): frozen `CandidateSlate` (primary /
+  secondary 0–2 / watch = eligible-unchosen + conditional / rejected = ineligible+unknown
+  with gate reason codes / `no_clear_winner` / `no_trade_reason` / `signal_basis`),
+  placed on `AgentOutput.supporting_data` BEFORE the LLM call → serialized verbatim by
+  `append_agent_output`.
+- **Three ToolResults** (`candidate_screening_comparison` / `_slate` / `_confidence`) via
+  `processed_signals_to_tool_result` (numeric firewall). **Confidence** deterministic:
+  `coverage × clarity` (short/mid), `long = 0.0` (defers). **`signal_basis` three-way**
+  per horizon: `signal_present` / `no_clear_winner` (NEUTRAL/WAIT, never bearish) /
+  `degraded_insufficient`.
+- **`signals=` deviation (documented) + fail-closed join.** The gate reads
+  `eps`/`valuation`/`entry_quality` off the CandidateSignal, which the OpportunityCard
+  does NOT carry, so the API adds an optional `signals=` kwarg (list|dict) matched
+  **exactly by ticker**. The Cockpit passes the live `_candidates`. An unmatched /
+  missing / wrong-ticker signal fails closed (hard-unknown → rejected, never silently
+  eligible, no cross-contamination). ONE `AgentOutput` per theme (`ticker == theme_key`).
+- **LLM prompt** emits NO number: qualitative tokens only (tickers, role/tier labels,
+  direction words, `signal_basis`), `REQUIRED OUTPUT FORMAT` 4-space indent no fences,
+  three findings (short/mid/long-defer). All `lib.reliability` / `lib.agent_framework` /
+  `lib.candidate_eligibility` / `lib.theme_transmission` imports lazy (subprocess guard).
+- **Cockpit hook** (additive, `pages/7_Investment_Cockpit.py::_run_refresh` after the TIA
+  block): reuses `_cards` + `_candidates` + `_themes_list` (no fetch, no re-rank); loops
+  2–3 ACTIVE themes (`stage in {leading, rotating_in}` AND `stage_confirmed`); per-theme
+  try/except isolation; writes only `candidate_screening_agent_output` (dict keyed by
+  `theme_key`). Stage 1 only; **session-state-only, no widget this phase**.
+- **Calibration debt:** `_RS_GAP_DECISIVE_PCT=0.08`, `_MCAP_AMPLE=10e9`,
+  `_VOL_CONFIRM_RATIO=1.2`, `_COVERAGE_MIN=0.34`.
+- **KNOWN LIMITATION (P2):** the penny-guard mostly reduces to the `ALT_SIGNAL` proxy
+  because `market_cap` is usually absent in production (only on the v1 `FundamentalSignals`
+  shim) and dollar-ADV has no field. Honest (never fabricated) but thin — a driver for
+  the next Degradation-Visibility Layer and a future live market-cap / ADV channel.
+- **Down-scoped UNAVAILABLE dims** (no backing field — honest, not fabricated):
+  `short_crowding`, `options_structure`, `beta`, dollar-ADV.
+- **Tests:** `scripts/test_phase_8b_candidate_screening_agent.py` **104 assertions**
+  (§CSA-1..CSA-18), fully offline. Real `OpportunityCard` / `CandidateSignal` /
+  `FundamentalSignals` instances; the deterministic layer called directly; §CSA-8 drives
+  the REAL `run_llm_agent` with only `agent_runner._call_llm` patched (success +
+  fail-closed fallback). Discriminating: RS-gap frontrunner, thin-gap `no_clear_winner`,
+  penny-guard capped path (c) + capped-but-decisive-allowed, short≠mid frontrunner,
+  eligibility routing, unavailable-dims-excluded + `_sort_key` guard, degraded coverage,
+  numeric-firewall real-path, per-theme identity, determinism, tie-break chain, empty-set
+  path (a), `signals=` fail-closed join, no cross-contamination, valuation-provenance not
+  re-leaked, lazy-import subprocess guard.
+- **Codex arc:** the recon-first PREFLIGHT (surfacing missing fields + the `signals=`
+  deviation before implementing) prevented a REJECT → **APPROVE WITH FIXES** (6
+  discriminating **test additions**, zero production-code bugs) → **APPROVED**.
+- **Next:** Degradation-Visibility Layer (Cockpit aggregation banner surfacing every
+  agent's degradation vocabulary from `supporting_data`, bilingual), then the remaining
+  foundation agents (StockResearch / TechnicalEntry / SectorResearch / RiskOverlay),
+  which will build degradation-visibility fields into their FIRST version.
+
+---
+
+## CandidateScreeningAgent Eligibility Gate (COMPLETE — deterministic enabler, Codex-APPROVED — merged to `main` via `--no-ff` @ `f78ef606f`; feature branch `phase-8b-candidate-eligibility` off `main @ 0bcf01f09`, 2026-06-26)
 
 **Deterministic, LLM-free enabler that PRECEDES CandidateScreeningAgent** — the
 numeric-firewall side of the agent. It is NOT an agent: no LLM, no `AgentOutput`,

@@ -5,45 +5,62 @@
 > history preserved verbatim). This file keeps only the active phase. The
 > long-form running status remains in `docs/ai_dev_state/PROJECT_STATE.md`.
 
-**Status:** **CandidateScreeningAgent eligibility gate (enabler): COMPLETE,
-Codex-APPROVED, merging to `main` via `--no-ff`** (feature branch
-`phase-8b-candidate-eligibility` off `main @ 0bcf01f09`; merge/feature hashes in
-the closeout report). This is the **deterministic, LLM-free enabler that PRECEDES
-CandidateScreeningAgent** — NOT the agent itself (no LLM, no `AgentOutput`, no
-slate, no Cockpit hook; those belong to the agent body). New
-`lib/candidate_eligibility.py`: a four-state candidate gate
-(`eligible` / `conditional` / `ineligible` / `unknown`) computed per
-`(ticker, horizon)` over `OpportunityCard` + `CandidateSignal` (read-only;
-dataclass-or-dict tolerant). **Six gates**: HARD `thesis` / `eps` / `valuation` /
-`event` (may reach `ineligible`) + SOFT `liquidity` / `distribution` (never
-`ineligible`). `eps` / `valuation` / `event` are **horizon-asymmetric** (e.g.
-imminent earnings gates SHORT, not LONG; deteriorating EPS is a SHORT caution but
-a MID/LONG fail). Fixed aggregation precedence: hard-fail → hard-unknown →
-any-conditional → soft-unknown(→conditional) → eligible. **Numeric-firewall
-provenance guard:** `_forward_pe_is_usable` rejects `None` / non-numeric / `bool`
-/ `<= 0`, closing the leak where `fetch_fundamental` stamps
-`data_source["valuation"]="live"` on an invalid `forwardPE` while
-`_valuation_percentile` defaults to 0.5 — a defaulted 0.5 is treated as
-`VALUATION_UNKNOWN`, never a real pass. Stdlib-only at import (no
-`lib.reliability` / `lib.llm_orchestrator` / network / LLM). **18 tests / 87
-assertions offline.** Codex REJECT (provenance leak) → fix round (1 code fix + 4
-tests + 1 comment) → APPROVE. Phase doc
-`docs/reliability_candidate_eligibility_gate.md`.
+**Status:** **CandidateScreeningAgent (agent body): COMPLETE, Codex-APPROVED,
+merged to `main` via `--no-ff`** (feature branch
+`phase-8b-candidate-screening-agent` off `main @ f78ef606f`; feature/merge hashes
+in the closeout report + phase doc). The **SIXTH production foundation agent** —
+the LLM agent that CONSUMES the already-merged deterministic eligibility gate
+(`lib/candidate_eligibility.py` @ `f78ef606f`). **v1 = ONE fixed strategy:
+MOMENTUM / RS-GAP** (primary key = per-horizon RS composite gap within a theme;
+future strategies leader / high-beta = SEPARATE agents, no pluggable interface).
+A **per-theme relative** screener: eligible-set deterministic **comparison table**
+(A dims `relative_strength` / `valuation_elasticity` / `short_crowding`-unavailable;
+B dims `theme_role` / `volume_confirmation` / `options_structure`-unavailable /
+`catalyst_proximity` / `tradability`) + cross-cutting **tradability `quality_capped`
+guard** (penny-stock guard; exclude-not-down-weight). **Code decides** the frontrunner
+(short/mid, may differ) and `no_clear_winner` (`_RS_GAP_DECISIVE_PCT`); the LLM emits
+NO number and cannot pick the primary or override `no_clear_winner`. Deterministic
+**slate skeleton** (primary/secondary/watch/rejected) persists in
+`AgentOutput.supporting_data` verbatim (no second file, not through `extra="forbid"`
+`AgentResult`). Three ToolResults; `signal_basis` three-way (`signal_present` /
+`no_clear_winner` / `degraded_insufficient`). **`signals=` kwarg** joins the
+CandidateSignal fields the gate needs (eps/valuation/entry-quality — NOT on the card)
+**exactly by ticker, fail-closed** (unmatched → hard-unknown → rejected, never
+silently eligible). Additive **per-theme Cockpit loop hook** over 2–3 active themes,
+key-gated + fail-closed + per-theme-isolated, writes only
+`candidate_screening_agent_output`; session-state-only (no widget yet).
+**Calibration debt:** `_RS_GAP_DECISIVE_PCT=0.08`, `_MCAP_AMPLE=10e9`,
+`_VOL_CONFIRM_RATIO=1.2`, `_COVERAGE_MIN=0.34`. **KNOWN LIMITATION (P2):** the
+penny-guard mostly reduces to the `ALT_SIGNAL` proxy because `market_cap` is usually
+absent in production and dollar-ADV has no field — a driver for the next phase.
+**104 tests offline** (§CSA-1..CSA-18, real `OpportunityCard`/`CandidateSignal`
+instances; §CSA-8 drives the REAL `run_llm_agent` with only `_call_llm` stubbed).
+Codex arc: **APPROVE WITH FIXES** (6 discriminating **test adds**, zero code bugs) →
+**APPROVED**. Phase doc `docs/reliability_candidate_screening_agent.md`.
 
-**Completed:** CandidateScreeningAgent eligibility gate enabler
-(`lib/candidate_eligibility.py` + `scripts/test_phase_8b_candidate_eligibility.py`).
+**Completed:** CandidateScreeningAgent agent body
+(`lib/agents/candidate_screening_agent.py` +
+`scripts/test_phase_8b_candidate_screening_agent.py` + additive Cockpit hook).
 
-**Next:** **Phase 8B — CandidateScreeningAgent (agent body)**
-— The agent that CONSUMES this gate: per-theme comparison table over the
-`eligible` candidates + deterministic frontrunner + code-decided
-`no_clear_winner` + constrained LLM synthesis (machine-readable slate) + additive
-per-theme Cockpit hook. Wraps the `opportunity_ranker` / `candidate_generator`
-deterministic producers behind the eligibility gate. Follows the established
-agent pattern (deterministic confidences before the LLM; `REQUIRED OUTPUT
-FORMAT`; `valid_until = end_of_today_iso()`; `approved_for_execution` never
-`True`; additive key-gated fail-closed Cockpit hook).
+**Next:** **Degradation-Visibility Layer** — a Cockpit aggregation banner that
+surfaces every foundation agent's degradation vocabulary from its `supporting_data`
+(signal_basis / `no_trade_reason` / `unavailable` dimensions / degraded coverage),
+bilingual per the `bi()` discipline. It exists precisely because CandidateScreeningAgent
+(and its siblings) currently write degradation only into `supporting_data` with no
+visible surface. After it, the **remaining foundation agents** (StockResearch /
+TechnicalEntry / SectorResearch / RiskOverlay) — which will build degradation-visibility
+fields into their FIRST version.
 
-**Last completed:** Phase 8B ThemeIntelligenceAgent (COMPLETE, Codex-APPROVED,
+**Prior:** Phase 8B — CandidateScreeningAgent eligibility gate (enabler,
+`lib/candidate_eligibility.py`, merge `f78ef606f`) — the deterministic, LLM-free
+four-state gate (`eligible`/`conditional`/`ineligible`/`unknown`) per
+`(ticker, horizon)` that this agent consumes. Six gates (HARD
+`thesis`/`eps`/`valuation`/`event` + SOFT `liquidity`/`distribution`),
+horizon-asymmetric; numeric-firewall `_forward_pe_is_usable` provenance guard
+(defaulted 0.5 → `VALUATION_UNKNOWN`). 18 tests / 87 assertions. Codex REJECT
+(provenance leak) → APPROVE. Phase doc `docs/reliability_candidate_eligibility_gate.md`.
+
+**Prior:** Phase 8B ThemeIntelligenceAgent (COMPLETE, Codex-APPROVED,
 merged to `main` via `--no-ff` @ `5ecfb7875`, feature commit `7b86dcaba`, pushed).
 Fifth production foundation agent. Distinct from SectorRotationAgent: per-ticker
 role (`constituent_rs` active-window ranking × seed role) + cross-wave asymmetry
