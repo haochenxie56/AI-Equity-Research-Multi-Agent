@@ -479,6 +479,62 @@ def _run_refresh() -> None:
         except Exception as _e:  # noqa: BLE001 — additive; never abort the refresh
             import logging
             logging.warning("ThemeIntelligenceAgent failed: %s", _e)
+
+        # Phase 8B — CandidateScreeningAgent (Stage 1): additive, fail-closed,
+        # PER-THEME momentum / RS-gap screener. REUSES the already-computed _cards
+        # (ranked opportunities), _candidates (their CandidateSignals — the
+        # eligibility gate reads eps / valuation / entry-quality off the signal, NOT
+        # the card), and _themes_list (Step 2) — NO new fetch, NO re-rank. For each
+        # of up to 3 ACTIVE themes (stage leading / rotating_in AND breadth-confirmed)
+        # it filters _cards to that theme and produces ONE AgentOutput, stored under
+        # "candidate_screening_agent_output" as a dict keyed by theme_key. Each theme
+        # runs in its OWN try/except so one theme's failure isolates (never aborts the
+        # others or the refresh). Gated on an LLM key AND non-empty _cards so a
+        # keyless / card-less run is a clean no-op. Stage 1 ONLY — ticker-level
+        # MoneyFlow / TechnicalEntry are a future Stage-2 phase. Writes only the NEW
+        # key and never touches existing state.
+        try:
+            from lib.agents.candidate_screening_agent import (
+                run_candidate_screening_agent,
+            )
+            from lib.llm_orchestrator import _has_llm_api_key
+
+            if _has_llm_api_key() and _cards:
+                _active_themes = [
+                    _tm for _tm in (_themes_list or [])
+                    if getattr(_tm, "stage", "") in ("leading", "rotating_in")
+                    and bool(getattr(_tm, "stage_confirmed", False))
+                ][:3]
+                _csa_outputs: dict = {}
+                for _tm in _active_themes:
+                    _tkey = getattr(_tm, "theme_key", "") or ""
+                    if not _tkey:
+                        continue
+                    try:
+                        _theme_cards = [
+                            c for c in _cards if getattr(c, "theme", None) == _tkey]
+                        if not _theme_cards:
+                            continue
+                        _csa_outputs[_tkey] = run_candidate_screening_agent(
+                            _theme_cards,
+                            theme_key=_tkey,
+                            signals=_candidates,
+                            theme_context={
+                                "stage": getattr(_tm, "stage", ""),
+                                "stage_confirmed": bool(
+                                    getattr(_tm, "stage_confirmed", False)),
+                                "label_en": getattr(_tm, "label_en", "") or _tkey,
+                            },
+                        )
+                    except Exception as _e_theme:  # noqa: BLE001 — isolate per theme
+                        import logging
+                        logging.warning(
+                            "CandidateScreeningAgent[%s] failed: %s", _tkey, _e_theme)
+                if _csa_outputs:
+                    st.session_state["candidate_screening_agent_output"] = _csa_outputs
+        except Exception as _e:  # noqa: BLE001 — additive; never abort the refresh
+            import logging
+            logging.warning("CandidateScreeningAgent hook failed: %s", _e)
     except Exception:  # noqa: BLE001 — fail-closed; Section C falls back gracefully
         pass
     prog.progress(100, text=t("cockpit_hub_refresh_complete"))
