@@ -92,9 +92,9 @@
                                 ▼  证据化 evidence-bound AgentOutput
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │  Foundation Agent 层 / Foundation Agents  (lib/agents/)   🟡 逐个推进 / rolling │
-│  ✅ MacroRegime · MoneyFlow · MarketStructure · SectorRotation                 │
-│  📋 ThemeIntelligence · CandidateScreening · StockResearch ·                   │
-│     ValuationDebate · TechnicalEntry · SectorResearch · RiskOverlay            │
+│  ✅ MacroRegime · MoneyFlow · MarketStructure · SectorRotation · ThemeIntelligence │
+│  📋 CandidateScreening（资格闸 enabler 已上线 / eligibility gate shipped）·     │
+│     StockResearch · ValuationDebate · TechnicalEntry · SectorResearch · RiskOverlay │
 │  代码算数字 → LLM 在证据约束下综合含义、引用 evidence_id（绝不发明数字）        │
 │  每个 agent 输出三时间维度 finding + 三 confidence；valid_until = 当日           │
 └───────────────────────────────┬──────────────────────────────────────────────┘
@@ -130,8 +130,8 @@
 | **MarketStructureAgent** | 市场环境 Market env | `market_internals` 脆弱度读数（Cockpit Step 4 注入，不二次计算）| ✅ 已实现 `8792343f9` |
 | **MoneyFlowAgent** | 市场环境 Market env | `gex_dex`（Massive）+ `compute_dark_pool_signal`（Quiver）| ✅ 已实现 `760f356a3` |
 | **SectorRotationAgent** | 机会发现 Opportunity | `theme_baskets` + `theme_transmission` + 完整攻守 O/D reading | ✅ 已实现 `fbf0cc41d` |
-| **ThemeIntelligenceAgent** | 机会发现 Opportunity | `theme_transmission`（传导棒次/簇/每票角色）| 📋 计划（下一个，STEP 0）|
-| **CandidateScreeningAgent** | 机会发现 Opportunity | `opportunity_ranker` + `candidate_generator` / `signal_engine` | 📋 计划 |
+| **ThemeIntelligenceAgent** | 机会发现 Opportunity | `theme_transmission`（传导棒次/簇/每票角色）| ✅ 已实现 `5ecfb7875` |
+| **CandidateScreeningAgent** | 机会发现 Opportunity | `opportunity_ranker` + `candidate_generator` / `signal_engine` + `candidate_eligibility`（四态资格闸）| 🔄 进行中（资格闸 enabler 已并入 main；agent 本体为下一个）|
 | **StockResearchAgent** | 个股研究 Stock research | `thesis_monitor` + 个股研究产物 | 📋 计划 |
 | **ValuationDebateAgent** | 个股研究 Stock research | `equity_valuation` / `valuation_router` / `valuation_diagnosis` / `anchor_migration` + 反向 DCF（Phase 8D）| 📋 计划（Phase 8D）|
 | **TechnicalEntryAgent** | 个股研究 Stock research | `technical` 指标 + 支撑压力 + `order_advisor` 入场策略 | 📋 计划 |
@@ -309,6 +309,7 @@ investment-agents/
 │   ├── audit_query.py              # 快照审计查询层（只读 / 无信号引擎 / 无排序 / 无联网 / fail-closed）
 │   ├── signal_engine.py            # 双轨信号引擎 + Finnhub 财报日历
 │   ├── candidate_generator.py      # 候选生成（发布扫描 universe）
+│   ├── candidate_eligibility.py    # 确定性四态资格闸（eligible/conditional/ineligible/unknown）；LLM-free 数值防火墙；六闸 thesis/eps/valuation/event(hard)+liquidity/distribution(soft)，横向按时间维度非对称；CandidateScreeningAgent 前置 enabler / deterministic four-state candidate eligibility gate feeding CandidateScreeningAgent
 │   ├── order_advisor.py            # 状态推导 / 入场策略 v4 / 条件注册表
 │   ├── thesis_monitor.py           # 持仓 thesis 监控（噪音 vs 逻辑破坏）
 │   ├── thesis_ingestion/               # Thesis Ingestion MVP（schema / store / extractor / validator）
@@ -349,6 +350,7 @@ investment-agents/
 │   ├── test_phase_8b_market_structure_agent.py  # Phase 8B MarketStructureAgent §8B-MS1–MS13 + MS6a–6e（44 项；LLM/网络全 mock，含 cap-vs-floor 边界与 coverage 判别）
 │   ├── test_phase_8b_sector_rotation_agent.py  # Phase 8B SectorRotationAgent §8B-SR1–SR14（34 项；LLM/网络全 mock，含 coverage 翻转与 active_order=None 判别）
 │   ├── test_phase_8b_theme_intelligence_agent.py  # Phase 8B ThemeIntelligenceAgent §8B-TI1–TI14（39 项；LLM/网络全 mock，含 roles→unknown / stage→leading / 排序翻转 3 个 mutation probe）
+│   ├── test_phase_8b_candidate_eligibility.py  # CandidateScreeningAgent 资格闸 enabler（18 项 / 87 断言，全离线真实 OpportunityCard/CandidateSignal 实例；含 event 时间维度非对称、hard-fail 压制、valuation 两带×时间维度、forward_pe 不可用防火墙泄漏守卫、多条件完整性等判别）
 │   ├── backfill_anchors.py         # 估值锚历史离线回填 CLI（可重算锚 + 披露滞后门控）
 │   ├── migrate_anchor_archive_to_shards.py  # 一次性离线：单文件归档 → 按 ticker 分片
 │   ├── daily_scan.py / fetch_financials.py / run_research.py
@@ -395,10 +397,11 @@ investment-agents/
 | Phase 8B — SectorRotationAgent | ✅ | 主题动量（theme_baskets）+ 传导波次（theme_transmission）+ 完整 O/D reading（avg_diff/confirming_windows）注入；short=coverage×stage_confirmed率；mid=coverage×momentum分散度×wave清晰度；signal_basis 三值含 no_clear_leadership（中性/等待，禁止方向性解读）；34 项测试含 2 个 mutation probe，Codex 一轮通过 |
 | Phase 8B — ThemeIntelligenceAgent | ✅ | 成分股实时 RS 排名×种子角色（leader/2nd-derivative/supplier/laggard）；跨波次非对称机会（wave {1,2} + rotating_in，不含空字符串）；short=coverage×role_resolution（诚实全成分股分母）；mid=coverage×asymmetry_strength；no_role_signal 明确非看空；与 SRA 的波内落后者概念显式区分；39 项测试含 3 个 mutation probe，Codex 一轮通过 |
 | constituent_rs 扩展 + 标签 lift | ✅ | ThemeIntelligenceAgent 前置：`CLUSTER_LABELS`/`ROLE_LABELS` 移入 `lib/theme_transmission.py`（单一事实来源，两个页面删本地 copy，lazy import + closure 经 `co_freevars` 验证）；`ThemeMomentumResult` 加 `constituent_rs` 字段（多窗口成分股超额，`_enrich_excess_stage_breadth` 填充，复用 `constituent_closes`，**零新增网络调用**，存 `{ticker:{"1m","3m","active"}}` 且过滤 None）；ETF 主题统一填充，fixture 主题保持 `{}`；`§TB-CR3` 判别性诚实记录（None 守卫与 `_pct_return` 冗余，真正保护是 `if _ticker_excess`，Exp B1/B2 验证 RED）；157/157，Codex 一轮通过 |
+| Candidate 资格闸（CandidateScreeningAgent 前置 enabler） | ✅ | 确定性、LLM-free 四态资格闸（`lib/candidate_eligibility.py`）——**不是 agent**（无 LLM/AgentOutput/slate/Cockpit 钩子，均属 agent 本体下一阶段）。按 `(ticker, horizon)` 在 `OpportunityCard`+`CandidateSignal` 上判 `eligible/conditional/ineligible/unknown`（只读，dataclass 或 dict 皆容忍）。六闸两层：HARD `thesis`/`eps`/`valuation`/`event`（可判 ineligible）+ SOFT `liquidity`/`distribution`（永不 ineligible）；`eps`/`valuation`/`event` 按时间维度非对称（临近财报只闸 SHORT、不闸 LONG；EPS 恶化在 SHORT 为 conditional、MID/LONG 为 fail）；`event` 刻意排除 FOMC/CPI（市场级、主题内无区分度——MarketStructure 的 lane）。聚合优先级：hard-fail → hard-unknown → any-conditional → soft-unknown(→conditional) → eligible；理由列表取自全部闸（完整、字节稳定）。**数值防火墙 provenance 守卫**：`_forward_pe_is_usable` 拒 None/非数值/bool/≤0，堵住 `fetch_fundamental` 在无效 `forwardPE` 上仍标 `data_source["valuation"]="live"` 而 `_valuation_percentile` 默认 0.5 的泄漏——被默认的 0.5 记为 `VALUATION_UNKNOWN`，绝不当真值放行。模块导入仅 stdlib；两新文件、零改既有文件。18 项测试 / 87 断言全离线，真实 `OpportunityCard`/`CandidateSignal`/`Blocker`/`FundamentalResult`/`TrackAResult` 实例。Codex REJECT（provenance 泄漏）→ 修复轮（1 代码修复 + 4 测试 + 1 注释）→ APPROVE。Phase 文档 `docs/reliability_candidate_eligibility_gate.md` |
 | Step 3 Narrative Disk Cache | ✅ | LLM narrative 结果磁盘持久化（data/narrative_cache/）；重启后命中跳过 LLM；指纹对齐 prompt 输入（news[:25] + headline + summary[:160]，json.dumps 序列化）；TTL 24h；原子写；27 项测试，Codex 三轮审查通过 |
 | _meta 扩展（key_signals / opportunity_posture / confidence） | ✅ | 三个确定性 classify_regime 字段写入每日快照 _meta 块，为冷启动水化做准备；冲突守卫（ValueError，置于 try 之外确保不被吞掉）；MetaRecord 对应加字段（旧快照容忍缺失）；7 项断言含 mutation probe + 守卫判别性验证，Codex 两轮通过；feature `7a76bcb3`，`--no-ff` 合并 main @ `ffe9e1e2` 并推送 |
 | Cockpit 冷启动水化 | ✅ | 重启后自动从最新日快照填充 Section A（含 key_signals / posture / confidence）和 Section C；双语 banner（bi()）；原子提交 + fail-closed；why_now crash guard；MacroRegimeAgent output / B / D / E 不从快照恢复；10 项测试，Codex 一轮通过，UI 人工验收 |
-| **Phase 8B — Foundation Agent 实现（逐个推进）** | 🔄 进行中 | 已上线 MacroRegime / MoneyFlow / MarketStructure / SectorRotation 四个；**下一个 ThemeIntelligenceAgent（STEP 0）**；其后 CandidateScreening · StockResearch · TechnicalEntry · SectorResearch · RiskOverlay。每个：确定性信号 → ToolResult → 受约束提示（`REQUIRED OUTPUT FORMAT`）→ `_repair_llm_response` → 校验 `AgentOutput`；附加式 Cockpit 钩子 |
+| **Phase 8B — Foundation Agent 实现（逐个推进）** | 🔄 进行中 | 已上线 MacroRegime / MoneyFlow / MarketStructure / SectorRotation / ThemeIntelligence 五个；**下一个 CandidateScreeningAgent（本体）——其确定性四态资格闸 enabler 已并入 main**；其后 StockResearch · TechnicalEntry · SectorResearch · RiskOverlay。每个：确定性信号 → ToolResult → 受约束提示（`REQUIRED OUTPUT FORMAT`）→ `_repair_llm_response` → 校验 `AgentOutput`；附加式 Cockpit 钩子 |
 | **Phase 8C — PM 层** | 📋 计划 | `ShortTermPM` / `MidTermPM` / `LongTermPM` 按时间维度消费各 Foundation Agent 的 finding+confidence 做冲突仲裁（非汇总）→ `MasterPM` 跨时间维度 + 组合层综合、绝不出下单指令。**依赖：8B roster 足够填充** |
 | **Phase 8D — ValuationDebateAgent / 证据基建** | 📋 计划 | 反向 DCF + 对抗式估值辩论 + 证据包；锚历史/迁移作为确定性输入。**依赖：估值基建 + 8B 个股研究组** |
 | **Phase 9 — Judgment Console（人在环）** | 📋 远期 | 判断收口与人工确认工作流：LLM 在证据约束下给建议、人确认/覆写、判断来源留痕（provenance）、审计轨。**下游 gating 政策（自动化程度）仍待显式架构决策，尚未定型；依赖 8C/8D 累积输出** |
