@@ -5,32 +5,57 @@
 > history preserved verbatim). This file keeps only the active phase. The
 > long-form running status remains in `docs/ai_dev_state/PROJECT_STATE.md`.
 
-**Status:** **Phase 8B ThemeIntelligenceAgent: COMPLETE, Codex-APPROVED (1 pass),
-merged to `main` via `--no-ff` @ `5ecfb7875` (feature commit `7b86dcaba`) and
-pushed.** Fifth production foundation agent. Distinct from SectorRotationAgent:
-per-ticker role (`constituent_rs` active-window ranking × seed role) +
-cross-wave asymmetry (`wave_order` {1,2} AND `stage="rotating_in"` = structurally
-early, un-crowded). `short = theme_coverage × role_resolution` (all-constituent
-denominator — honest coverage); `mid = theme_coverage × asymmetry_strength`;
-`long = 0.0`. `_EARLY_STAGES = frozenset({"rotating_in"})` excludes `""`.
-`signal_basis` `no_role_signal` = seed map sparse, NOT bearish. TR1
-`ranked_constituents` per top theme; TR2 `asymmetric_themes` + `late_stage_themes`
-contrast. Hook: Step 4, immediately after SectorRotationAgent, `_themes_list`
-only (no `offense_defense`). **39/39** ThemeIntelligence · 3 mutation probes
-(roles→unknown, stage→leading, sort reversal) confirmed. Codex P2a/P2b approved
-AS-IS (TYPE_CHECKING + test-module imports). Phase doc
+**Status:** **CandidateScreeningAgent eligibility gate (enabler): COMPLETE,
+Codex-APPROVED, merging to `main` via `--no-ff`** (feature branch
+`phase-8b-candidate-eligibility` off `main @ 0bcf01f09`; merge/feature hashes in
+the closeout report). This is the **deterministic, LLM-free enabler that PRECEDES
+CandidateScreeningAgent** — NOT the agent itself (no LLM, no `AgentOutput`, no
+slate, no Cockpit hook; those belong to the agent body). New
+`lib/candidate_eligibility.py`: a four-state candidate gate
+(`eligible` / `conditional` / `ineligible` / `unknown`) computed per
+`(ticker, horizon)` over `OpportunityCard` + `CandidateSignal` (read-only;
+dataclass-or-dict tolerant). **Six gates**: HARD `thesis` / `eps` / `valuation` /
+`event` (may reach `ineligible`) + SOFT `liquidity` / `distribution` (never
+`ineligible`). `eps` / `valuation` / `event` are **horizon-asymmetric** (e.g.
+imminent earnings gates SHORT, not LONG; deteriorating EPS is a SHORT caution but
+a MID/LONG fail). Fixed aggregation precedence: hard-fail → hard-unknown →
+any-conditional → soft-unknown(→conditional) → eligible. **Numeric-firewall
+provenance guard:** `_forward_pe_is_usable` rejects `None` / non-numeric / `bool`
+/ `<= 0`, closing the leak where `fetch_fundamental` stamps
+`data_source["valuation"]="live"` on an invalid `forwardPE` while
+`_valuation_percentile` defaults to 0.5 — a defaulted 0.5 is treated as
+`VALUATION_UNKNOWN`, never a real pass. Stdlib-only at import (no
+`lib.reliability` / `lib.llm_orchestrator` / network / LLM). **18 tests / 87
+assertions offline.** Codex REJECT (provenance leak) → fix round (1 code fix + 4
+tests + 1 comment) → APPROVE. Phase doc
+`docs/reliability_candidate_eligibility_gate.md`.
+
+**Completed:** CandidateScreeningAgent eligibility gate enabler
+(`lib/candidate_eligibility.py` + `scripts/test_phase_8b_candidate_eligibility.py`).
+
+**Next:** **Phase 8B — CandidateScreeningAgent (agent body)**
+— The agent that CONSUMES this gate: per-theme comparison table over the
+`eligible` candidates + deterministic frontrunner + code-decided
+`no_clear_winner` + constrained LLM synthesis (machine-readable slate) + additive
+per-theme Cockpit hook. Wraps the `opportunity_ranker` / `candidate_generator`
+deterministic producers behind the eligibility gate. Follows the established
+agent pattern (deterministic confidences before the LLM; `REQUIRED OUTPUT
+FORMAT`; `valid_until = end_of_today_iso()`; `approved_for_execution` never
+`True`; additive key-gated fail-closed Cockpit hook).
+
+**Last completed:** Phase 8B ThemeIntelligenceAgent (COMPLETE, Codex-APPROVED,
+merged to `main` via `--no-ff` @ `5ecfb7875`, feature commit `7b86dcaba`, pushed).
+Fifth production foundation agent. Distinct from SectorRotationAgent: per-ticker
+role (`constituent_rs` active-window ranking × seed role) + cross-wave asymmetry
+(`wave_order` {1,2} AND `stage="rotating_in"` = structurally early, un-crowded).
+`short = theme_coverage × role_resolution` (all-constituent denominator — honest
+coverage); `mid = theme_coverage × asymmetry_strength`; `long = 0.0`.
+`_EARLY_STAGES = frozenset({"rotating_in"})` excludes `""`. `signal_basis`
+`no_role_signal` = seed map sparse, NOT bearish. **39/39** ThemeIntelligence · 3
+mutation probes confirmed. Phase doc
 `docs/reliability_theme_intelligence_agent.md`.
 
-**Completed:** Phase 8B ThemeIntelligenceAgent (merge `5ecfb7875`).
-
-**Next:** **Phase 8B — CandidateScreeningAgent**
-— Wraps the `opportunity_ranker` / `candidate_generator` deterministic
-producers. Follows the established agent pattern (deterministic confidences
-before the LLM; `REQUIRED OUTPUT FORMAT`; `valid_until = end_of_today_iso()`;
-`approved_for_execution` never `True`; additive key-gated fail-closed Cockpit
-hook). **STEP 0 recon first.**
-
-**Last completed:** Phase 8B MarketStructureAgent (merge `8792343f9`)
+**Prior:** Phase 8B MarketStructureAgent (merge `8792343f9`)
 - New `lib/agents/market_structure_agent.py`: `FragilityReading` INJECTED from
   Cockpit Step 4 (never calls `compute_market_fragility` — no second compute, no
   vintage divergence). Three deterministic confidences before the LLM:

@@ -1,5 +1,70 @@
 # AI Investment Agent — Project State
 
+## CandidateScreeningAgent Eligibility Gate (COMPLETE — deterministic enabler, Codex-APPROVED — merging to `main` via `--no-ff`; feature branch `phase-8b-candidate-eligibility` off `main @ 0bcf01f09`; merge/feature hashes in the closeout report, 2026-06-26)
+
+**Deterministic, LLM-free enabler that PRECEDES CandidateScreeningAgent** — the
+numeric-firewall side of the agent. It is NOT an agent: no LLM, no `AgentOutput`,
+no slate, no Cockpit hook (all of that belongs to the agent body, the next phase).
+Merged on its own ahead of the agent, mirroring the prior enablers
+(`constituent_rs`, `FragilityReading.offense_defense`).
+
+- **`lib/candidate_eligibility.py` (new):** a frozen `EligibilityVerdict`
+  (`status ∈ {eligible, conditional, ineligible, unknown}`, sorted
+  `blockers`/`conditions`/`unknowns` reason tuples, `data_quality ∈
+  {live, partial, degraded}`, `strategy_type` passthrough of `card.setup`,
+  `as_of`). `compute_eligibility(card, signal=None, *, horizon, as_of=None)` +
+  `eligibility_by_horizon(...)`. Reads `OpportunityCard` (opportunity_ranker) +
+  `CandidateSignal` (signal_engine) fields **read-only**, tolerating a dataclass
+  OR a dict via `_field`.
+- **Six gates in two tiers.** HARD (may reach `ineligible`): `thesis`
+  (`status_by_horizon[h]=="Avoid Chasing"` fail, `None`→unknown; plus a defensive
+  `risk_overlay_failed` blocker branch the ranker does not currently emit), `eps`
+  (`deteriorating` → SHORT conditional / MID+LONG fail; `unknown`/no-signal →
+  unknown), `valuation` (elevated ≥ 0.70 → MID/LONG conditional; prohibited ≥ 0.85
+  → SHORT conditional / MID+LONG fail), `event` (earnings proximity — LONG always
+  passes; SHORT: ≤2d imminent / ≤7d window conditional, `None`→unknown; MID: ≤2d
+  pending conditional, else pass). SOFT (never `ineligible`): `liquidity`
+  (`candidate_type` FUNNEL/BOTH pass, ALT_SIGNAL conditional, missing unknown —
+  a generation-time proxy, not a fresh re-read) + `distribution`
+  (`entry_quality_label` avoid/extended conditional, missing unknown — a proxy;
+  no per-ticker distribution field exists, that signal is market-wide in
+  MarketStructure). `event` DELIBERATELY excludes FOMC/CPI (market-wide, cannot
+  differentiate candidates within a theme — MarketStructure's lane).
+- **Aggregation precedence (the core invariant):** any HARD fail → `ineligible`;
+  else any HARD unknown → `unknown`; else any conditional → `conditional`; else
+  any SOFT unknown → `conditional` (soft uncertainty is a watchable caveat, not a
+  disqualifier); else `eligible`. Reason lists are collected from ALL gates
+  (complete, byte-stable), not just the dominant one. "Never default to pass":
+  gates whose data lives only on `signal` evaluate to their UNKNOWN state when
+  `signal is None`.
+- **Numeric-firewall provenance guard (the Codex-caught leak, fixed).**
+  `fetch_fundamental` stamps `data_source["valuation"]="live"` whenever `info` is
+  truthy — even when `forwardPE` is invalid/non-positive/non-numeric — and
+  `_valuation_percentile` then defaults the percentile to 0.5. The gate now treats
+  valuation as `VALUATION_UNKNOWN` when a fundamental is reachable AND
+  (`data_source["valuation"] ∈ {"fixture", None}` OR the reachable `forward_pe` is
+  unusable). `_forward_pe_is_usable` rejects `None`, non-`numbers.Real`, `bool`
+  (a True/False forward_pe is a data error, NOT 1/0), and `<= 0`. A directly-
+  constructed percentile with NO reachable provenance is still a real read (the
+  bare-percentile path preserved). Provenance path:
+  `signal.track_a.layer3_fundamental.data_source["valuation"]` + `.forward_pe`.
+- **`scripts/test_phase_8b_candidate_eligibility.py` (new): 18 tests / 87
+  assertions**, fully offline, building REAL `OpportunityCard` / `CandidateSignal`
+  / `Blocker` / `FundamentalResult` / `TrackAResult` instances (no mocks — an
+  upstream field rename breaks the suite). Discriminating cases include event
+  horizon asymmetry, hard-fail-dominates-score, hard-vs-soft-unknown asymmetry,
+  the two-band × horizon valuation matrix, the live-provenance-unusable-forwardPE
+  leak guard (forward_pe ∈ {0, −5, non-numeric, bool}), and multi-condition
+  completeness; each annotated with the mutation it catches.
+- **Review:** Codex REJECT (valuation-provenance firewall leak) → fix round (ONE
+  code fix: `_valuation_missing` + `_forward_pe_is_usable`; FOUR added tests: the
+  leak guard M1/E2/E4 + multi-condition completeness; ONE clarifying comment on
+  the dead-today `risk_overlay_failed` branch) → **APPROVE**. `_VALUATION_ELEVATED_PCT
+  = 0.70` grounds to `opportunity_ranker._VALUATION_HIGH_PCT`;
+  `_VALUATION_PROHIBITED_PCT = 0.85` documented as calibration debt.
+- **Scope discipline:** two new files only; zero edits to any existing file;
+  stdlib-only at module load.
+
 ## Phase 8B ThemeIntelligenceAgent (COMPLETE — merged to `main` via `--no-ff` @ `5ecfb7875`, feature commit `7b86dcaba`, 2026-06-26)
 
 **Fifth production foundation agent.** Distinct from SectorRotationAgent: TIA's
