@@ -304,12 +304,14 @@ investment-agents/
 │   ├── 8_Macro_Dashboard.py        # 宏观仪表盘 + Market Internals 工作台
 │   ├── 9_Trading_Desk.py           # 交易台 — 入场策略 / 订单叙事 / thesis 监控
 │   ├── 10_Thesis_Library.py            # 研报卡片库 — 摄入 / 浏览 / 管理（Thesis Ingestion MVP）
-│   └── 11_Audit_Review.py             # 快照审计回顾 — 覆盖/脆弱度/状态历史/跟进/完整性（只读 · 双语）
+│   ├── 11_Audit_Review.py             # 快照审计回顾 — 覆盖/脆弱度/状态历史/跟进/完整性（只读 · 双语）
+│   └── 12_Agent_Degradation.py        # 智能体降级回顾 — 六 foundation agent 降级统一视图（只读 · 双语 · 零网络/LLM）/ agent degradation review
 │
 ├── lib/
 │   ├── llm_orchestrator.py         # Claude API 调用（LLM 层）
 │   ├── opportunity_ranker.py       # 机会排序编排（三周期评分/状态/快照）
 │   ├── audit_query.py              # 快照审计查询层（只读 / 无信号引擎 / 无排序 / 无联网 / fail-closed）
+│   ├── degradation_view.py         # 降级可见性 enabler — 读已持久化 AgentOutput → 六 agent 归一化降级视图（LLM-free / 零网络 / likely_bug 保守启发式）/ degradation-visibility enabler
 │   ├── signal_engine.py            # 双轨信号引擎 + Finnhub 财报日历
 │   ├── candidate_generator.py      # 候选生成（发布扫描 universe）
 │   ├── candidate_eligibility.py    # 确定性四态资格闸（eligible/conditional/ineligible/unknown）；LLM-free 数值防火墙；六闸 thesis/eps/valuation/event(hard)+liquidity/distribution(soft)，横向按时间维度非对称；CandidateScreeningAgent 前置 enabler / deterministic four-state candidate eligibility gate feeding CandidateScreeningAgent
@@ -337,7 +339,7 @@ investment-agents/
 │   ├── workflow_state.py / translator.py
 │   ├── reliability/                # 可靠性基础设施（适配器层 / World 2）
 │   ├── agent_framework/            # Phase 8A：AgentOutput / agent_runner（含 _repair_llm_response 扁平响应结构修复层）/ world_adapter（lib.reliability 全惰性导入）
-│   └── agents/                     # 运行时 Foundation Agents（6 个已生产化）：macro_regime_agent —— MacroRegimeAgent（三时间维度置信度 + 投票计数证据）；money_flow_agent —— MoneyFlowAgent（GEX/DEX + 暗池双数据源，三置信度 + prior_result 挤压条件 C）；market_structure_agent —— MarketStructureAgent（注入 FragilityReading，short=coverage×clarity / mid=连续恶化天数 / long=0.0，signal_basis 三值分类器）；sector_rotation_agent —— SectorRotationAgent（theme_baskets + theme_transmission + 完整攻守 O/D，short=coverage×stage_confirmed率 / mid=coverage×动量分散×wave清晰度，signal_basis 三值含 no_clear_leadership）；theme_intelligence_agent —— ThemeIntelligenceAgent（成分股实时 RS 排名×种子角色 + 跨波次非对称机会 wave {1,2}+rotating_in，short=coverage×role_resolution（全成分股分母）/ mid=coverage×asymmetry_strength / long=0.0，signal_basis 三值含 no_role_signal 非看空）；candidate_screening_agent —— CandidateScreeningAgent（**动量/RS-gap 每主题相对筛选**：消费 `candidate_eligibility` 四态资格闸，代码在合格集上算比较表 + 每时间维度 frontrunner + `no_clear_winner`，LLM 只解释决定性差异——绝不选 primary、绝不改 no_clear_winner；slate 骨架落 supporting_data；tradability `quality_capped` penny 守卫；`signals=` 按 ticker fail-closed 连接）。下一个：Degradation-Visibility Layer
+│   └── agents/                     # 运行时 Foundation Agents（6 个已生产化）：macro_regime_agent —— MacroRegimeAgent（三时间维度置信度 + 投票计数证据）；money_flow_agent —— MoneyFlowAgent（GEX/DEX + 暗池双数据源，三置信度 + prior_result 挤压条件 C）；market_structure_agent —— MarketStructureAgent（注入 FragilityReading，short=coverage×clarity / mid=连续恶化天数 / long=0.0，signal_basis 三值分类器）；sector_rotation_agent —— SectorRotationAgent（theme_baskets + theme_transmission + 完整攻守 O/D，short=coverage×stage_confirmed率 / mid=coverage×动量分散×wave清晰度，signal_basis 三值含 no_clear_leadership）；theme_intelligence_agent —— ThemeIntelligenceAgent（成分股实时 RS 排名×种子角色 + 跨波次非对称机会 wave {1,2}+rotating_in，short=coverage×role_resolution（全成分股分母）/ mid=coverage×asymmetry_strength / long=0.0，signal_basis 三值含 no_role_signal 非看空）；candidate_screening_agent —— CandidateScreeningAgent（**动量/RS-gap 每主题相对筛选**：消费 `candidate_eligibility` 四态资格闸，代码在合格集上算比较表 + 每时间维度 frontrunner + `no_clear_winner`，LLM 只解释决定性差异——绝不选 primary、绝不改 no_clear_winner；slate 骨架落 supporting_data；tradability `quality_capped` penny 守卫；`signals=` 按 ticker fail-closed 连接）。下一个：StockResearchAgent
 │
 ├── scripts/
 │   ├── test_reliability_*.py       # 69 个可靠性测试套件（数千条断言）
@@ -355,6 +357,7 @@ investment-agents/
 │   ├── test_phase_8b_theme_intelligence_agent.py  # Phase 8B ThemeIntelligenceAgent §8B-TI1–TI14（39 项；LLM/网络全 mock，含 roles→unknown / stage→leading / 排序翻转 3 个 mutation probe）
 │   ├── test_phase_8b_candidate_eligibility.py  # CandidateScreeningAgent 资格闸 enabler（18 项 / 87 断言，全离线真实 OpportunityCard/CandidateSignal 实例；含 event 时间维度非对称、hard-fail 压制、valuation 两带×时间维度、forward_pe 不可用防火墙泄漏守卫、多条件完整性等判别）
 │   ├── test_phase_8b_candidate_screening_agent.py  # Phase 8B CandidateScreeningAgent §CSA-1–CSA-18（104 断言，全离线真实 OpportunityCard/CandidateSignal 实例；§CSA-8 驱动真实 run_llm_agent 仅 stub _call_llm；含 tie-break 链、空集 path(a)、penny 守卫 capped 决定性/非决定性、signals= fail-closed 连接、错票不串扰、unavailable 维不入排序键、valuation provenance 不再泄漏、惰性导入子进程守卫等判别）
+│   ├── test_degradation_view.py    # 降级可见性层 19 项全离线（8 个 Codex 判别用例 + 子进程惰性导入守卫 + 六 builder 参数化 latest-wins + None/空 theme_key 容忍）/ degradation-visibility layer suite
 │   ├── backfill_anchors.py         # 估值锚历史离线回填 CLI（可重算锚 + 披露滞后门控）
 │   ├── migrate_anchor_archive_to_shards.py  # 一次性离线：单文件归档 → 按 ticker 分片
 │   ├── daily_scan.py / fetch_financials.py / run_research.py
@@ -406,8 +409,8 @@ investment-agents/
 | Step 3 Narrative Disk Cache | ✅ | LLM narrative 结果磁盘持久化（data/narrative_cache/）；重启后命中跳过 LLM；指纹对齐 prompt 输入（news[:25] + headline + summary[:160]，json.dumps 序列化）；TTL 24h；原子写；27 项测试，Codex 三轮审查通过 |
 | _meta 扩展（key_signals / opportunity_posture / confidence） | ✅ | 三个确定性 classify_regime 字段写入每日快照 _meta 块，为冷启动水化做准备；冲突守卫（ValueError，置于 try 之外确保不被吞掉）；MetaRecord 对应加字段（旧快照容忍缺失）；7 项断言含 mutation probe + 守卫判别性验证，Codex 两轮通过；feature `7a76bcb3`，`--no-ff` 合并 main @ `ffe9e1e2` 并推送 |
 | Cockpit 冷启动水化 | ✅ | 重启后自动从最新日快照填充 Section A（含 key_signals / posture / confidence）和 Section C；双语 banner（bi()）；原子提交 + fail-closed；why_now crash guard；MacroRegimeAgent output / B / D / E 不从快照恢复；10 项测试，Codex 一轮通过，UI 人工验收 |
-| **Phase 8B — Foundation Agent 实现（逐个推进）** | 🔄 进行中 | 已上线 MacroRegime / MoneyFlow / MarketStructure / SectorRotation / ThemeIntelligence / **CandidateScreening（动量/RS-gap 本体，含四态资格闸 enabler）六个**；其后 StockResearch · TechnicalEntry · SectorResearch · RiskOverlay（首版即内建 degradation-visibility 字段）。每个：确定性信号 → ToolResult → 受约束提示（`REQUIRED OUTPUT FORMAT`）→ `_repair_llm_response` → 校验 `AgentOutput`；附加式 Cockpit 钩子 |
-| **Degradation-Visibility Layer（下一个）** | 🔄 下一个 | Cockpit 聚合 banner，把每个 foundation agent 的降级词汇从其 `supporting_data` 汇总呈现（signal_basis / `no_trade_reason` / `unavailable` 维 / 降级 coverage），双语（`bi()`）。之所以需要它：CandidateScreeningAgent 等目前只把降级写入 `supporting_data`、无可见 surface。其后再推进剩余 foundation agent |
+| **Phase 8B — Foundation Agent 实现（逐个推进）** | 🔄 进行中 | 已上线 MacroRegime / MoneyFlow / MarketStructure / SectorRotation / ThemeIntelligence / **CandidateScreening（动量/RS-gap 本体，含四态资格闸 enabler）六个**；**下一个：StockResearchAgent**（按 ROADMAP §5.3 顺序），其后 TechnicalEntry · SectorResearch · RiskOverlay（首版即内建 degradation-visibility 字段）。每个：确定性信号 → ToolResult → 受约束提示（`REQUIRED OUTPUT FORMAT`）→ `_repair_llm_response` → 校验 `AgentOutput`；附加式 Cockpit 钩子 |
+| **Degradation-Visibility Layer** | ✅ | **独立只读回顾页**（与用户确认的范围决策——非最初草拟的 Cockpit 内嵌 banner）：`lib/degradation_view.py`（LLM-free enabler——六 agent 归一化降级视图；`normalize_basis` 全词汇表按源码枚举四个 signal_basis 发射方（含 `full_data_no_signal`/`no_clear_leadership`/`no_role_signal`/`no_clear_winner`），未识别值降入 `other:*` 绝不 crash；严重度优先级 degraded>other:*>中性>ok；五路独立 `likely_bug` OR（无输出/rule_based/降级基础/other:*/非防御 flag）；保守 `KNOWN_DEFENSIVE_FLAGS` 白名单（歧义 flag 刻意不豁免，fail-closed 偏可见）；`date` 必填防跨日主题合并）+ `pages/12_Agent_Degradation.py`（双语；日期选择器默认「今天」即使当天尚无文件——「今天还没跑」本身是信息；全局空态先于任何小节；四态状态徽章「无输出 ≠ 疑似 BUG ≠ 中性观望 ≠ 正常」绝不合并；每主题 CandidateScreening 卡含**两级嵌套** `comparison_table` expander）。零网络/LLM/写路径；六个 agent 文件零改动。**19 项离线测试**（8 个 Codex 判别用例 + 子进程惰性导入守卫 + 六 builder 参数化 latest-wins）。已记录 follow-up（本阶段不修）：MarketStructure `vintage_mismatch`/`adjacency_degraded` 算进 health_payload 但未持久化进 `supporting_data`（未来 agent 侧任务）；实测 2026-07-01 CandidateScreeningAgent[ai_chips] 跑出 `rule_based` 回退 + LLM 边界 runner_error——正是本层要暴露的静默失败类。Codex：APPROVE-WITH-FIXES（5 项发现）→ 修复轮 → **APPROVE**。feature `05e62e1b2`，`--no-ff` 合并 main @ `6acf2e762` 并推送 |
 | **Phase 8C — PM 层** | 📋 计划 | `ShortTermPM` / `MidTermPM` / `LongTermPM` 按时间维度消费各 Foundation Agent 的 finding+confidence 做冲突仲裁（非汇总）→ `MasterPM` 跨时间维度 + 组合层综合、绝不出下单指令。**依赖：8B roster 足够填充** |
 | **Phase 8D — ValuationDebateAgent / 证据基建** | 📋 计划 | 反向 DCF + 对抗式估值辩论 + 证据包；锚历史/迁移作为确定性输入。**依赖：估值基建 + 8B 个股研究组** |
 | **Phase 9 — Judgment Console（人在环）** | 📋 远期 | 判断收口与人工确认工作流：LLM 在证据约束下给建议、人确认/覆写、判断来源留痕（provenance）、审计轨。**下游 gating 政策（自动化程度）仍待显式架构决策，尚未定型；依赖 8C/8D 累积输出** |

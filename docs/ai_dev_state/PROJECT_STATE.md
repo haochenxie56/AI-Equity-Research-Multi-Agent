@@ -1,5 +1,65 @@
 # AI Investment Agent — Project State
 
+## Degradation-Visibility Layer (COMPLETE — Codex APPROVE-WITH-FIXES → APPROVE — merged to `main` via `--no-ff` @ `6acf2e762`, feature commit `05e62e1b2`; feature branch `degradation-visibility-layer` off `main @ f05b51571`, 2026-07-01; **new baseline `main @ 6acf2e762`**)
+
+The increment immediately after the six foundation agents (ROADMAP §5.10, Master
+Memo v4 §8/§10.3): one uniform, comparable answer to *"how degraded was each
+foundation agent's read on date D?"* — distinguishing defensive fail-closed
+degradation from runtime-avoidable degradation (`likely_bug`), and "the agent said
+this was uncertain" from "the agent didn't actually run". **Scope decision (user):
+a STANDALONE READ-ONLY review page reading persisted `AgentOutput` JSONL — NOT a
+Cockpit-embedded banner.** Zero network / LLM / write path; no Cockpit-refresh
+touch; no new `session_state` keys; none of the six agent files modified. Phase doc
+`docs/reliability_degradation_visibility_layer.md`.
+
+- **`lib/degradation_view.py` (new):** LLM-free enabler (zero `lib.reliability`
+  import — subprocess-guarded). Frozen `AgentDegradationView`; six per-agent
+  builders (latest-wins per day; CandidateScreening per-theme grouping); shared
+  `normalize_basis` with the FULL basis vocabulary enumerated from source across
+  all four `signal_basis`-emitting agents (incl. `full_data_no_signal` →
+  `no_signal`, `no_clear_leadership` → `no_leadership`; unknown → `other:*`,
+  never raises); severity precedence `degraded > other:* > neutral > ok`;
+  five-way independent `likely_bug` OR (no-output / rule_based / degraded basis /
+  other:* / non-defensive flag); conservative `KNOWN_DEFENSIVE_FLAGS` starter
+  list (fail-closed: ambiguous flags are NOT defensive);
+  `load_and_build_all_views` (**`date` REQUIRED** — forbids the cross-date
+  theme-merge footgun) + `list_available_dates`. Documented wart: `coverage` is a
+  float for five agents but a `{short,mid}` dict for CandidateScreening.
+- **`pages/12_Agent_Degradation.py` (new):** bilingual read-only page mirroring
+  pages/11 scaffolding; date picker (available ∪ today, **defaults to literally
+  today** — the "today, nothing yet" empty state is deliberate product signal);
+  global empty-state check BEFORE any section; four-way status badge (`no output`
+  ≠ `possible bug` ≠ `neutral/wait` ≠ `ok`, never collapsed); per-agent cards
+  (judgment / evidence / raw supporting_data expanders + optional agent_result
+  findings); per-theme CandidateScreening cards with a **two-level nested**
+  `comparison_table` expander inside `Slate detail` (tree-verified under
+  AppTest). `ui_utils.py` nav wiring (`nav_p12`, en/zh).
+- **Tests:** `scripts/test_degradation_view.py` **19/19 offline** — 8
+  Codex-required discriminating cases (degraded-basis-without-flag,
+  rule_based-on-clean-read, latest-wins via the REAL load path, per-theme
+  grouping, other:* fallback, empty supporting_data, zero-record placeholder,
+  basis/flags trigger independence) + subprocess lazy-import guard + parametrized
+  latest-wins over all six builders + None/empty theme_key tolerance.
+- **Codex arc:** APPROVE-WITH-FIXES (5 findings: `full_data_no_signal` false
+  positive → mapped + full vocabulary audit; MarketStructure flags read a
+  non-persisted surface → reader-side removal; `date=None` footgun → required
+  param; missing lazy-import guard; test discriminability) → fix round →
+  **APPROVE** (one doc-nit fixed pre-commit).
+- **Follow-ups recorded (NOT this phase):** (1) MarketStructureAgent computes
+  `vintage_mismatch` / `adjacency_degraded` into `health_payload` but does NOT
+  persist them into `supporting_data` — a future agent-side task should persist
+  them; until then the layer cannot show them and does not pretend to. (2)
+  Real-data finding: 2026-07-01 `CandidateScreeningAgent[ai_chips]` ran
+  `judgment_source=rule_based` with `runner_error="RuntimeError: stubbed LLM
+  boundary failure"` — exactly the silent-failure class this layer exists to
+  surface; investigate separately. (3) Key-configuration-aware defensiveness
+  (ROADMAP §5.10 runtime zero-degradation acceptance protocol).
+- **Next:** resume the Phase 8B foundation-agent roster — **StockResearchAgent
+  first** (ROADMAP §5.3 order), building degradation-visibility fields into its
+  FIRST version.
+
+---
+
 ## Phase 8B CandidateScreeningAgent — agent body (COMPLETE — SIXTH production foundation agent, Codex-APPROVED — merged to `main` via `--no-ff` @ `e6c5be89a`, feature commit `b6daea492`; feature branch `phase-8b-candidate-screening-agent` off `main @ f78ef606f`, 2026-07-01)
 
 The **sixth production foundation agent** — the LLM agent that CONSUMES the

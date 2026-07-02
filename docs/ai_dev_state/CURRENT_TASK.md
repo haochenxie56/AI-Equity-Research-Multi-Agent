@@ -5,7 +5,36 @@
 > history preserved verbatim). This file keeps only the active phase. The
 > long-form running status remains in `docs/ai_dev_state/PROJECT_STATE.md`.
 
-**Status:** **CandidateScreeningAgent (agent body): COMPLETE, Codex-APPROVED,
+**Status:** **Degradation-Visibility Layer: COMPLETE, Codex-APPROVED
+(APPROVE-WITH-FIXES → fix round → APPROVE), merged to `main` via `--no-ff` @
+`6acf2e762`** (feature commit `05e62e1b2`, branch `degradation-visibility-layer`
+off `main @ f05b51571`, 2026-07-01). Shipped as a **standalone read-only review
+page** (scope decision with the user — NOT the Cockpit banner originally
+sketched): `lib/degradation_view.py` (LLM-free enabler; six per-agent builders,
+shared `normalize_basis` over the FULL source-enumerated basis vocabulary,
+severity precedence, five-way independent `likely_bug` OR, conservative
+`KNOWN_DEFENSIVE_FLAGS`, `date`-required `load_and_build_all_views`) +
+`pages/12_Agent_Degradation.py` (bilingual; today-default date picker; global
+empty state; four-way status badge; per-theme CandidateScreening cards with a
+two-level nested `comparison_table` expander) + `ui_utils.py` nav (`nav_p12`).
+**19/19 offline tests** (8 Codex-required discriminating cases + subprocess
+lazy-import guard + parametrized latest-wins over all six builders). Follow-ups
+recorded, NOT fixed here: MarketStructure `vintage_mismatch`/`adjacency_degraded`
+not persisted into `supporting_data` (agent-side future task); 2026-07-01
+`CandidateScreeningAgent[ai_chips]` ran `judgment_source=rule_based` (LLM-boundary
+fallback — the exact silent-failure class this layer surfaces). Phase doc
+`docs/reliability_degradation_visibility_layer.md`.
+
+**Completed:** Degradation-Visibility Layer (`lib/degradation_view.py` +
+`pages/12_Agent_Degradation.py` + `scripts/test_degradation_view.py` +
+`docs/reliability_degradation_visibility_layer.md` + `ui_utils.py` nav wiring).
+
+**Next:** resume the **Phase 8B foundation-agent roster** — **StockResearchAgent
+first** (per ROADMAP §5.3 order), which builds degradation-visibility fields into
+its FIRST version. Then the remaining roster (TechnicalEntry / SectorResearch /
+RiskOverlay).
+
+**Prior:** **CandidateScreeningAgent (agent body): COMPLETE, Codex-APPROVED,
 merged to `main` via `--no-ff`** (feature branch
 `phase-8b-candidate-screening-agent` off `main @ f78ef606f`; feature/merge hashes
 in the closeout report + phase doc). The **SIXTH production foundation agent** —
@@ -38,18 +67,10 @@ instances; §CSA-8 drives the REAL `run_llm_agent` with only `_call_llm` stubbed
 Codex arc: **APPROVE WITH FIXES** (6 discriminating **test adds**, zero code bugs) →
 **APPROVED**. Phase doc `docs/reliability_candidate_screening_agent.md`.
 
-**Completed:** CandidateScreeningAgent agent body
-(`lib/agents/candidate_screening_agent.py` +
-`scripts/test_phase_8b_candidate_screening_agent.py` + additive Cockpit hook).
-
-**Next:** **Degradation-Visibility Layer** — a Cockpit aggregation banner that
-surfaces every foundation agent's degradation vocabulary from its `supporting_data`
-(signal_basis / `no_trade_reason` / `unavailable` dimensions / degraded coverage),
-bilingual per the `bi()` discipline. It exists precisely because CandidateScreeningAgent
-(and its siblings) currently write degradation only into `supporting_data` with no
-visible surface. After it, the **remaining foundation agents** (StockResearch /
-TechnicalEntry / SectorResearch / RiskOverlay) — which will build degradation-visibility
-fields into their FIRST version.
+Its deliverables: `lib/agents/candidate_screening_agent.py` +
+`scripts/test_phase_8b_candidate_screening_agent.py` + additive Cockpit hook.
+(Its then-"Next" — the Degradation-Visibility Layer — shipped above, as a
+standalone read-only page rather than the Cockpit banner originally sketched.)
 
 **Prior:** Phase 8B — CandidateScreeningAgent eligibility gate (enabler,
 `lib/candidate_eligibility.py`, merge `f78ef606f`) — the deterministic, LLM-free
